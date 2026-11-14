@@ -11,7 +11,8 @@ import zipfile
 ROOT = Path(__file__).resolve().parents[3]
 EXAMPLE = ROOT / "tools/ovygram/examples/lifecycle.ovyplugin"
 sys.path.insert(0, str(ROOT / "Telegram/PluginSDK"))
-from ovygram_runtime import Manager
+from ovygram_runtime import Manager, read_package
+from ovygram_package import InvalidPlugin
 
 
 class PluginRuntimeTests(unittest.TestCase):
@@ -20,6 +21,43 @@ class PluginRuntimeTests(unittest.TestCase):
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
         self.profile = self.root / "profile"
+
+    def test_missing_release_installs_as_false_in_every_local_format(self):
+        source = EXAMPLE.read_bytes().replace(b"__release__ = False\n", b"")
+        self.assertNotIn(b"__release__", source)
+        for suffix in (".ovyplugin", ".py", ".plugin", ".ovyzip", ".zip"):
+            with self.subTest(suffix=suffix):
+                profile = self.root / ("profile" + suffix)
+                path = self.root / ("lifecycle" + suffix)
+                if suffix in (".ovyzip", ".zip"):
+                    with zipfile.ZipFile(path, "w") as archive:
+                        archive.writestr("plugin.json", '{"id":"lifecycle","entry":"main.py"}')
+                        archive.writestr("main.py", source)
+                else:
+                    path.write_bytes(source)
+                original = path.read_bytes()
+                manager = Manager(profile)
+                self.addCleanup(manager.shutdown)
+                self.assertIs(manager.inspect(str(path))["metadata"]["release"], False)
+                identity = manager.install(str(path))
+                self.assertIs(manager.records[identity]["current"]["metadata"]["release"], False)
+                self.assertEqual(Path(manager.share_file(identity)).read_bytes(), original)
+                manager.enable(identity)
+                self.assertIn(identity, manager.loaded)
+                manager.shutdown()
+                restored = Manager(profile)
+                self.addCleanup(restored.shutdown)
+                self.assertIs(restored.records[identity]["current"]["metadata"]["release"], False)
+                restored.shutdown()
+
+    def test_release_default_does_not_hide_invalid_or_duplicate_values(self):
+        source = EXAMPLE.read_bytes().replace(b"__release__ = False\n", b"")
+        for value in ("None", "0", "1", "'False'", "bool(0)", "False\n__release__ = True"):
+            with self.subTest(value=value), self.assertRaises(InvalidPlugin):
+                read_package(source + f"\n__release__ = {value}\n".encode(), "lifecycle.ovyplugin")
+        for value, expected in (("True", True), ("False", False)):
+            metadata, _ = read_package(source + f"\n__release__ = {value}\n".encode(), "lifecycle.ovyplugin")
+            self.assertIs(metadata["release"], expected)
 
     def test_import_does_not_execute_plugin(self):
         manager = Manager(self.profile)

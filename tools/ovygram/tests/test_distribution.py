@@ -140,6 +140,17 @@ class DistributionTests(unittest.TestCase):
         self.assertEqual(plugin["trust"]["release_sequence"], 1)
         self.assertEqual(json.loads(self.manager.state.read_text(encoding="utf-8"))["installations"][identity]["current"]["trust"]["chain"], 7)
 
+    def test_missing_release_prepares_and_installs_as_nonpublic(self):
+        payload = self.source(release=False).replace(b"__release__ = False\n", b"")
+        token, path = self.prepare(payload)
+        prepared = self.manager.distribution.prepared(token)
+        self.assertIs(prepared["metadata"]["release"], False)
+        self.assertEqual(prepared["trust"]["status"], "unverified")
+        identity = self.manager.distribution.commit(token)
+        self.assertIs(self.manager.records[identity]["current"]["metadata"]["release"], False)
+        self.assertEqual(Path(self.manager.share_file(identity)).read_bytes(), payload)
+        self.assertEqual(path.read_bytes(), payload)
+
     def test_tampered_unknown_or_expired_signatures_never_grant_trust(self):
         self.approve(self.source())
         answer = self.registry.check({"id": "lifecycle", "version": "1.0.0", "release": True},

@@ -1,8 +1,9 @@
 """Static reading of .ovyplugin and .ovyzip packages: metadata, plugin ID
 and version rules, ZIP safety. Nothing in a package is ever run.
 
-Standard library only: the Ovygram client uses the same module, so both
-sides read the same values from the same file (spec §5).
+Standard library only. Explicit metadata follows the server's rules;
+local installation additionally defaults an omitted __release__ to False.
+The server still requires that tag for moderation submissions (spec §5).
 """
 
 import ast
@@ -36,7 +37,7 @@ METADATA = {
     "__platform__": "platform", "__desktop_sdk__": "sdk",
     "__requirements__": "requirements",
 }
-REQUIRED = ("id", "name", "description", "author", "version", "release", "platform", "sdk")
+REQUIRED = ("id", "name", "description", "author", "version", "platform", "sdk")
 TEXT_LIMITS = {"name": 128, "description": 2000, "author": 128}
 WINDOWS_NAMES = {"CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$",
                  *(f"COM{i}" for i in "123456789¹²³"), *(f"LPT{i}" for i in "123456789¹²³")}
@@ -144,6 +145,7 @@ def check_metadata(values: dict) -> dict:
         if not isinstance(value, str) or not value.strip() or len(value) > limit:
             raise InvalidPlugin(f"Поле {key}: непустая строка до {limit} символов.")
     values["version_info"] = parse_version(values["version"])
+    values.setdefault("release", False)
     if type(values["release"]) is not bool:
         raise InvalidPlugin("__release__ должен быть True или False.")
     if values["platform"] != "desktop":

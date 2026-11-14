@@ -6,6 +6,12 @@ and `.zip`. Metadata is read without running the package. `__desktop_sdk__`
 is the minimum Desktop SDK required: an integer from 1 through the client's
 `SDK_VERSION` (currently 2). A higher value is incompatible and is refused.
 
+Local installation accepts an omitted `__release__` and stores `release=False`.
+An explicitly supplied value must still be the boolean literal `True` or
+`False`; malformed or duplicate tags remain invalid. Moderation submissions
+must explicitly include `__release__` even when it is `False`: the server
+keeps this field mandatory. The original package bytes are never rewritten.
+
 ## Registry configuration
 
 `Telegram/PluginSDK/registry.json` already pins the generated Ed25519 public
