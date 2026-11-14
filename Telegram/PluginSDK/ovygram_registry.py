@@ -8,7 +8,7 @@ no plugin dependencies, downloaded keys or executable package code are used.
 import base64
 import ctypes
 import ctypes.util
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 import os
@@ -23,7 +23,8 @@ from ovygram_package import MAX_PACKAGE
 
 TRUSTED = frozenset(("verified", "official"))
 STATUSES = TRUSTED | {"unverified", "revoked", "blocked"}
-UNAVAILABLE = "Сервер не отвечает — невозможно проверить плагин"
+UNAVAILABLE = "Не удалось проверить плагин"
+MAX_CLOCK_SKEW = timedelta(seconds=60)
 
 
 def canonical(document):
@@ -137,7 +138,10 @@ class Registry:
         issued = datetime.fromisoformat(answer["issued_at"].replace("Z", "+00:00"))
         expires = datetime.fromisoformat(answer["expires_at"].replace("Z", "+00:00"))
         now = self.now()
-        if issued.tzinfo is None or expires.tzinfo is None or not issued <= now < expires \
+        # Separate computers do not share a subsecond clock. Accept a small
+        # future issue time only; never extend an answer's expiry or TTL.
+        if issued.tzinfo is None or expires.tzinfo is None or not issued < expires \
+                or issued > now + MAX_CLOCK_SKEW or now >= expires \
                 or (expires - issued).total_seconds() > 8 * 86400:
             raise ValueError("Ответ реестра устарел или имеет некорректное время.")
         return answer
@@ -170,15 +174,18 @@ class Registry:
             return unavailable(str(error))
 
     def cached(self, version):
-        if version.get("verification_unavailable") and not version.get("blocked"):
-            return unavailable()
         answer = version.get("trust", {})
+        if version.get("verification_unavailable") or answer.get("status") == "verification_unavailable":
+            failure = version.get("verification_failure") or answer
+            result = unavailable(failure.get("reason") or UNAVAILABLE)
+            return {**result, "status": "blocked"} if version.get("blocked") else result
         try:
             return self.match(self.validate(answer), version["metadata"], version["sha256"],
                               version["package_type"])
-        except Exception:
+        except Exception as error:
             # An outage/expiry must never remove a known block.
-            return {**unavailable(), "status": "blocked"} if version.get("blocked") else unavailable()
+            result = unavailable(str(error) or UNAVAILABLE)
+            return {**result, "status": "blocked"} if version.get("blocked") else result
 
     def index(self):
         if not self.index_url:

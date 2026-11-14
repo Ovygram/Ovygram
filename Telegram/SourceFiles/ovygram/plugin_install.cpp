@@ -2,18 +2,23 @@
 
 #include "core/application.h"
 #include "core/plugin_runtime.h"
+#include "ovygram/plugin_trust_badge.h"
+#include "ui/layers/generic_box.h"
+#include "ui/layers/show.h"
+#include "ui/widgets/buttons.h"
+#include "ui/widgets/labels.h"
+#include "ui/wrap/slide_wrap.h"
+#include "window/window_controller.h"
+#include "styles/style_layers.h"
+#include "styles/style_settings.h"
+#include "styles/style_widgets.h"
 
 #include <QtCore/QJsonArray>
 #include <QtCore/QJsonDocument>
 #include <QtCore/QJsonObject>
+#include <QtCore/QPointer>
 #include <QtCore/QTimer>
-#include <QtWidgets/QApplication>
-#include <QtWidgets/QDialog>
-#include <QtWidgets/QDialogButtonBox>
-#include <QtWidgets/QLabel>
-#include <QtWidgets/QPushButton>
-#include <QtWidgets/QScrollArea>
-#include <QtWidgets/QVBoxLayout>
+#include <rpl/variable.h>
 
 #include <stdexcept>
 
@@ -42,52 +47,54 @@ bool Trusted(const QString &status) {
 QString StatusText(const QString &status) {
 	if (status == u"official"_q) return u"Официальный плагин"_q;
 	if (status == u"verified"_q) return u"Проверенный плагин"_q;
-	if (status == u"blocked"_q) return u"Опасный плагин / вирус. Установка запрещена."_q;
-	if (status == u"revoked"_q) return u"Непроверенный плагин — проверка отозвана"_q;
-	if (status == u"verification_unavailable"_q) return u"Сервер не отвечает — невозможно проверить плагин"_q;
-	return u"Непроверенный плагин"_q;
+	if (status == u"blocked"_q) return u"Опасный плагин — установка запрещена"_q;
+	if (status == u"revoked"_q) return u"Проверка отозвана"_q;
+	if (status == u"verification_unavailable"_q) return u"Проверка недоступна"_q;
+	return u"Не проверен"_q;
 }
 
-// All labels use PlainText, including metadata. No plugin-created widgets,
-// handles, callbacks, rich text links or system badges enter this dialog.
-class InstallDialog final : public QDialog {
+void Clear(not_null<Ui::VerticalLayout*> layout) {
+	while (layout->count()) delete layout->widgetAt(0);
+}
+
+// State is owned by Telegram's box. There is no separate Qt/system dialog,
+// plugin-owned content or implicit acceptance on Enter. The footer remains
+// visible while the complete description scrolls in GenericBox's viewport.
+class InstallController final : public QObject {
 public:
-	InstallDialog(QString path, QString installationId, Fn<void()> done)
-	: QDialog(nullptr)
+	InstallController(
+		not_null<Ui::GenericBox*> box,
+		QString path,
+		QString installationId,
+		Fn<void()> done)
+	: QObject(box.get())
+	, _box(box.get())
 	, _installationId(std::move(installationId))
 	, _done(std::move(done)) {
 		++ActiveInstallers;
-		setAttribute(Qt::WA_DeleteOnClose);
-		setWindowModality(Qt::ApplicationModal);
-		setWindowTitle(u"Установка плагина Ovygram"_q);
-		resize(580, 580);
-			if (const auto window = QApplication::activeWindow()) {
-				move(window->frameGeometry().center() - rect().center());
-			}
-		const auto layout = new QVBoxLayout(this);
-		const auto scroll = new QScrollArea(this);
-		scroll->setWidgetResizable(true);
-		const auto content = new QWidget(scroll);
-		_rows = new QVBoxLayout(content);
-		_rows->setAlignment(Qt::AlignTop);
-		_rows->setSizeConstraint(QLayout::SetMinAndMaxSize);
-		scroll->setWidget(content);
-		layout->addWidget(scroll);
-		_buttons = new QDialogButtonBox(this);
-		layout->addWidget(_buttons);
-		label(u"Чтение метаданных и проверка файла…"_q);
+		box->setTitle(rpl::single(u"Установка плагина"_q));
+		box->setWidth(st::settingsPluginsLayerWidth);
+		box->setMinHeight(500);
+		box->setMaxHeight(680);
+		_rows = box->addRow(object_ptr<Ui::VerticalLayout>(box), style::margins());
+		_actions = box->setPinnedToBottomContent(
+			object_ptr<Ui::VerticalLayout>(box)).get();
 		cancel();
+		box->setFocusCallback([this] {
+			if (_cancel) _cancel->setFocus();
+		});
+		label(_rows, u"Чтение метаданных и проверка файла…"_q);
 		_timer = new QTimer(this);
 		connect(_timer, &QTimer::timeout, this, [this] { poll(); });
 		try {
 			_token = Request({ { u"action"_q, u"prepare_install"_q }, { u"path"_q, path } }).toString();
 			_timer->start(200);
 		} catch (const std::exception &error) {
-			label(QString::fromUtf8(error.what()), u"#b00020"_q);
+			label(_rows, QString::fromUtf8(error.what()));
 		}
 	}
 
-	~InstallDialog() {
+	~InstallController() {
 		if (!_token.isEmpty()) {
 			try {
 				(void)Request({ { u"action"_q, u"discard_install"_q }, { u"token"_q, _token } });
@@ -99,26 +106,36 @@ public:
 	}
 
 private:
-	void label(QString text, QString color = QString()) {
-		const auto value = new QLabel(std::move(text), this);
-		value->setTextFormat(Qt::PlainText);
-		value->setWordWrap(true);
-		value->setTextInteractionFlags(Qt::TextSelectableByMouse);
-		if (!color.isEmpty()) value->setStyleSheet(u"color: %1"_q.arg(color));
-		_rows->addWidget(value);
+	void label(
+			not_null<Ui::VerticalLayout*> rows,
+			QString text,
+			const style::FlatLabel &style = st::settingsPluginBody) {
+		const auto value = rows->add(
+			object_ptr<Ui::FlatLabel>(rows, std::move(text), style),
+			st::settingsPluginTextMargin);
+		// FlatLabel's QString overload is multiline plain text, with no
+		// rich-text entities, parsed links, elision or height cap.
+		value->setBreakEverywhere(true);
+		value->setSelectable(true);
 	}
 
 	void cancel() {
-		const auto button = _buttons->addButton(u"Отмена"_q, QDialogButtonBox::RejectRole);
-		button->setDefault(true);
-		connect(button, &QPushButton::clicked, this, [this] { reject(); });
+		_cancel = _actions->add(
+			object_ptr<Ui::RoundButton>(_actions, rpl::single(u"Отмена"_q), st::defaultLightButton),
+			st::boxRowPadding,
+			style::al_justify);
+		_cancel->setClickedCallback([this] { _box->closeBox(); });
 	}
 
-	void action(QString text, Fn<void()> callback) {
-		const auto button = _buttons->addButton(std::move(text), QDialogButtonBox::ActionRole);
-		button->setAutoDefault(false);
-		connect(button, &QPushButton::clicked, this, [callback = std::move(callback)] {
-			// The callback may replace the buttons, deleting this connection.
+	void action(QString text, Fn<void()> callback, bool inlineChoice = false) {
+		const auto rows = inlineChoice ? _rows : _actions;
+		auto owned = object_ptr<Ui::RoundButton>(rows, rpl::single(std::move(text)),
+			inlineChoice ? st::defaultLightButton : st::defaultActiveButton);
+		const auto button = inlineChoice
+			? rows->add(std::move(owned), st::boxRowPadding, style::al_justify)
+			: rows->insert(0, std::move(owned), st::boxRowPadding, style::al_justify);
+		button->setClickedCallback([callback = std::move(callback)] {
+			// The callback may rebuild the controls containing this button.
 			const auto invoke = callback;
 			invoke();
 		});
@@ -130,29 +147,43 @@ private:
 			const auto state = info.value(u"state"_q).toString();
 			if (state == u"pending"_q) return;
 			_timer->stop();
+			Clear(_rows);
 			if (state != u"ready"_q) {
-				label(info.value(u"error"_q).toString(), u"#b00020"_q);
+				label(_rows, info.value(u"error"_q).toString());
 				return;
 			}
 			_info = info;
-			const auto progress = _rows->takeAt(0);
-			delete progress->widget();
-			delete progress;
 			showChoices();
 		} catch (const std::exception &error) {
 			_timer->stop();
-			label(QString::fromUtf8(error.what()), u"#b00020"_q);
+			label(_rows, QString::fromUtf8(error.what()));
 		}
 	}
 
 	void details(const QJsonObject &metadata, const QJsonObject &trust) {
-		label(u"%1 · %2\n%3"_q.arg(metadata.value(u"name"_q).toString(),
-			metadata.value(u"version"_q).toString(), metadata.value(u"description"_q).toString()));
-		label(u"Автор: "_q + metadata.value(u"display_author"_q).toString(metadata.value(u"author"_q).toString()),
-			metadata.value(u"author_hidden"_q).toBool() ? u"#b00020"_q : QString());
+		const auto card = _rows->add(
+			object_ptr<Ui::VerticalLayout>(_rows), st::settingsPluginCardMargin);
+		card->paintRequest() | rpl::on_next([=] {
+			auto p = QPainter(card);
+			const auto quality = PainterHighQualityEnabler(p);
+			p.setPen(Qt::NoPen);
+			p.setBrush(st::windowBgOver);
+			p.drawRoundedRect(card->rect(), st::settingsPluginCardRadius, st::settingsPluginCardRadius);
+		}, card->lifetime());
+		label(card, metadata.value(u"name"_q).toString(), st::settingsPluginInstallTitle);
+		label(card, u"Версия %1 · %2"_q.arg(metadata.value(u"version"_q).toString(),
+			metadata.value(u"id"_q).toString(metadata.value(u"plugin_id"_q).toString())),
+			st::settingsPluginCardMeta);
+		label(card, u"Автор: "_q + metadata.value(u"display_author"_q).toString(
+			metadata.value(u"author"_q).toString()), st::settingsPluginCardMeta);
+		label(_rows, metadata.value(u"description"_q).toString());
 		const auto status = trust.value(u"status"_q).toString();
-		label(StatusText(status), status == u"official"_q ? u"#1565c0"_q
-			: status == u"verified"_q ? u"#188038"_q : u"#b00020"_q);
+		AddPluginTrustBadge(_rows, StatusText(status), status);
+		if (const auto reason = trust.value(u"reason"_q).toString(); !reason.isEmpty()) {
+			label(_rows, reason, st::settingsPluginCardMeta);
+		} else if (status == u"unverified"_q) {
+			label(_rows, u"Файл ещё не проходил модерацию."_q, st::settingsPluginCardMeta);
+		}
 	}
 
 	void showChoices() {
@@ -160,26 +191,37 @@ private:
 		const auto trust = _info.value(u"trust"_q).toObject();
 		const auto status = trust.value(u"status"_q).toString();
 		details(metadata, trust);
-		label(u"ID: "_q + metadata.value(u"id"_q).toString());
-			label(metadata.value(u"release"_q).toBool()
-				? u"Публичная версия — доступна для механизма обновлений"_q
-				: u"Непубличная версия — автоматический поиск обновлений отключён"_q);
-		label(u"SHA-256: "_q + _info.value(u"sha256"_q).toString());
+		label(_rows, metadata.value(u"release"_q).toBool()
+			? u"Публичная версия — доступна для механизма обновлений"_q
+			: u"Непубличный плагин"_q, st::settingsPluginCardMeta);
+
+		const auto disclosure = _rows->add(object_ptr<Ui::SettingsButton>(
+			_rows, rpl::single(u"Подробности файла"_q), st::settingsButtonLightNoIcon));
+		const auto technical = _rows->add(object_ptr<Ui::SlideWrap<Ui::VerticalLayout>>(
+			_rows, object_ptr<Ui::VerticalLayout>(_rows)));
+		label(technical->entity(), u"ID: "_q + metadata.value(u"id"_q).toString(),
+			st::settingsPluginCardMeta);
+		label(technical->entity(), u"SHA-256: "_q + _info.value(u"sha256"_q).toString(),
+			st::settingsPluginCardMeta);
+		technical->toggleOn(_showDetails.value());
+		technical->finishAnimating();
+		disclosure->setClickedCallback([this] { _showDetails = !_showDetails.current(); });
 		if (status == u"blocked"_q) return;
+
 		const auto installations = _info.value(u"installations"_q).toArray();
 		auto hasTrusted = false;
 		for (const auto &value : installations) {
 			const auto old = value.toObject();
 			const auto id = old.value(u"installation_id"_q).toString();
-			label(u"Установленный экземпляр "_q + id.left(8));
+			label(_rows, u"Установленный экземпляр "_q + id.left(8), st::settingsPluginCardMeta);
 			details(old, old.value(u"trust"_q).toObject());
 			hasTrusted = hasTrusted || Trusted(old.value(u"trust"_q).toObject().value(u"status"_q).toString());
 			if (_installationId.isEmpty() || _installationId == id) {
-				action(u"Обновить "_q + id.left(8), [=, this] { confirm(id, false, old); });
+				action(u"Обновить "_q + id.left(8), [=, this] { confirm(id, false, old); }, true);
 			}
 		}
 		if (!_installationId.isEmpty() && installations.isEmpty()) {
-			label(u"ID файла не совпадает с ID обновляемого экземпляра."_q, u"#b00020"_q);
+			label(_rows, u"ID файла не совпадает с ID обновляемого экземпляра."_q);
 			return;
 		}
 		if (_installationId.isEmpty() && (!hasTrusted || !Trusted(status))) {
@@ -189,20 +231,24 @@ private:
 	}
 
 	void confirm(QString id, bool separate, QJsonObject old) {
-		const auto status = _info.value(u"trust"_q).toObject().value(u"status"_q).toString();
+		const auto trust = _info.value(u"trust"_q).toObject();
+		const auto status = trust.value(u"status"_q).toString();
 		const auto loss = (old.value(u"previously_trusted"_q).toBool()
 			|| Trusted(old.value(u"trust"_q).toObject().value(u"status"_q).toString())) && !Trusted(status);
 		const auto unavailable = status == u"verification_unavailable"_q;
 		if ((loss || unavailable) && !_warned) {
-			_buttons->clear();
+			Clear(_rows);
+			Clear(_actions);
 			cancel();
-			if (loss) label(u"Вы заменяете проверенный плагин непроверенной версией. Автор и безопасность "
-				"нового файла не подтверждены. Плагин потеряет статус проверки. Рекомендуется отменить "
-				"замену либо установить файл отдельно."_q, u"#b00020"_q);
-			if (unavailable) label(u"Сервер не ответил. Невозможно проверить, заблокирован ли этот файл. "
-				"Продолжайте только если доверяете источнику."_q, u"#b00020"_q);
+			details(_info.value(u"metadata"_q).toObject(), trust);
+			if (loss) label(_rows, u"Вы заменяете проверенный плагин непроверенной версией. Автор и безопасность "
+				"нового файла не подтверждены. Плагин потеряет статус проверки. Можно отменить "
+				"замену и установить файл отдельно."_q);
+			if (unavailable) label(_rows, u"Проверка недоступна. Невозможно уточнить, заблокирован ли этот файл. "
+				"Продолжайте только если доверяете источнику."_q);
 			_warned = true;
 			action(u"Подтверждаю установку"_q, [=, this] { confirm(id, separate, old); });
+			if (_cancel) _cancel->setFocus();
 			return;
 		}
 		try {
@@ -210,19 +256,22 @@ private:
 				{ u"installation_id"_q, id }, { u"separate"_q, separate },
 				{ u"allow_unavailable"_q, unavailable && _warned }, { u"allow_loss"_q, loss && _warned } });
 			_token.clear();
-			accept();
+			_box->closeBox();
 		} catch (const std::exception &error) {
-			label(QString::fromUtf8(error.what()), u"#b00020"_q);
+			label(_rows, QString::fromUtf8(error.what()));
 		}
 	}
 
+	QPointer<Ui::GenericBox> _box;
+	QPointer<Ui::RoundButton> _cancel;
 	QString _token;
 	QString _installationId;
 	Fn<void()> _done;
 	QJsonObject _info;
-	QVBoxLayout *_rows = nullptr;
-	QDialogButtonBox *_buttons = nullptr;
+	Ui::VerticalLayout *_rows = nullptr;
+	Ui::VerticalLayout *_actions = nullptr;
 	QTimer *_timer = nullptr;
+	rpl::variable<bool> _showDetails = false;
 	bool _warned = false;
 };
 
@@ -234,7 +283,14 @@ bool InstallationUiActive() {
 
 void ShowPluginInstall(const QString &path, const QString &installationId, Fn<void()> done) {
 	if (InstallationUiActive()) return;
-	(new InstallDialog(path, installationId, std::move(done)))->show();
+	const auto window = Core::App().activePrimaryWindow();
+	if (!window) {
+		if (done) done();
+		return;
+	}
+	window->uiShow()->showBox(Box([=, done = std::move(done)](not_null<Ui::GenericBox*> box) mutable {
+		new InstallController(box, path, installationId, std::move(done));
+	}));
 }
 
 } // namespace Ovygram

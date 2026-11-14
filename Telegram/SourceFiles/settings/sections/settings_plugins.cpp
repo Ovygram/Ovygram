@@ -4,6 +4,7 @@
 #include "core/file_utilities.h"
 #include "core/plugin_runtime.h"
 #include "ovygram/plugin_install.h"
+#include "ovygram/plugin_trust_badge.h"
 #include "lang/lang_keys.h"
 #include "mainwidget.h"
 #include "settings/settings_common_session.h"
@@ -167,11 +168,11 @@ void AddNotice(
 	if (status == u"official"_q) return u"Официальный плагин"_q;
 	if (status == u"blocked"_q) return u"Опасный плагин / вирус — запуск запрещён"_q;
 	if (status == u"revoked"_q) return u"Непроверенный плагин — проверка отозвана"_q;
-	if (status == u"verification_unavailable"_q) return u"Сервер не отвечает — невозможно проверить плагин"_q;
+	if (status == u"verification_unavailable"_q) return u"Проверка недоступна"_q;
 	return u"Непроверенный плагин"_q;
 }
 
-[[nodiscard]] QString DescriptionPreview(const QString &description) {
+[[nodiscard]] QString ErrorPreview(const QString &description) {
 	const auto text = description.simplified();
 	constexpr auto kLimit = 160;
 	return (text.size() > kLimit) ? text.left(kLimit).trimmed() + u"…"_q : text;
@@ -205,12 +206,13 @@ not_null<Ui::FlatLabel*> AddCardLabel(
 }
 
 void AddTrustMetadata(not_null<Ui::VerticalLayout*> card, const QJsonObject &plugin) {
-	const auto author = AddCardLabel(card, PluginMetadata(plugin), st::settingsPluginCardMeta);
-	if (plugin.value(u"author_hidden"_q).toBool()) author->setTextColorOverride(QColor(u"#b00020"_q));
+	AddCardLabel(card, PluginMetadata(plugin), st::settingsPluginCardMeta);
 	const auto status = plugin.value(u"trust"_q).toObject().value(u"status"_q).toString();
-	const auto badge = AddCardLabel(card, TrustStatus(plugin), st::settingsPluginCardMeta);
-	badge->setTextColorOverride(QColor(status == u"official"_q ? u"#1565c0"_q
-		: status == u"verified"_q ? u"#188038"_q : u"#b00020"_q));
+	Ovygram::AddPluginTrustBadge(card, TrustStatus(plugin), status);
+	if (status == u"verification_unavailable"_q) {
+		const auto reason = plugin.value(u"trust"_q).toObject().value(u"reason"_q).toString();
+		if (!reason.isEmpty()) AddCardLabel(card, reason, st::settingsPluginCardMeta);
+	}
 }
 
 class PluginButtonRow final : public Ui::RpWidget {
@@ -420,7 +422,7 @@ void PluginDetails::refresh() {
 			operate(enabled ? u"disable"_q : u"enable"_q);
 		});
 	AddTrustMetadata(card, plugin);
-	AddCardLabel(card, plugin.value(u"description"_q).toString());
+	AddCardLabel(card, plugin.value(u"description"_q).toString(), st::settingsPluginBody);
 	if (const auto line = DependencyLine(plugin); !line.isEmpty()) {
 		AddCardLabel(card, line, st::settingsPluginCardMeta);
 	}
@@ -700,12 +702,12 @@ void Plugins::populate() {
 			enabled, !status.isEmpty() || plugin.value(u"trust"_q).toObject().value(u"status"_q).toString() == u"blocked"_q,
 			[=, this] { operate(id, enabled ? u"disable"_q : u"enable"_q); });
 		AddTrustMetadata(card, plugin);
-		AddCardLabel(card, DescriptionPreview(plugin.value(u"description"_q).toString()));
+		AddCardLabel(card, plugin.value(u"description"_q).toString(), st::settingsPluginBody);
 		if (const auto line = DependencyLine(plugin); !line.isEmpty()) {
 			AddCardLabel(card, line, st::settingsPluginCardMeta);
 		}
 		if (const auto error = plugin.value(u"error"_q).toString(); !error.isEmpty()) {
-			AddCardLabel(card, u"Ошибка: "_q + DescriptionPreview(error), st::settingsPluginCardMeta);
+			AddCardLabel(card, u"Ошибка: "_q + ErrorPreview(error), st::settingsPluginCardMeta);
 		}
 		AddCardActions(
 			card,
@@ -756,6 +758,11 @@ void Plugins::install() {
 
 Type PluginsId() {
 	return Plugins::Id();
+}
+
+bool IsPluginsSection(const Type &type) {
+	return type == Plugins::Id()
+		|| dynamic_cast<const DetailsFactory*>(type.get()) != nullptr;
 }
 
 } // namespace Settings

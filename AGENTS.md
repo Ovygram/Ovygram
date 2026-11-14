@@ -1,5 +1,9 @@
 # Working rules for Ovygram
 
+- Mandatory UI rule: every Ovygram-owned dialog and window uses Telegram's
+  native UI components and theme palette, including plugin installation,
+  warnings and confirmations. Do not introduce unstyled Qt/OS message boxes.
+  Plugin descriptions must remain complete, wrapping and scrolling as needed.
 - The authorized scope includes both `/workspace/ovygram-info/plugin-distribution.md`
   and the complete SDK plan in `/workspace/ovygram-info/README.md`.
 - Windows builds run only through GitHub Actions and only after the owner

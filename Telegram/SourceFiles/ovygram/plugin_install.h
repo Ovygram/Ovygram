@@ -4,7 +4,7 @@
 
 namespace Ovygram {
 
-// A native application-modal confirmation outside the Plugin API surface tree.
+// A Telegram-native confirmation outside the Plugin API surface tree.
 // While it exists, supported plugin UI/native/key APIs cannot inspect or act.
 [[nodiscard]] bool InstallationUiActive();
 void ShowPluginInstall(

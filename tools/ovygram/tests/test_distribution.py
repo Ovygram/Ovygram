@@ -151,6 +151,17 @@ class DistributionTests(unittest.TestCase):
         self.assertEqual(Path(self.manager.share_file(identity)).read_bytes(), payload)
         self.assertEqual(path.read_bytes(), payload)
 
+    def test_full_multiline_description_reaches_installation_and_plugin_list(self):
+        description = ("Подробное описание работы плагина. " * 40) + "\nПоследний абзац: конец описания."
+        source = self.source().decode("utf-8")
+        old_line = next(line for line in source.splitlines() if line.startswith("__description__ ="))
+        payload = source.replace(old_line, "__description__ = " + repr(description)).encode("utf-8")
+        token, _ = self.prepare(payload)
+        self.assertEqual(self.manager.distribution.prepared(token)["metadata"]["description"], description)
+        identity = self.manager.distribution.commit(token)
+        self.assertEqual(self.manager.describe(identity)["description"], description)
+        self.assertEqual(self.manager.snapshot()["plugins"][0]["description"], description)
+
     def test_tampered_unknown_or_expired_signatures_never_grant_trust(self):
         self.approve(self.source())
         answer = self.registry.check({"id": "lifecycle", "version": "1.0.0", "release": True},
@@ -162,6 +173,41 @@ class DistributionTests(unittest.TestCase):
         self.now += timedelta(days=8)
         with self.assertRaises(ValueError):
             self.registry.validate(answer)
+
+    def test_small_clock_skew_accepts_fresh_signatures_but_not_expired_answers(self):
+        answer = self.sign({"status": "unverified"})
+        issued = self.now
+        for seconds in (.225113, 1, 30, 60):
+            with self.subTest(skew=seconds):
+                self.now = issued - timedelta(seconds=seconds)
+                self.registry.validate(answer)
+        self.now = issued - timedelta(seconds=61)
+        with self.assertRaisesRegex(ValueError, "время"):
+            self.registry.validate(answer)
+        self.now = issued + timedelta(days=7)
+        with self.assertRaises(ValueError):
+            self.registry.validate(answer)
+        self.now = issued
+        for invalid in ({"expires_at": (issued - timedelta(seconds=1)).isoformat()},
+                        {"expires_at": (issued + timedelta(days=9)).isoformat()}):
+            with self.assertRaises(ValueError):
+                self.registry.validate(self.sign({"status": "unverified", **invalid}))
+
+    def test_configuration_failure_reason_survives_install_restart_and_recheck(self):
+        from ovygram_registry import unavailable
+        reason = "Реестр не настроен: требуются URL и закреплённый публичный ключ."
+        self.registry.check = lambda *args: unavailable(reason)
+        token, _ = self.prepare(self.source())
+        self.assertEqual(self.manager.distribution.prepared(token)["trust"]["reason"], reason)
+        identity = self.manager.distribution.commit(token, allow_unavailable=True)
+        self.assertEqual(self.manager.describe(identity)["trust"]["reason"], reason)
+        self.check()
+        self.assertEqual(self.manager.describe(identity)["trust"]["reason"], reason)
+        self.manager.shutdown()
+        self.manager = Manager(self.root / "profile", registry=self.registry)
+        self.addCleanup(self.manager.shutdown)
+        self.assertEqual(self.manager.describe(identity)["trust"]["reason"], reason)
+        self.assertIn(reason, self.manager.root.joinpath("plugins.log").read_text(encoding="utf-8"))
 
     def test_mismatched_id_type_or_version_is_unavailable(self):
         digest = self.approve(self.source())
@@ -540,6 +586,17 @@ class WindowsRegistryCryptoTests(unittest.TestCase):
 
 
 class RegistryConfigurationTests(unittest.TestCase):
+    def test_shipped_registry_has_https_endpoints_and_the_pinned_key(self):
+        from ovygram_registry import https_url
+        config = json.loads((ROOT / "Telegram/PluginSDK/registry.json").read_bytes())
+        self.assertEqual(https_url(config["server_url"]), "https://api.ovygram.opik.net")
+        self.assertEqual(https_url(config["index_url"]), "https://raw.githubusercontent.com/Ovygram/ovygram-plugins/main/index.json")
+        self.assertIn("543138e5eaa5851c", config["public_keys"])
+        for identity, value in config["public_keys"].items():
+            key = base64.b64decode(value, validate=True)
+            self.assertEqual(len(key), 32)
+            self.assertEqual(hashlib.sha256(key).hexdigest()[:16], identity)
+
     def test_deployment_environment_overrides_endpoints_but_keeps_pinned_keys(self):
         config = {"server_url": "https://packaged.test", "index_url": "https://packaged.test/index.json",
                   "public_keys": {"pinned": "public-key"}}

@@ -63,8 +63,11 @@ class Distribution:
         from ovygram_runtime import read_package
         metadata, kind = read_package(payload, filename)
         digest = hashlib.sha256(payload).hexdigest()
+        trust = self.registry.check(metadata, digest, kind)
+        if trust["status"] == "verification_unavailable":
+            self.manager.logger.warning("Registry check for %s: %s", metadata["id"], trust.get("reason"))
         return {"payload": payload, "metadata": metadata, "package_type": kind, "sha256": digest,
-                "trust": self.registry.check(metadata, digest, kind)}
+                "trust": trust}
 
     def prepared(self, token):
         self.poll()
@@ -287,6 +290,11 @@ class Distribution:
             old_status = version.get("trust", {}).get("status")
             trust = checked["trust"]
             version["verification_unavailable"] = trust["status"] == "verification_unavailable"
+            if trust["status"] == "verification_unavailable":
+                version["verification_failure"] = copy.deepcopy(trust)
+                self.manager.logger.warning("Registry check for %s: %s", record["plugin_id"], trust.get("reason"))
+            else:
+                version.pop("verification_failure", None)
             if trust["status"] != "verification_unavailable":
                 version["trust"] = trust
                 version["blocked"] = trust["status"] == "blocked"

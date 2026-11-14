@@ -22,7 +22,9 @@ Nonempty `OVYGRAM_REGISTRY_URL` and
 `OVYGRAM_PLUGIN_INDEX_URL` environment variables override these endpoints;
 they do not replace the pinned public keys. Explicit `Registry(config)`
 configuration takes precedence over environment variables.
-The bundle script and CMake copy that directory into `python/sdk`.
+The bundle script and CMake copy that directory into `python/sdk`. CMake
+refreshes it on every Telegram target build even when the executable does
+not relink, so a cached Python bundle cannot retain obsolete registry URLs.
 These values are public deployment configuration, never API tokens or private
 keys. The HTTPS server must expose `/v1/check` and `/v1/chains/{chain}`.
 
@@ -40,16 +42,35 @@ No automatic update can proceed in that state. Known blocks survive outages
 and expired responses. A failed refresh hides a previous green/blue badge
 while retaining the confirmed chain for a later retry.
 
+Signed issue times may be up to 60 seconds ahead of the client clock. This
+only tolerates normal clock skew: signatures, pinned keys, strict expiry
+and the maximum signed lifetime are still checked. The original failure
+reason is retained in local state and `plugins.log`, including after a
+restart; configuration and signature failures are not labelled server outages.
+
 ## Installation and trust
 
 Import from Settings → Plugins or open a downloaded `.ovyplugin`/`.ovyzip`
-in a chat. A native C++ application-modal dialog shows the complete metadata,
-safe author display, exact SHA-256 and server status. Package-provided text
-uses plain text. Cancel is the default button, including on warnings.
+in a chat. A Telegram-native `Ui::GenericBox` shows the complete metadata,
+safe author display and server status; a disclosure contains the ID and exact
+SHA-256. The selected layout uses a summary card and a large installation
+button above Cancel. Full descriptions wrap and scroll; the footer stays
+visible. Package-provided text uses plain text. Cancel receives initial focus,
+including on warnings; Enter does not implicitly accept installation.
 `blocked` cannot be installed or enabled. An unconfirmed author resembling
 Ovygram, including common Cyrillic/Greek lookalikes and invisible characters,
 is displayed as “Неизвестный автор”. Only the exact `Ovygram` author with a
 valid `official` server confirmation receives the official badge.
+
+**Mandatory UI rule:** every Ovygram-owned window, installation prompt,
+warning and confirmation uses Telegram UI components and its theme palette.
+The installer and plugin settings use a wider 660px layout (clamped to the
+available window); plugin settings request at least 640px height when space
+allows. Descriptions in the installer, list and details remain complete,
+including line breaks, with wrapping and scrolling rather than elision.
+Unverified statuses use a muted red rounded badge; author and version keep
+normal secondary text colors. Verified and official badges remain green
+and blue respectively, using the active theme palette.
 
 Preparation reads, hashes and checks a package in a background worker.
 The installer retains those bytes, so a change to the selected path between
@@ -107,17 +128,13 @@ The distribution tests use real Ed25519 signatures and controlled transport.
 The server suite also tests its signed answers against this SDK when both
 repositories are checked out side by side.
 
-To compile and exercise the production native dialog independently, install
-Qt6Widgets development files, create an output directory and run:
-
-```sh
-sh tools/ovygram/plugin_install_smoke.sh /absolute/output/directory
-```
-
-This verifies native dialog behavior using a fixture host boundary and saves
-screenshots for unavailable verification, trust loss, a trusted duplicate
-and a blocked file. It does not replace a full Telegram build and testing
-with an authenticated Telegram session on Linux and Windows.
+The former standalone Qt dialog fixture was retired when installation moved
+to Telegram's `GenericBox`; it did not exercise Telegram's layer stack,
+styles or scroll behavior. Native validation requires a separately authorized
+client build and an authenticated session. Check long multiline descriptions
+in light/dark themes and small windows, pinned buttons, initial Cancel focus,
+blocked files, unavailable verification, trust loss and trusted duplicates.
+Source/API inspection and Python tests do not replace those runtime checks.
 
 ## Дополнение после повторной сверки
 

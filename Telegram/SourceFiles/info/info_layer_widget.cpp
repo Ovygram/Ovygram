@@ -8,6 +8,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "info/info_layer_widget.h"
 
 #include "info/info_content_widget.h"
+#include "info/info_controller.h"
 #include "info/info_top_bar.h"
 #include "info/info_memento.h"
 #include "ui/rp_widget.h"
@@ -22,6 +23,11 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/application.h"
 #include "styles/style_info.h"
 #include "styles/style_layers.h"
+
+#ifdef OVYGRAM_ENABLED
+#include "settings/sections/settings_plugins.h"
+#include "styles/style_settings.h"
+#endif
 
 namespace Info {
 
@@ -89,6 +95,12 @@ void LayerWidget::floatPlayerDoubleClickEvent(
 
 void LayerWidget::setupHeightConsumers() {
 	Expects(_contentWrap != nullptr);
+
+#ifdef OVYGRAM_ENABLED
+	_contentWrap->contentChanged() | rpl::on_next([this] {
+		InvokeQueued(this, [this] { parentResized(); });
+	}, lifetime());
+#endif
 
 	_contentWrap->scrollTillBottomChanges(
 	) | rpl::filter([this] {
@@ -204,9 +216,17 @@ void LayerWidget::parentResized() {
 	//} else if (_controller->canShowThirdSectionWithoutResize()) {
 	//	takeToThirdSection();
 	} else {
+		auto desiredWidth = st::infoDesiredWidth;
+#ifdef OVYGRAM_ENABLED
+		const auto section = _contentWrap->controller()->section();
+		if (section.type() == Section::Type::Settings
+			&& ::Settings::IsPluginsSection(section.settingsType())) {
+			desiredWidth = st::settingsPluginsLayerWidth;
+		}
+#endif
 		auto newWidth = std::min(
 			parentWidth - 2 * st::infoMinimalLayerMargin,
-			st::infoDesiredWidth);
+			desiredWidth);
 		resizeToWidth(newWidth);
 	}
 }
@@ -311,6 +331,13 @@ QRect LayerWidget::countGeometry(int newWidth) {
 	const auto maxVisibleHeight = windowHeight - newTop;
 	// Top rounding is included in _contentWrapHeight.
 	auto desiredHeight = _contentWrapHeight + bottomRadius;
+#ifdef OVYGRAM_ENABLED
+	const auto section = _contentWrap->controller()->section();
+	if (section.type() == Section::Type::Settings
+		&& ::Settings::IsPluginsSection(section.settingsType())) {
+		accumulate_max(desiredHeight, st::settingsPluginsLayerMinHeight);
+	}
+#endif
 	accumulate_min(desiredHeight, maxVisibleHeight - newBottom);
 
 	// First resize content to new width and get the new desired height.

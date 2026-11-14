@@ -31,6 +31,7 @@ target_sources(Telegram PRIVATE
     SourceFiles/ovygram/plugin_elements.h
     SourceFiles/ovygram/plugin_install.cpp
     SourceFiles/ovygram/plugin_install.h
+    SourceFiles/ovygram/plugin_trust_badge.h
     SourceFiles/ovygram/plugin_menus.cpp
     SourceFiles/ovygram/plugin_menus.h
     SourceFiles/ovygram/plugin_panel_buttons.cpp
@@ -95,7 +96,15 @@ else()
     endif()
 endif()
 
-add_dependencies(Telegram ovygram_host)
+# Refresh the SDK even when Telegram itself does not relink. Cached Python
+# bundles may contain registry.json from before the server was deployed.
+# TARGET_FILE_DIR does not create a reverse dependency (CMP0112 NEW).
+add_custom_target(ovygram_sdk
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${CMAKE_CURRENT_SOURCE_DIR}/PluginSDK" "$<TARGET_FILE_DIR:Telegram>/python/sdk"
+    VERBATIM
+)
+add_dependencies(Telegram ovygram_host ovygram_sdk)
 add_custom_command(TARGET Telegram POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         "${plugin_python}/python" "$<TARGET_FILE_DIR:Telegram>/python"
