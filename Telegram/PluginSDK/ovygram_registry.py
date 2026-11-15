@@ -196,11 +196,22 @@ class Registry:
         return result
 
     def chain(self, chain, plugin_id):
-        answer = self.signed(f"/v1/chains/{int(chain)}")
-        if answer.get("chain") != chain or answer.get("plugin_id") != plugin_id \
-                or not isinstance(answer.get("versions"), list):
-            raise ValueError("Ответ относится к другой цепочке автора.")
-        return answer["versions"]
+        versions, cursor = [], 0
+        for _ in range(20):
+            answer = self.signed(f"/v1/chains/{int(chain)}?limit=500&after={cursor}")
+            if answer.get("chain") != chain or answer.get("plugin_id") != plugin_id \
+                    or not isinstance(answer.get("versions"), list):
+                raise ValueError("Ответ относится к другой цепочке автора.")
+            versions.extend(answer["versions"])
+            if len(versions) > 10000:
+                break
+            next_cursor = answer.get("next_cursor")
+            if next_cursor is None:
+                return versions
+            if type(next_cursor) is not int or next_cursor <= cursor:
+                raise ValueError("Некорректный курсор истории версий.")
+            cursor = next_cursor
+        raise ValueError("История версий слишком велика.")
 
     def info(self, url, plugin_id):
         # Discovery only: every selected package still needs a signed check.

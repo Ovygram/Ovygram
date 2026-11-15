@@ -11,9 +11,13 @@ import io
 import json
 import re
 import stat
+import tokenize
+import zlib
 import zipfile
 from dataclasses import dataclass
 from pathlib import PurePosixPath
+
+from ovygram_validation import preflight_source, unique_json_object, valid_requirement, valid_text
 
 SDK_VERSION = 2
 MAX_PACKAGE = 32 * 1024 * 1024
@@ -105,8 +109,9 @@ def read_source(source: bytes, filename: str) -> dict:
     if len(source) > MAX_SOURCE:
         raise InvalidPlugin("Файл плагина больше 1 МиБ.")
     try:
+        preflight_source(source)
         tree = ast.parse(source, filename=filename)
-    except (SyntaxError, ValueError) as error:
+    except (SyntaxError, ValueError, tokenize.TokenError, MemoryError, RecursionError) as error:
         raise InvalidPlugin(f"Синтаксическая ошибка: {error}") from error
     values = {}
     simple = set()
@@ -122,7 +127,7 @@ def read_source(source: bytes, filename: str) -> dict:
                 raise InvalidPlugin(f"Метатег {target.id} объявлен больше одного раза.")
             try:
                 values[target.id] = ast.literal_eval(node.value)
-            except ValueError as error:
+            except (ValueError, TypeError, MemoryError, RecursionError) as error:
                 raise InvalidPlugin(f"{target.id} должен быть литералом.") from error
             simple.add(id(target))
     # Any other write to a metadata name makes the file ambiguous:
@@ -142,7 +147,7 @@ def check_metadata(values: dict) -> dict:
     values["id"] = normalize_id(values["id"])
     for key, limit in TEXT_LIMITS.items():
         value = values[key]
-        if not isinstance(value, str) or not value.strip() or len(value) > limit:
+        if not valid_text(value, multiline=key == "description") or not value.strip() or len(value) > limit:
             raise InvalidPlugin(f"Поле {key}: непустая строка до {limit} символов.")
     values["version_info"] = parse_version(values["version"])
     values.setdefault("release", False)
@@ -156,8 +161,8 @@ def check_metadata(values: dict) -> dict:
         raise IncompatiblePlugin(f"Плагину требуется Desktop SDK {values['sdk']}, доступен {SDK_VERSION}.")
     requirements = values.get("requirements", [])
     if not isinstance(requirements, list) or len(requirements) > 32 \
-            or not all(isinstance(item, str) and item.strip() for item in requirements):
-        raise InvalidPlugin("__requirements__: список до 32 строк.")
+            or not all(valid_requirement(item) for item in requirements):
+        raise InvalidPlugin("__requirements__: до 32 зависимостей по 200 символов, только имя пакета, extras и версия.")
     values["requirements"] = requirements
     return values
 
@@ -187,6 +192,16 @@ def read_member(archive: zipfile.ZipFile, entry: zipfile.ZipInfo, limit: int) ->
 
 
 def read_zip(data: bytes) -> tuple[dict, list[str]]:
+    try:
+        return _read_zip(data)
+    except InvalidPlugin:
+        raise
+    except (zipfile.BadZipFile, EOFError, RuntimeError, NotImplementedError, zlib.error,
+            UnicodeError, ValueError, RecursionError, MemoryError) as error:
+        raise InvalidPlugin("Повреждённый или неподдерживаемый архив.") from error
+
+
+def _read_zip(data: bytes) -> tuple[dict, list[str]]:
     """Metadata and the file list. Checks every entry (spec §13)."""
     try:
         archive = zipfile.ZipFile(io.BytesIO(data))
@@ -219,7 +234,8 @@ def read_zip(data: bytes) -> tuple[dict, list[str]]:
         if MANIFEST not in files:
             raise InvalidPlugin(f"В корне архива нужен {MANIFEST}.")
         try:
-            manifest = json.loads(read_member(archive, files[MANIFEST], 4096))
+            manifest = json.loads(read_member(archive, files[MANIFEST], 4096),
+                                  object_pairs_hook=unique_json_object)
         except ValueError as error:
             raise InvalidPlugin(f"{MANIFEST} — некорректный JSON.") from error
         if not isinstance(manifest, dict) or set(manifest) != {"id", "entry"}:

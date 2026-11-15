@@ -3,6 +3,7 @@
 #include <QtGui/QPainter>
 
 #include <stdexcept>
+#include <cmath>
 
 namespace Ovygram {
 namespace {
@@ -30,7 +31,11 @@ std::vector<PaintOp> ParsePaintOps(const QJsonArray &commands, int limit) {
 		const auto command = value.toObject();
 		const auto name = command.value(u"op"_q).toString();
 		const auto number = [&](const char *key, double fallback = 0.) {
-			return command.value(QLatin1String(key)).toDouble(fallback);
+			const auto result = command.value(QLatin1String(key)).toDouble(fallback);
+			if (!std::isfinite(result)) {
+				throw std::runtime_error("Draw coordinates must be finite numbers.");
+			}
+			return result;
 		};
 		auto op = PaintOp{
 			.x = number("x"),
@@ -41,7 +46,7 @@ std::vector<PaintOp> ParsePaintOps(const QJsonArray &commands, int limit) {
 			.y2 = number("y2"),
 			.radius = number("radius"),
 			.lineWidth = std::max(number("width", 1.), 1.),
-			.size = std::clamp(int(number("size", 13.)), 6, 96),
+			.size = int(std::clamp(number("size", 13.), 6., 96.)),
 			.color = ParsePaintColor(command.value(u"color"_q)),
 			.text = command.value(u"text"_q).toString(),
 		};

@@ -1,5 +1,26 @@
 # Plugin installation, trust and updates
 
+## Audit update — 15 November 2026
+
+The SDK now shares the registry's bounded static validation policy: corrupt
+ZIP/CRC, duplicate manifest keys, invalid Unicode/control characters and
+excessively complex Python input become package errors. Requirements accept
+at most 32 entries of 200 characters using package names, extras and versions.
+Local installation still defaults a missing `__release__` to `False`;
+moderation still requires the explicit tag.
+
+Signed chain history is fetched in pages of 500 with a checked forward cursor,
+up to 10,000 versions. A failure never returns a partial history as complete.
+Copy the complete updated SDK into `python/sdk` with the client closed to
+apply these Python changes to an existing distribution. Back up that directory
+first and restart afterwards. Registry configuration retains the pinned public
+key `543138e5eaa5851c` and the production HTTPS URL; no private key is shipped.
+
+The source fix for font size checks finite double values and clamps before
+conversion to int. It requires a future explicitly authorized native build;
+this update does not build or replace the executable. Plugin process/OS
+isolation remains deferred as described in `protected-ui-architecture.md`.
+
 The shared parser is `Telegram/PluginSDK/ovygram_package.py`. Distribution
 uses `.ovyplugin` and `.ovyzip`; local import also accepts `.py`, `.plugin`
 and `.zip`. Metadata is read without running the package. `__desktop_sdk__`
