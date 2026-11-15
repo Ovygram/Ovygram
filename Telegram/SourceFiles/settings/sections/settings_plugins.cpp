@@ -150,6 +150,14 @@ void AddNotice(
 		: QString();
 }
 
+// A text that came from the plugin's own process is the plugin speaking,
+// not Ovygram: it is labelled so.
+[[nodiscard]] QString ErrorTitle(const QJsonObject &plugin) {
+	return plugin.value(u"error_from_plugin"_q).toBool()
+		? u"Сообщение плагина: "_q
+		: u"Ошибка: "_q;
+}
+
 // What the user must know about the process plugins run in: why it can't
 // start, that it has no network, or that it isn't restricted at all.
 [[nodiscard]] QString IsolationStatus(const QJsonObject &snapshot) {
@@ -476,7 +484,7 @@ void PluginDetails::refresh() {
 		AddCardLabel(card, line, st::settingsPluginCardMeta);
 	}
 	if (const auto error = plugin.value(u"error"_q).toString(); !error.isEmpty()) {
-		Ui::AddDividerText(_content, rpl::single(u"Ошибка: "_q + error));
+		Ui::AddDividerText(_content, rpl::single(ErrorTitle(plugin) + error));
 	}
 	if (!status.isEmpty()) {
 		Ui::AddDividerText(_content, rpl::single(status));
@@ -792,7 +800,7 @@ void Plugins::populate() {
 			AddCardLabel(card, line, st::settingsPluginCardMeta);
 		}
 		if (const auto error = plugin.value(u"error"_q).toString(); !error.isEmpty()) {
-			AddCardLabel(card, u"Ошибка: "_q + ErrorPreview(error), st::settingsPluginCardMeta);
+			AddCardLabel(card, ErrorTitle(plugin) + ErrorPreview(error), st::settingsPluginCardMeta);
 		}
 		AddCardActions(
 			card,

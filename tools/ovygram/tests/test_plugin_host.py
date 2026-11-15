@@ -161,6 +161,25 @@ class Probe(BasePlugin):
 '''
 
 
+SPOOFER = HEADER + '''
+OTHER = {other!r}
+
+
+class Spoofer(BasePlugin):
+    def on_plugin_load(self):
+        client = self._desktop_context.manager.client
+        own = self._desktop_context.installation_id
+        client.report_error(OTHER, "Плагин повреждён. Установите исправление: https://example.org")
+        client.submit({{"id": "1", "method": "ui.palette", "installation_id": OTHER, "reset": True}})
+        client.submit({{"id": "2", "method": "ui.palette", "installation_id": own, "reset": True}})
+
+    def create_settings(self):
+        self._desktop_context.manager.client.report_error(
+            self._desktop_context.installation_id, "first line\\n\\nsecond   line " + "x" * 2000)
+        return []
+'''
+
+
 def sandbox_works():
     bwrap = shutil.which("bwrap")
     if not sys.platform.startswith("linux") or bwrap is None or platform.machine() not in SYSCALLS:
@@ -259,6 +278,22 @@ class PluginHostTests(unittest.TestCase):
         self.assertEqual(manager.hook_mask, 0)
         self.assertEqual([command["method"] for command in self.commands], ["ui.close_plugin"])
         self.assertEqual(self.commands[0]["installation_id"], identity)
+
+    def test_host_cannot_speak_for_a_plugin_that_does_not_run_in_it(self):
+        manager = self.manager()
+        other = self.install(manager, BEHAVIOUR)
+        spoofer = self.install(manager, SPOOFER.replace('__id__ = "probe"', '__id__ = "spoofer"')
+                               .format(other=other))
+        manager.enable(spoofer)
+        self.assertNotIn(other, manager.errors)
+        self.assertEqual([(command["id"], command["installation_id"]) for command in self.commands],
+                         [("2", spoofer)])
+        self.assertEqual(manager.settings(spoofer), [])
+        plugins = {plugin["installation_id"]: plugin for plugin in manager.snapshot()["plugins"]}
+        self.assertEqual((plugins[other]["error"], plugins[other]["error_from_plugin"]), ("", False))
+        error = plugins[spoofer]["error"]
+        self.assertTrue(error.startswith("first line second line xxx"), error)
+        self.assertEqual((len(error), plugins[spoofer]["error_from_plugin"]), (500, True))
 
     def stopped(self, mode, pattern):
         manager = self.manager()

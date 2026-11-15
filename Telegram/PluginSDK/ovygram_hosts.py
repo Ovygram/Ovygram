@@ -36,6 +36,10 @@ class HostError(RuntimeError):
     pass
 
 
+class PluginError(HostError):
+    """An exception of plugin code; its text is written by the plugin."""
+
+
 def _text(value, limit):
     return value[:limit] if isinstance(value, str) else ""
 
@@ -282,7 +286,7 @@ class ProcessHost:
                     text = _text(message["error"], MAX_ERROR) or "Ошибка плагина."
                     if message.get("cancelled"):
                         raise HookCancelled(text)
-                    raise HostError(text)
+                    raise PluginError(text)
                 return message.get("result")
 
     def answer(self, session, message):
@@ -339,7 +343,7 @@ class LocalHost:
         try:
             result = self.executor.dispatch(action, json.loads(json.dumps(params)))
         except self.load_error as error:
-            raise HostError(str(error)) from error
+            raise PluginError(str(error)) from error
         return json.loads(json.dumps(result))
 
     def close(self):

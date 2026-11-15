@@ -354,12 +354,25 @@ PluginUi::PluginUi(EventSender send)
 	PanelButtons::SetEventSender(_send);
 	Native::SetEventSender(_send);
 	// A canvas over a widget that contains a protected surface would cover
-	// it: such overlays stay hidden while the surface exists.
+	// it: such overlays stay hidden while the surface exists. A dialog of a
+	// plugin is a layer above everything, so it is closed.
 	ProtectedSurfacesChanged() | rpl::on_next([=] {
+		auto boxes = std::vector<QPointer<Ui::BoxContent>>();
 		for (const auto &[id, object] : _objects) {
 			if (const auto overlay = object->overlay.get()) {
 				overlay->setVisible(
 					!ProtectedFromPlugins(overlay->parentWidget()));
+			}
+			if (object->box) {
+				boxes.push_back(object->box);
+			}
+		}
+		if (ProtectedSurfaceExists()) {
+			// Closing a box removes its object from the map.
+			for (const auto &box : boxes) {
+				if (box) {
+					box->closeBox();
+				}
 			}
 		}
 	}, _lifetime);
@@ -459,6 +472,12 @@ void PluginUi::show(const QJsonObject &command) {
 	const auto tree = command.value(u"tree"_q).toObject();
 	const auto kind = command.value(u"kind"_q).toString();
 	if (kind == u"dialog"_q) {
+		if (ProtectedSurfaceExists()) {
+			// It would be drawn over the plugin manager with Telegram's own
+			// components and could pass for a window of Ovygram.
+			throw std::runtime_error(
+				"Dialogs are unavailable while Ovygram's plugin manager is open.");
+		}
 		const auto window = Core::App().activePrimaryWindow();
 		if (!window) {
 			throw std::runtime_error("No active Telegram window.");

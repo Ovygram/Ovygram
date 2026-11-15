@@ -30,7 +30,7 @@ import zipfile
 from hook_utils import HookCancelled
 from ovygram_deps import Dependencies, normalize_all
 from ovygram_distribution import Distribution
-from ovygram_hosts import HostError, LocalHost, ProcessHost
+from ovygram_hosts import HostError, LocalHost, PluginError, ProcessHost
 from ovygram_registry import TRUSTED, protected_author
 from ovygram_package import (MAX_PACKAGE, MAX_SOURCE, SDK_VERSION, archive_path, read_source,
                              read_zip)
@@ -128,6 +128,7 @@ def unpack_package(payload, kind, target):
     return entry
 
 
+MAX_PLUGIN_ERROR = 500
 MAX_SETTINGS = 256
 SETTING_KINDS = {"header": {"text": str}, "button": {"key": str, "text": str, "action_id": str},
                  "switch": {"key": str, "text": str, "value": bool},
@@ -171,6 +172,7 @@ class Manager:
         self.bridge = False
         self.sender = None
         self.closing = False
+        self.reported = {}  # installation_id -> the error text its plugin wrote.
         self.distribution_state = {}
         self.pending_updates = {}
         self._startup_pending = True
@@ -239,8 +241,14 @@ class Manager:
         self.forward("dependencies_path", None, directory=str(directory),
                      replace=str(replace) if replace else None)
 
+    def running(self, installation_id):
+        """Whether the host may speak for the installation: only for a plugin
+        that runs in it, not for every installed one."""
+        return isinstance(installation_id, str) and (
+            installation_id in self._loaded or installation_id == self.loading)
+
     def host_submit(self, command):
-        if not isinstance(command, dict) or command.get("installation_id") not in self.records:
+        if not isinstance(command, dict) or not self.running(command.get("installation_id")):
             return
         if self.sender is not None:
             self.sender(command)
@@ -252,11 +260,17 @@ class Manager:
             self.logger.warning("Команда плагина не доставлена: %s", error)
 
     def host_error(self, installation_id, message):
-        if installation_id in self.records:
-            self.errors[installation_id] = message
+        if self.running(installation_id):
+            self.plugin_error(installation_id, message)
+
+    def plugin_error(self, installation_id, message):
+        """An error text written by the plugin side: one bounded paragraph,
+        which the manager shows as a message of the plugin."""
+        text = " ".join(message.split())[:MAX_PLUGIN_ERROR] or "Ошибка плагина."
+        self.errors[installation_id] = self.reported[installation_id] = text
 
     def host_set_setting(self, installation_id, key, value, account_id=None):
-        if installation_id not in self._loaded and installation_id != self.loading:
+        if not self.running(installation_id):
             raise ValueError("Плагин не запущен.")
         self.store_setting(installation_id, key, value, account_id)
 
@@ -487,8 +501,10 @@ class Manager:
             return True
         except BaseException as error:
             message = str(error) or type(error).__name__
-            if isinstance(error, HostError):
+            if isinstance(error, PluginError):
                 # The host has logged the traceback of the plugin.
+                self.plugin_error(installation_id, message)
+            elif isinstance(error, HostError):
                 self.errors[installation_id] = message
             else:
                 self.report_error(installation_id, message)
@@ -850,7 +866,9 @@ class Manager:
                  "loaded": installation_id in self._loaded,
                  "previous": record["previous"] is not None,
                  "instances": len(self.installations_of(record["plugin_id"])),
-                 "error": self.errors.get(installation_id, "")}
+                 "error": self.errors.get(installation_id, ""),
+                 "error_from_plugin": bool(self.errors.get(installation_id)) and (
+                     self.errors.get(installation_id) == self.reported.get(installation_id))}
                 for installation_id, record in sorted(
                     self.records.items(), key=lambda item: (item[1]["plugin_id"], item[0]))
             ],
