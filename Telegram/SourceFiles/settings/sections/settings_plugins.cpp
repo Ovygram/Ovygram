@@ -629,10 +629,12 @@ private:
 
 	std::unique_ptr<Ui::SearchFieldController> _search;
 	Ui::VerticalLayout *_content = nullptr;
+	Ui::SettingsButton *_checkUpdates = nullptr;
 	QJsonObject _snapshot;
 	QString _query;
 	rpl::variable<QString> _notice;
 	bool _polling = false;
+	bool _manualCheckPending = false;
 };
 
 Plugins::Plugins(
@@ -646,8 +648,11 @@ Plugins::Plugins(
 	setNavigationAnchor(layout);
 	AddNotice(layout, _notice);
 	AddAction(layout, u"Импортировать плагин"_q, [this] { install(); }, st::settingsPluginImport);
-	AddAction(layout, u"Проверить обновления"_q, [this] {
-		(void)Request({ { u"action"_q, u"check_updates"_q } }, _notice);
+	_checkUpdates = AddAction(layout, u"Проверить обновления"_q, [this] {
+		const auto started = Request({ { u"action"_q, u"check_updates"_q } }, _notice);
+		if (started.isUndefined()) return;
+		_manualCheckPending = true;
+		_notice = started.toBool() ? u"Проверяю обновления плагинов…"_q : u"Проверка уже выполняется…"_q;
 		refresh();
 	});
 	_content = layout->add(object_ptr<Ui::VerticalLayout>(layout));
@@ -671,6 +676,25 @@ void Plugins::showFinished() {
 
 void Plugins::refresh() {
 	_snapshot = Request({ { u"action"_q, u"snapshot"_q } }, _notice).toObject();
+	const auto distribution = _snapshot.value(u"distribution"_q).toObject();
+	_checkUpdates->setDisabled(distribution.value(u"checking"_q).toBool());
+	if (_manualCheckPending && !distribution.value(u"checking"_q).toBool()
+		&& distribution.value(u"last_check"_q).isObject()) {
+		_manualCheckPending = false;
+		const auto result = distribution.value(u"last_check"_q).toObject();
+		const auto errors = result.value(u"errors"_q).toArray();
+		const auto updates = result.value(u"updates"_q).toInt();
+		_notice = updates
+			? u"Найдены обновления или безопасные версии: %1. Выберите плагин ниже."_q.arg(updates)
+			: result.value(u"checked"_q).toInt()
+			? u"Проверка завершена. Новых проверенных версий нет."_q
+			: u"Установленных плагинов для проверки нет."_q;
+		if (!errors.isEmpty()) {
+			_notice = u"Проверка завершена с ошибками. "_q
+				+ (updates ? u"Доступно обновлений: %1. "_q.arg(updates) : QString())
+				+ errors.first().toString();
+		}
+	}
 	populate();
 	// The plugin starts when its libraries are installed in the background.
 	if ((InstallingDependencies(_snapshot) || _snapshot.value(u"distribution"_q).toObject().value(u"busy"_q).toBool()) && !_polling) {
@@ -734,6 +758,14 @@ void Plugins::populate() {
 			[=, this] { operate(id, enabled ? u"disable"_q : u"enable"_q); });
 		AddTrustMetadata(card, plugin);
 		AddCardLabel(card, plugin.value(u"description"_q).toString(), st::settingsPluginBody);
+		if (plugin.value(u"update"_q).isObject()) {
+			const auto offer = plugin.value(u"update"_q).toObject();
+			const auto target = offer.value(u"latest_version"_q).toString(offer.value(u"version"_q).toString());
+			AddAction(card, offer.value(u"rollback"_q).toBool()
+				? u"Установить безопасную версию %1"_q.arg(target)
+				: u"Обновить до версии %1"_q.arg(target),
+				[=, this] { operate(id, u"apply_update"_q); }, st::settingsPluginCardAction);
+		}
 		if (const auto line = DependencyLine(plugin); !line.isEmpty()) {
 			AddCardLabel(card, line, st::settingsPluginCardMeta);
 		}

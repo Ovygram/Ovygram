@@ -823,7 +823,7 @@ class Manager:
                 "trust": trust, "display_author": "Неизвестный автор" if author_hidden else version["metadata"]["author"],
                 "author_hidden": author_hidden,
                 "previously_trusted": version.get("trust", {}).get("status") in TRUSTED,
-                "update": self.distribution.offers.get(installation_id),
+                "update": self.distribution.offer_for(installation_id),
                 "plugin_id": record["plugin_id"], "enabled": record["enabled"],
                 "sha256": version.get("sha256"), "package_type": version.get("package_type"),
                 "legacy": version.get("format") == "legacy"}
@@ -866,6 +866,8 @@ class Manager:
             "commit_install": self.distribution.commit,
             "discard_install": self.distribution.discard,
             "check_updates": lambda: self.distribution.start_check(manual=True),
+            "distribution_status": self.distribution.status,
+            "dismiss_update_notification": self.distribution.dismiss_notification,
             "apply_update": self.distribution.apply_offer,
             "snapshot": self.snapshot, "inspect": self.inspect, "install": self.install,
             "enable": self.enable,
