@@ -23,7 +23,8 @@ class PluginRuntimeTests(unittest.TestCase):
         self.profile = self.root / "profile"
 
     def test_missing_release_installs_as_false_in_every_local_format(self):
-        source = EXAMPLE.read_bytes().replace(b"__release__ = False\n", b"")
+        source = (EXAMPLE.read_bytes().replace(b"\r\n", b"\n")
+                  .replace(b"__release__ = False\n", b""))
         self.assertNotIn(b"__release__", source)
         for suffix in (".ovyplugin", ".py", ".plugin", ".ovyzip", ".zip"):
             with self.subTest(suffix=suffix):
@@ -51,7 +52,8 @@ class PluginRuntimeTests(unittest.TestCase):
                 restored.shutdown()
 
     def test_release_default_does_not_hide_invalid_or_duplicate_values(self):
-        source = EXAMPLE.read_bytes().replace(b"__release__ = False\n", b"")
+        source = (EXAMPLE.read_bytes().replace(b"\r\n", b"\n")
+                  .replace(b"__release__ = False\n", b""))
         for value in ("None", "0", "1", "'False'", "bool(0)", "False\n__release__ = True"):
             with self.subTest(value=value), self.assertRaises(InvalidPlugin):
                 read_package(source + f"\n__release__ = {value}\n".encode(), "lifecycle.ovyplugin")
