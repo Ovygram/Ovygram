@@ -15,6 +15,7 @@ import socket
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
 import uuid
 
@@ -171,6 +172,7 @@ class Spoofer(BasePlugin):
         own = self._desktop_context.installation_id
         client.report_error(OTHER, "Плагин повреждён. Установите исправление: https://example.org")
         client.submit({{"id": "1", "method": "ui.palette", "installation_id": OTHER, "reset": True}})
+        client.commands_changed(OTHER, [{{"name": "fake"}}])
         client.submit({{"id": "2", "method": "ui.palette", "installation_id": own, "reset": True}})
 
     def create_settings(self):
@@ -288,6 +290,7 @@ class PluginHostTests(unittest.TestCase):
         self.assertNotIn(other, manager.errors)
         self.assertEqual([(command["id"], command["installation_id"]) for command in self.commands],
                          [("2", spoofer)])
+        self.assertFalse(manager.commands.tables)
         self.assertEqual(manager.settings(spoofer), [])
         plugins = {plugin["installation_id"]: plugin for plugin in manager.snapshot()["plugins"]}
         self.assertEqual((plugins[other]["error"], plugins[other]["error_from_plugin"]), ("", False))
@@ -326,6 +329,46 @@ class PluginHostTests(unittest.TestCase):
         ovygram_hosts.TIMEOUTS["settings"] = 1
         self.addCleanup(ovygram_hosts.TIMEOUTS.__setitem__, "settings", previous)
         self.stopped("sleep", "не ответили")
+
+
+@unittest.skipUnless(sandbox_works(), "needs Linux with bubblewrap and user namespaces")
+class HostCommandTests(unittest.TestCase):
+    def setUp(self):
+        import test_commands
+        self.source = test_commands.PLUGIN
+        self.chat = test_commands.CHAT
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        root = Path(temporary.name)
+        self.manager = Manager(root / "profile")
+        self.addCleanup(self.manager.shutdown)
+        self.refreshed = threading.Event()
+        self.manager.sender = lambda command: (
+            self.refreshed.set() if command.get("method") == "commands.refresh" else None)
+        path = root / "commands.ovyplugin"
+        path.write_text(self.source, encoding="utf-8")
+        self.identity = self.manager.install(str(path))
+        self.manager.enable(self.identity)
+
+    def dispatch(self, action, **parameters):
+        return json.loads(self.manager.dispatch(json.dumps({"action": action, **parameters})))
+
+    def test_commands_cross_the_process_boundary(self):
+        view = self.dispatch("commands_input", text="/later М", cursor=8, context=self.chat)["result"]
+        self.assertEqual((view["active"], view["items"]), (True, []))
+        # The coroutine of the plugin answers after the view was returned.
+        self.assertTrue(self.refreshed.wait(10))
+        view = self.dispatch("commands_view")["result"]
+        self.assertEqual([item["title"] for item in view["items"]], ["Москва", "Мурманск"])
+        self.assertEqual(self.dispatch("commands_submit", text="/погода Москва 3", context=self.chat)["result"],
+                         {"handled": True, "error": ""})
+        self.assertEqual(self.manager.records[self.identity]["settings"]["ran"], ["1", "Москва", 3])
+        # A failing handler keeps the text out of the chat and says why.
+        result = self.dispatch("commands_submit", text="/fail", context=self.chat)["result"]
+        self.assertEqual(result, {"handled": True, "error": "broken handler"})
+        self.manager.disable(self.identity)
+        self.assertEqual(self.dispatch("commands_submit", text="/fail", context=self.chat)["result"],
+                         {"handled": False, "error": ""})
 
 
 @unittest.skipUnless(sys.platform == "win32", "needs Windows")

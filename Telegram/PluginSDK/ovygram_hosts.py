@@ -245,6 +245,10 @@ class ProcessHost:
             manager.hook_mask = message["value"] & MASK_BITS
         elif kind == "restart_required":
             manager.restart_required = True
+        elif kind == "commands":
+            manager.host_commands(message["installation_id"], message["commands"])
+        elif kind == "command_suggestions":
+            manager.host_suggestions(message["token"], message["items"])
         else:
             raise ValueError(kind)
 
@@ -319,6 +323,12 @@ class LocalClient:
 
     def restart_required(self):
         self.manager.restart_required = True
+
+    def commands_changed(self, installation_id, commands):
+        self.manager.host_commands(installation_id, commands)
+
+    def command_suggestions(self, token, items):
+        self.manager.host_suggestions(token, items)
 
 
 class LocalHost:

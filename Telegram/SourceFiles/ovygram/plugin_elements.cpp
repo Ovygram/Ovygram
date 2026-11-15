@@ -482,5 +482,13 @@ void RemovePlugin(const QString &installationId) {
 	ResetColors(installationId);
 }
 
+int UnitsToCodePoints(const QString &text, int units) {
+	return Ovygram::UnitsToCodePoints(text, units);
+}
+
+int CodePointsToUnits(const QString &text, int points) {
+	return Ovygram::CodePointsToUnits(text, points);
+}
+
 } // namespace Elements
 } // namespace Ovygram

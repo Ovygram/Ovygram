@@ -28,6 +28,8 @@ target_sources(Telegram PRIVATE
     SourceFiles/ovygram/chat_decorations.h
     SourceFiles/ovygram/message_decorations.cpp
     SourceFiles/ovygram/message_decorations.h
+    SourceFiles/ovygram/plugin_commands.cpp
+    SourceFiles/ovygram/plugin_commands.h
     SourceFiles/ovygram/plugin_elements.cpp
     SourceFiles/ovygram/plugin_elements.h
     SourceFiles/ovygram/plugin_install.cpp

@@ -11,6 +11,8 @@ The client is reached through an object with these members:
     report_error(installation_id, message)
     set_setting(installation_id, key, value, account_id)
     mask_changed(mask)
+    commands_changed(installation_id, commands)
+    command_suggestions(token, items)
     restart_required()
 """
 
@@ -90,6 +92,7 @@ class Executor:
             "bridge_lost": lambda: self.runtime.ready.clear(),
             "native_hook": self.runtime.native_hook, "native_event": self.runtime.native_event,
             "execute_ui": self.runtime.execute_ui, "ui_event": self.runtime.ui_event,
+            "command": self.runtime.run_command, "command_suggest": self.runtime.suggest_command,
             "shutdown": self.shutdown,
         }
 
@@ -113,6 +116,12 @@ class Executor:
 
     def hook_mask_changed(self, mask):
         self.client.mask_changed(mask)
+
+    def commands_changed(self, installation_id, commands):
+        self.client.commands_changed(installation_id, commands)
+
+    def command_suggestions(self, token, items):
+        self.client.command_suggestions(token, items)
 
     def label(self, installation_id):
         context = self.runtime.contexts.get(installation_id)

@@ -144,6 +144,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "styles/style_layers.h"
 
 #ifdef OVYGRAM_ENABLED
+#include "ovygram/plugin_commands.h"
 #include "ovygram/plugin_elements.h"
 #include "ovygram/plugin_panel_buttons.h"
 #endif // OVYGRAM_ENABLED
@@ -2176,13 +2177,22 @@ auto ComposeControls::sendContentRequests(SendRequestType requestType) const {
 	auto submit = rpl::map([=](Qt::KeyboardModifiers modifiers) {
 		return adjustedSupportSendOptions(modifiers);
 	});
+	// A plugin command runs instead of being sent as a message.
+	auto command = rpl::filter([=] {
+#ifdef OVYGRAM_ENABLED
+		return (requestType != SendRequestType::Text)
+			|| !Ovygram::Commands::Submit(_field.get());
+#else // OVYGRAM_ENABLED
+		return true;
+#endif // OVYGRAM_ENABLED
+	});
 	return rpl::merge(
 		_send->clicks() | rpl::filter([=] {
 			return sendButtonSends();
-		}) | filter | map,
+		}) | filter | command | map,
 		_fieldSubmits.events() | rpl::filter([=] {
 			return submitSends();
-		}) | filter | submit,
+		}) | filter | command | submit,
 		_sendCustomRequests.events() | custom);
 }
 
@@ -2902,6 +2912,12 @@ void ComposeControls::init() {
 	initWriteRestriction();
 	initVoiceRecordBar();
 	initKeyHandler();
+#ifdef OVYGRAM_ENABLED
+	// After the field's own key handlers: the command list sees keys first.
+	Ovygram::Commands::Attach(_wrap.get(), _field.get(), [this] {
+		return _history ? _history->peer.get() : nullptr;
+	});
+#endif // OVYGRAM_ENABLED
 	initEditStarsButton();
 	_minStarsCount.changes() | rpl::on_next([=] {
 		initEditStarsButton();

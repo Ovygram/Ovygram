@@ -59,6 +59,12 @@ class Client:
     def restart_required(self):
         self.channel.send({"event": "restart_required"})
 
+    def commands_changed(self, installation_id, commands):
+        self.channel.send({"event": "commands", "installation_id": installation_id, "commands": commands})
+
+    def command_suggestions(self, token, items):
+        self.channel.send({"event": "command_suggestions", "token": token, "items": items})
+
     def set_setting(self, installation_id, key, value, account_id):
         # Runs on the main thread inside a call of the client, which answers
         # this request before it goes on waiting for the reply to its own.
