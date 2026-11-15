@@ -182,7 +182,8 @@ void AddNotice(
 		not_null<Ui::VerticalLayout*> layout) {
 	const auto card = layout->add(
 		object_ptr<Ui::VerticalLayout>(layout),
-		st::settingsPluginCardMargin);
+		st::settingsPluginCardMargin,
+		style::al_justify);
 	card->paintRequest() | rpl::on_next([=] {
 		auto p = QPainter(card);
 		const auto quality = PainterHighQualityEnabler(p);
@@ -200,7 +201,8 @@ not_null<Ui::FlatLabel*> AddCardLabel(
 		const style::FlatLabel &style = st::defaultFlatLabel) {
 	const auto label = card->add(
 		object_ptr<Ui::FlatLabel>(card, std::move(text), style),
-		st::settingsPluginTextMargin);
+		st::settingsPluginTextMargin,
+		style::al_justify);
 	label->setBreakEverywhere(true);
 	return label;
 }
@@ -215,6 +217,32 @@ void AddTrustMetadata(not_null<Ui::VerticalLayout*> card, const QJsonObject &plu
 	}
 }
 
+class PluginCardButton final : public Ui::SettingsButton {
+public:
+	PluginCardButton(QWidget *parent, QString text, const style::SettingsButton &style, bool toggle)
+	: Ui::SettingsButton(parent, rpl::single(std::move(text)), style)
+	, _toggle(toggle) {
+	}
+
+protected:
+	void paintEvent(QPaintEvent *event) override {
+		if (!_toggle && (isOver() || isDown()) && !isDisabled()) {
+			auto p = QPainter(this);
+			const auto quality = PainterHighQualityEnabler(p);
+			auto fill = st::windowFg->c;
+			fill.setAlpha(isDown() ? 22 : 12);
+			p.setPen(Qt::NoPen);
+			p.setBrush(fill);
+			const auto bounds = QRect(4, 4, std::min(width() - 8, fullTextWidth() + 20), height() - 8);
+			p.drawRoundedRect(bounds, 6, 6);
+		}
+		Ui::SettingsButton::paintEvent(event);
+	}
+
+private:
+	const bool _toggle;
+};
+
 class PluginButtonRow final : public Ui::RpWidget {
 public:
 	PluginButtonRow(QWidget *parent, bool hasToggle = false)
@@ -226,10 +254,11 @@ public:
 			QString text,
 			const style::SettingsButton &style,
 			Fn<void()> action = nullptr) {
-		const auto button = Ui::CreateChild<Ui::SettingsButton>(
+		const auto button = Ui::CreateChild<PluginCardButton>(
 			this,
-			rpl::single(std::move(text)),
-			style);
+			std::move(text),
+			style,
+			_hasToggle && !_buttons.empty());
 		if (action) {
 			button->setClickedCallback(std::move(action));
 		}
@@ -247,13 +276,15 @@ protected:
 		const auto regular = count - (_hasToggle ? 1 : 0);
 		const auto space = width - toggleWidth;
 		auto left = 0;
+		auto height = 0;
 		for (auto i = 0; i != count; ++i) {
 			const auto right = (i < regular) ? (space * (i + 1) / regular) : width;
 			_buttons[i]->resizeToWidth(right - left);
+			height = std::max(height, _buttons[i]->height());
 			_buttons[i]->moveToLeft(left, 0, width);
 			left = right;
 		}
-		return st::settingsPluginCardAction.height;
+		return height;
 	}
 
 private:
@@ -272,7 +303,7 @@ void AddPluginHeader(
 	row->addButton(std::move(title), st::settingsPluginCardTitle, std::move(open));
 	const auto button = row->addButton(
 		enabled ? u"Отключить плагин"_q : u"Включить плагин"_q,
-		st::settingsPluginCardAction,
+		st::settingsPluginToggleAction,
 		std::move(toggle));
 	button->toggleOn(rpl::single(enabled), true);
 	button->setDisabled(blocked && !enabled);
