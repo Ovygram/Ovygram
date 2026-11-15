@@ -14,6 +14,8 @@ int main(int argc, char **argv) {
 		const auto python = std::filesystem::path(argv[0]).parent_path() / L"python";
 		const auto disabled = (std::filesystem::path(argv[2]) == L"disabled");
 		auto host = Core::PluginRuntime(python, argv[1], disabled);
+		// Enabled plugins start when the client connects, as in Ovygram.
+		host.setClient([](const std::string &) {});
 		for (auto line = std::string(); std::getline(std::cin, line);) {
 			std::cout << host.dispatch(line) << std::endl;
 		}

@@ -87,6 +87,7 @@ class Executor:
             "dependencies_path": self.dependencies_path,
             "complete": self.runtime.complete, "is_pending": self.runtime.is_pending,
             "bridge_ready": lambda: self.runtime.ready.set(),
+            "bridge_lost": lambda: self.runtime.ready.clear(),
             "native_hook": self.runtime.native_hook, "native_event": self.runtime.native_event,
             "execute_ui": self.runtime.execute_ui, "ui_event": self.runtime.ui_event,
             "shutdown": self.shutdown,

@@ -153,7 +153,7 @@ def checked_settings(fields):
 
 
 class Manager:
-    def __init__(self, root, disabled=False, registry=None, host=ProcessHost):
+    def __init__(self, root, disabled=False, registry=None, host=ProcessHost, defer_start=False):
         self.root = Path(root).resolve()
         self.root.mkdir(parents=True, exist_ok=True)
         self.packages = self.root / "packages"
@@ -196,9 +196,14 @@ class Manager:
             return
         self._startup_pending = False
         if not (self.disabled or self.recovery):
-            for installation_id, record in tuple(self.records.items()):
-                if record["enabled"]:
-                    self.load(installation_id)
+            self.load_enabled()
+
+    def load_enabled(self):
+        for installation_id, record in tuple(self.records.items()):
+            # A plugin that takes the host down stops the rest, as a crash
+            # of the client used to.
+            if record["enabled"] and not self.recovery:
+                self.load(installation_id)
 
     def set_client_ready(self, ready):
         """The native host connects its UI dispatcher before any on_plugin_load.
@@ -207,11 +212,63 @@ class Manager:
         startup is deferred, and reconnecting a client never loads plugins twice.
         """
         self.check_thread()
+        self.bridge = bool(ready)
+        self.forward("bridge_ready" if ready else "bridge_lost", None)
         if ready:
-            self.runtime.ready.set()
             self._start_enabled()
-        else:
-            self.runtime.ready.clear()
+
+    # The host and what it reports. Events arrive on its reader thread.
+
+    @property
+    def loaded(self):
+        executor = getattr(self.host, "executor", None)
+        return executor.loaded if executor is not None else self._loaded
+
+    @property
+    def runtime(self):
+        """The runtime of the in-process host, for tests and tools."""
+        return self.host.executor.runtime
+
+    def forward(self, action, default, **params):
+        """An action of the executor, or default while no plugin runs."""
+        if not self.host.running:
+            return default
+        return self.host.call(action, **params)
+
+    def dependencies_path(self, directory, replace=None):
+        self.forward("dependencies_path", None, directory=str(directory),
+                     replace=str(replace) if replace else None)
+
+    def host_submit(self, command):
+        if not isinstance(command, dict) or command.get("installation_id") not in self.records:
+            return
+        if self.sender is not None:
+            self.sender(command)
+            return
+        try:
+            import _ovygram_native
+            _ovygram_native.submit(json.dumps(command, ensure_ascii=False))
+        except (ImportError, RuntimeError) as error:
+            self.logger.warning("Команда плагина не доставлена: %s", error)
+
+    def host_error(self, installation_id, message):
+        if installation_id in self.records:
+            self.errors[installation_id] = message
+
+    def host_set_setting(self, installation_id, key, value, account_id=None):
+        if installation_id not in self._loaded and installation_id != self.loading:
+            raise ValueError("Плагин не запущен.")
+        self.store_setting(installation_id, key, value, account_id)
+
+    def host_exited(self, reason):
+        """The host process died or was stopped; on the main thread."""
+        for installation_id in self._loaded:
+            self.errors[installation_id] = reason
+        self._loaded.clear()
+        self.hook_mask = 0
+        if not self.closing:
+            self.recovery = True
+            self.logger.error("%s", reason)
 
     def read_state(self):
         state = json.loads(self.state.read_text(encoding="utf-8")) if self.state.exists() else {
@@ -828,7 +885,7 @@ class Manager:
             "client_reply": lambda request: self.forward("complete", None, request=request),
             "client_pending": lambda request_id, installation_id: bool(self.forward(
                 "is_pending", False, request_id=request_id, installation_id=installation_id)),
-            "bridge_ready": self.bridge_ready,
+            "bridge_ready": lambda: self.set_client_ready(True),
             "native_hook": self.native_hook,
             "client_event": self.client_event,
             "ui_execute": lambda call_id: self.forward("execute_ui", None, call_id=call_id),
@@ -887,5 +944,5 @@ class InProcessManager(Manager):
     """Runs plugins inside the calling process, without any isolation: for
     the SDK tests and tools. The client always uses Manager."""
 
-    def __init__(self, root, disabled=False, registry=None):
-        super().__init__(root, disabled, registry, host=LocalHost)
+    def __init__(self, root, disabled=False, registry=None, defer_start=False):
+        super().__init__(root, disabled, registry, host=LocalHost, defer_start=defer_start)

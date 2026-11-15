@@ -21,7 +21,7 @@ import time
 from hook_utils import HookCancelled
 from ovygram_channel import Channel, ChannelClosed
 from ovygram_deps import python_command
-from ovygram_sandbox import SandboxError, wrap
+from ovygram_sandbox import SandboxError, confine, release, wrap
 
 START_TIMEOUT = 30
 # Seconds the client waits for plugin code before it stops the host.
@@ -48,6 +48,7 @@ class Session:
         self.threads = []
         self.output = []  # The last lines of the error stream.
         self.dead = False
+        self.guard = None  # Of the sandbox, released after the process.
 
 
 class ProcessHost:
@@ -88,20 +89,40 @@ class ProcessHost:
             raise
         options["scope"] = bool(report.get("scoped"))
         command.append(json.dumps(options))
-        if report["active"]:
-            environment = {}
+        if descriptors:
+            environment = {}  # bubblewrap sets the environment of the host itself.
         else:
             environment = {**{key: value for key, value in os.environ.items()
                               if not key.startswith("PYTHON")}, **environment}
+            if report["active"]:
+                # The profile of the user isn't writable for the host.
+                temporary = data / "tmp"
+                temporary.mkdir(exist_ok=True)
+                environment.update(TEMP=str(temporary), TMP=str(temporary))
+        # Where the restrictions are applied to the created process, it
+        # stays suspended until confine() has applied them.
+        suspended = report.pop("creation_flags", 0)
         try:
             process = subprocess.Popen(
                 command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                 env=environment, cwd=str(data), pass_fds=descriptors,
-                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0) | suspended)
         finally:
             for descriptor in descriptors:
                 os.close(descriptor)
         session = Session(process)
+        try:
+            if suspended:
+                session.guard = confine(process)
+        except Exception as error:
+            # Also an error of the restricting code itself: the process is
+            # still suspended and must not be left behind or resumed.
+            process.kill()
+            self.stop(session)
+            self.report = {"active": False, "network": False, "reason": str(error)}
+            if isinstance(error, SandboxError):
+                raise
+            raise SandboxError(f"Изоляция плагинов: {error}") from error
         for target in (self.read, self.read_errors):
             thread = threading.Thread(target=target, args=(session,), name="Ovygram plugin host",
                                       daemon=True)
@@ -138,6 +159,8 @@ class ProcessHost:
                 stream.close()
             except OSError:
                 pass
+        release(session.guard)
+        session.guard = None
 
     def close(self):
         session = self.session

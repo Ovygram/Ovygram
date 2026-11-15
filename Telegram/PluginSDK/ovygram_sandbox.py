@@ -12,8 +12,12 @@ UNIX sockets of outside processes (kernel 6.12+): an X server listens on one
 and may accept any process of the user. Otherwise the host gets an empty
 network namespace.
 
-Other platforms have no implementation yet: wrap() says so in its report
-and the client shows it instead of hiding the weaker mode.
+Windows: see ovygram_sandbox_windows.py. The host is created suspended and
+confine() lowers its integrity level and puts it into a job object before
+it runs.
+
+Other platforms have no implementation: wrap() says so in its report and
+the client shows it instead of hiding the weaker mode.
 """
 
 import ctypes
@@ -159,10 +163,18 @@ _SYSTEM = (
 def wrap(command, environment, read_only=(), writable=(), directory=None):
     """(argv, file descriptors to pass, report) that run command restricted.
 
-    report is what the client shows: {"active", "network", "reason"}.
-    Raises SandboxError where the restrictions exist but can't be set up:
-    the host must not start without them.
+    report is what the client shows: {"active", "network", "reason"}, with
+    "creation_flags" for subprocess.Popen where the process must then go
+    through confine(). Raises SandboxError where the restrictions exist but
+    can't be set up: the host must not start without them.
     """
+    if sys.platform == "win32":
+        import ovygram_sandbox_windows as windows
+        for path in writable:
+            windows.label_low(path)
+        return list(command), (), {
+            "active": True, "network": True, "reason": "",
+            "creation_flags": windows.CREATE_SUSPENDED}
     if not sys.platform.startswith("linux"):
         return list(command), (), {
             "active": False, "network": True,
@@ -201,3 +213,16 @@ def wrap(command, environment, read_only=(), writable=(), directory=None):
     return arguments, (descriptor,), {
         "active": True, "network": scoped, "scoped": scoped,
         "reason": "" if scoped else "Сеть плагинам недоступна: ядру нужен Landlock 6 (Linux 6.12)."}
+
+
+def confine(process):
+    """Restricts and resumes a process started with the "creation_flags" of
+    wrap(). Returns what release() needs once the process has exited."""
+    import ovygram_sandbox_windows as windows
+    return windows.confine(process)
+
+
+def release(guard):
+    if guard is not None:
+        import ovygram_sandbox_windows as windows
+        windows.release(guard)

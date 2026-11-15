@@ -165,10 +165,8 @@ void PluginRuntime::setClient(
 		const auto lock = std::lock_guard(_private->client->mutex);
 		_private->client->submit = std::move(callback);
 	}
-	if (ready) {
-		const auto lock = py::gil_scoped_acquire();
-		_private->manager.attr("bridge_ready")();
-	}
+	const auto lock = py::gil_scoped_acquire();
+	_private->manager.attr("set_client_ready")(ready);
 }
 
 std::string PluginRuntime::dispatch(const std::string &request) {

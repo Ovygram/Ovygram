@@ -127,6 +127,40 @@ class Behaviour(BasePlugin):
 '''
 
 
+WINDOWS_PROBE = HEADER + '''
+import ctypes
+from file_utils import get_plugin_data_dir
+
+CLIENT = {client}
+OUTSIDE = {outside!r}
+
+
+def attempt(action):
+    try:
+        action()
+        return "ok"
+    except BaseException as error:
+        return type(error).__name__
+
+
+def open_client():
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.OpenProcess.restype = ctypes.c_void_p
+    # PROCESS_VM_OPERATION | PROCESS_VM_READ | PROCESS_VM_WRITE
+    if not kernel32.OpenProcess(0x0038, False, CLIENT):
+        raise OSError(ctypes.get_last_error())
+
+
+class Probe(BasePlugin):
+    def on_plugin_load(self):
+        self.set_setting("probe", {{
+            "outside": attempt(lambda: open(OUTSIDE, "w").close()),
+            "data": attempt(lambda: (get_plugin_data_dir() / "written").write_text("x")),
+            "client": attempt(open_client),
+        }})
+'''
+
+
 def sandbox_works():
     bwrap = shutil.which("bwrap")
     if not sys.platform.startswith("linux") or bwrap is None or platform.machine() not in SYSCALLS:
@@ -257,6 +291,27 @@ class PluginHostTests(unittest.TestCase):
         ovygram_hosts.TIMEOUTS["settings"] = 1
         self.addCleanup(ovygram_hosts.TIMEOUTS.__setitem__, "settings", previous)
         self.stopped("sleep", "не ответили")
+
+
+@unittest.skipUnless(sys.platform == "win32", "needs Windows")
+class WindowsHostTests(unittest.TestCase):
+    def test_plugin_cannot_open_the_client_or_write_user_files(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        root = Path(temporary.name)
+        manager = Manager(root / "profile")
+        self.addCleanup(manager.shutdown)
+        manager.sender = lambda command: None
+        path = root / "probe.ovyplugin"
+        path.write_text(WINDOWS_PROBE.format(client=os.getpid(), outside=str(root / "outside.txt")),
+                        encoding="utf-8")
+        identity = manager.install(str(path))
+        manager.enable(identity)
+        report = manager.snapshot()["isolation"]
+        self.assertEqual((report["mode"], report["active"], report["reason"]), ("process", True, ""))
+        self.assertEqual(manager.records[identity]["settings"]["probe"],
+                         {"outside": "PermissionError", "data": "ok", "client": "OSError"})
+        self.assertFalse((root / "outside.txt").exists())
 
 
 if __name__ == "__main__":

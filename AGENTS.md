@@ -21,8 +21,9 @@
   in the client: the manager in `ovygram_runtime.py` must not import plugin
   code or libraries. On Linux the host starts only inside the sandbox of
   `ovygram_sandbox.py`. Application-owned windows/tabs are registered with
-  `Ovygram::ProtectSurface`. The design and what is still open (Windows
-  restrictions among it) are in `docs/protected-ui-architecture.md`.
+  `Ovygram::ProtectSurface`. The design and what is still open are in
+  `docs/protected-ui-architecture.md`; the Windows restrictions in
+  `ovygram_sandbox_windows.py` stay unverified until they have run on Windows.
 - Registry/index URLs will be supplied at deployment. Keep them configurable;
   their absence is not an implementation blocker. Pin the generated public key
   in the client. Never commit the private signing key or put it in client files.
