@@ -49,7 +49,8 @@ enum class Priority : int {
 	PremiumGrace     = 6,
 	CustomPromo      = 7,
 	GiftAuctions     = 8,
-	UnreviewedAuth   = 9,
+	PluginUpdates    = 9,
+	UnreviewedAuth   = 10,
 };
 
 struct Spec {
@@ -62,6 +63,9 @@ struct Spec {
 [[nodiscard]] std::vector<Spec> AllSpecs();
 
 [[nodiscard]] Spec MakeBirthdayContactsSpec();
+#ifdef OVYGRAM_ENABLED
+[[nodiscard]] Spec MakePluginUpdatesSpec();
+#endif
 [[nodiscard]] Spec MakeBirthdaySetupSpec();
 [[nodiscard]] Spec MakeCustomPromoSpec();
 [[nodiscard]] Spec MakeGiftAuctionsSpec();

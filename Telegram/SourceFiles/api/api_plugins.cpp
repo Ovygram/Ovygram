@@ -1,5 +1,6 @@
 #include "api/api_plugins.h"
 #include "ovygram/plugin_install.h"
+#include "ovygram/plugin_updates.h"
 
 #include "api/api_text_entities.h"
 #include "api/api_updates.h"
@@ -197,6 +198,15 @@ PluginClient::PluginClient(not_null<Core::PluginRuntime*> runtime)
 		const auto data = QByteArray::fromStdString(request);
 		crl::on_main(this, [=] { receive(data); });
 	});
+	Ovygram::SetPluginUpdateDismissCallback(crl::guard(this, [=] {
+		try {
+			dispatch({ { u"action"_q, u"dismiss_update_notification"_q } });
+			Ovygram::SetPluginUpdateNotification(dispatch(
+				{ { u"action"_q, u"distribution_status"_q } }).toObject().value(u"notification"_q).toObject());
+		} catch (const std::exception &error) {
+			notifyHookError(QString::fromUtf8(error.what()));
+		}
+	}));
 	const auto registryTimer = new QTimer(this);
 	connect(registryTimer, &QTimer::timeout, this, [=] {
 		if (Ovygram::InstallationUiActive()) return;
@@ -204,6 +214,8 @@ PluginClient::PluginClient(not_null<Core::PluginRuntime*> runtime)
 			for (const auto &notice : dispatch({ { u"action"_q, u"poll"_q } }).toArray()) {
 				notifyHookError(notice.toString());
 			}
+			Ovygram::SetPluginUpdateNotification(dispatch(
+				{ { u"action"_q, u"distribution_status"_q } }).toObject().value(u"notification"_q).toObject());
 		} catch (const std::exception &error) {
 			LOG(("Ovygram registry: %1").arg(QString::fromUtf8(error.what())));
 		}
@@ -212,6 +224,8 @@ PluginClient::PluginClient(not_null<Core::PluginRuntime*> runtime)
 }
 
 PluginClient::~PluginClient() {
+	Ovygram::SetPluginUpdateDismissCallback({});
+	Ovygram::SetPluginUpdateNotification({});
 	_runtime->setClient({});
 	while (!_pending.empty()) {
 		cancel(_pending.begin()->first);

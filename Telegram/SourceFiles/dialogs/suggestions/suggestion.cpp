@@ -11,6 +11,9 @@ namespace Dialogs::TopBarSuggestions {
 
 std::vector<Spec> AllSpecs() {
 	auto result = std::vector<Spec>();
+#ifdef OVYGRAM_ENABLED
+	result.push_back(MakePluginUpdatesSpec());
+#endif
 	result.push_back(MakeBirthdayContactsSpec());
 	result.push_back(MakeBirthdaySetupSpec());
 	result.push_back(MakeCustomPromoSpec());

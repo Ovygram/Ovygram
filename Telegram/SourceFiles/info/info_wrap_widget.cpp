@@ -23,6 +23,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "settings/sections/settings_premium.h"
 #include "settings/sections/settings_shortcuts.h"
 #include "settings/settings_search.h"
+#ifdef OVYGRAM_ENABLED
+#include "settings/sections/settings_plugins.h"
+#endif
 #include "ui/effects/ripple_animation.h" // MaskByDrawer.
 #include "ui/widgets/menu/menu_add_action_callback.h"
 #include "ui/widgets/menu/menu_add_action_callback_factory.h"
@@ -1057,7 +1060,7 @@ void WrapWidget::showNewContent(
 		const Window::SectionShow &params) {
 	const auto saveToStack = (_content != nullptr)
 		&& (params.way == Window::SectionShow::Way::Forward);
-	const auto needAnimation = (_content != nullptr)
+	auto needAnimation = (_content != nullptr)
 		&& (params.animated != anim::type::instant);
 	auto animationParams = SectionSlideParams();
 	auto newController = createController(
@@ -1066,6 +1069,19 @@ void WrapWidget::showNewContent(
 	if (newController) {
 		newController->takeStepData(_controller.get());
 	}
+#ifdef OVYGRAM_ENABLED
+	if (newController && wrap() == Wrap::Layer) {
+		const auto widePlugins = [](const Section &section) {
+			return section.type() == Section::Type::Settings
+				&& ::Settings::IsPluginsSection(section.settingsType());
+		};
+		// A cached 420px slide must not be shown inside the 660px plugin
+		// layer. Transitions within the plugin section keep normal animation.
+		if (widePlugins(_controller->section()) != widePlugins(newController->section())) {
+			needAnimation = false;
+		}
+	}
+#endif
 	auto newContent = object_ptr<ContentWidget>(nullptr);
 	const auto withBackButton = willHaveBackButton(params);
 	const auto createInAdvance = needAnimation || withBackButton;

@@ -155,7 +155,7 @@ class PluginContext:
 
 
 class Manager:
-    def __init__(self, root, disabled=False, registry=None):
+    def __init__(self, root, disabled=False, registry=None, defer_start=False):
         self.root = Path(root).resolve()
         self.root.mkdir(parents=True, exist_ok=True)
         self.packages = self.root / "packages"
@@ -171,6 +171,7 @@ class Manager:
         self.setting_actions = {}
         self.distribution_state = {}
         self.pending_updates = {}
+        self._startup_pending = True
         self.logger = logging.Logger("ovygram")
         self.log_handler = RotatingFileHandler(
             self.root / "plugins.log", maxBytes=1024 * 1024, backupCount=2,
@@ -184,10 +185,30 @@ class Manager:
         self.records = self.read_state()
         self.distribution = Distribution(self, registry)
         self.recover_updates()
+        if not defer_start:
+            self._start_enabled()
+
+    def _start_enabled(self):
+        if not self._startup_pending:
+            return
+        self._startup_pending = False
         if not (self.disabled or self.recovery):
-            for installation_id, record in self.records.items():
+            for installation_id, record in tuple(self.records.items()):
                 if record["enabled"]:
                     self.load(installation_id)
+
+    def set_client_ready(self, ready):
+        """The native host connects its UI dispatcher before any on_plugin_load.
+
+        Standalone SDK/test users retain immediate startup by default. Embedded
+        startup is deferred, and reconnecting a client never loads plugins twice.
+        """
+        self.check_thread()
+        if ready:
+            self.runtime.ready.set()
+            self._start_enabled()
+        else:
+            self.runtime.ready.clear()
 
     def read_state(self):
         state = json.loads(self.state.read_text(encoding="utf-8")) if self.state.exists() else {
@@ -802,7 +823,7 @@ class Manager:
                 "trust": trust, "display_author": "Неизвестный автор" if author_hidden else version["metadata"]["author"],
                 "author_hidden": author_hidden,
                 "previously_trusted": version.get("trust", {}).get("status") in TRUSTED,
-                "update": self.distribution.offers.get(installation_id),
+                "update": self.distribution.offer_for(installation_id),
                 "plugin_id": record["plugin_id"], "enabled": record["enabled"],
                 "sha256": version.get("sha256"), "package_type": version.get("package_type"),
                 "legacy": version.get("format") == "legacy"}
@@ -845,6 +866,8 @@ class Manager:
             "commit_install": self.distribution.commit,
             "discard_install": self.distribution.discard,
             "check_updates": lambda: self.distribution.start_check(manual=True),
+            "distribution_status": self.distribution.status,
+            "dismiss_update_notification": self.distribution.dismiss_notification,
             "apply_update": self.distribution.apply_offer,
             "snapshot": self.snapshot, "inspect": self.inspect, "install": self.install,
             "enable": self.enable,

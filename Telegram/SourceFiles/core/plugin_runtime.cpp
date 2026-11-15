@@ -124,7 +124,8 @@ PluginRuntime::PluginRuntime(
 			ActiveNativeClient = _private->client;
 		}
 		_private->manager = py::module_::import("ovygram_runtime")
-			.attr("Manager")(profile.wstring(), disabled);
+			.attr("Manager")(
+				profile.wstring(), disabled, py::arg("defer_start") = true);
 		_private->threadState = PyEval_SaveThread();
 	} catch (const std::exception &error) {
 		failure = error.what();
@@ -164,10 +165,8 @@ void PluginRuntime::setClient(
 		const auto lock = std::lock_guard(_private->client->mutex);
 		_private->client->submit = std::move(callback);
 	}
-	if (ready) {
-		const auto lock = py::gil_scoped_acquire();
-		_private->manager.attr("runtime").attr("ready").attr("set")();
-	}
+	const auto lock = py::gil_scoped_acquire();
+	_private->manager.attr("set_client_ready")(ready);
 }
 
 std::string PluginRuntime::dispatch(const std::string &request) {

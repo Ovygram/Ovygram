@@ -8,6 +8,7 @@ bytes whose hash and metadata the confirmation dialog displays.
 import copy
 from datetime import datetime
 import hashlib
+import json
 import queue
 import threading
 import time
@@ -27,6 +28,26 @@ class Distribution:
         self.notices = []
         self.closed = False
         self.checking = False
+        self.last_check = None
+        saved = self.manager.distribution_state.get("offers", {})
+        if isinstance(saved, dict):
+            for identity, offer in saved.items():
+                record = self.manager.records.get(identity)
+                if not record or not isinstance(offer, dict) or type(offer.get("rollback")) is not bool \
+                        or offer.get("from_directory") != record["current"]["directory"]:
+                    continue
+                trust = self.registry.cached(record["current"])
+                sequence = offer.get("release_sequence")
+                if type(sequence) is not int or type(offer.get("chain")) is not int \
+                        or offer["chain"] != trust.get("chain") or not trust.get("release_sequence"):
+                    continue
+                if offer.get("rollback"):
+                    valid = trust["status"] in ("blocked", "revoked") and 0 < sequence < trust["release_sequence"]
+                else:
+                    valid = trust["status"] in TRUSTED and record["current"]["metadata"]["release"] \
+                        and sequence > trust["release_sequence"]
+                if valid:
+                    self.offers[identity] = copy.deepcopy(offer)
 
     def submit(self, operation, work, context=None):
         self.prune()
@@ -97,6 +118,10 @@ class Distribution:
         result = self.manager.install_bytes(package["payload"], package["metadata"],
                                             package["package_type"], installation_id, separate,
                                             trust, allow_loss=allow_loss)
+        if result in self.offers:
+            self.offers.pop(result)
+            self.manager.distribution_state["offers"] = copy.deepcopy(self.offers)
+            self.manager.save()
         self.jobs.pop(token)
         return result
 
@@ -125,6 +150,8 @@ class Distribution:
                     continue
                 trust = self.registry.check(version["metadata"], version["sha256"], version["package_type"])
                 checked[identity] = {"directory": version["directory"], "trust": trust}
+                if trust["status"] == "verification_unavailable":
+                    errors.append(record["plugin_id"] + ": " + (trust.get("reason") or "Проверка реестра недоступна."))
                 old = version.get("trust", {})
                 chain = trust.get("chain") or old.get("chain")
                 sequence = trust.get("release_sequence") or old.get("release_sequence")
@@ -177,7 +204,9 @@ class Distribution:
         return True
 
     def apply_offer(self, installation_id):
-        offer = copy.deepcopy(self.offers[installation_id])
+        offer = copy.deepcopy(self.offer_for(installation_id))
+        if offer is None:
+            raise ValueError("Предложение обновления устарело. Повторите проверку.")
         record = copy.deepcopy(self.manager.records[installation_id])
         current = record["current"]
         if current["directory"] != offer["from_directory"]:
@@ -273,9 +302,13 @@ class Distribution:
                         raise ValueError("Подтверждение обновления устарело. Повторите проверку.")
                     self.manager.activate_update(identity, result)
                     self.offers.pop(identity, None)
+                    self.manager.distribution_state["offers"] = copy.deepcopy(self.offers)
+                    self.manager.save()
                     self.notices.append("Плагин обновлён: " + record["plugin_id"])
             except Exception as exception:
                 self.notices.append(str(exception))
+                if operation == "check":
+                    self.last_check = {"checked": 0, "updates": 0, "errors": [str(exception)]}
             finally:
                 if operation == "check":
                     self.checking = False
@@ -312,11 +345,43 @@ class Distribution:
                        if identity in self.manager.records and self.manager.records[identity]["current"]["directory"]
                        == offer["from_directory"]}
         self.notices.extend(result["errors"])
+        self.last_check = {"checked": len(result["checked"]), "updates": len(self.offers),
+                           "errors": list(result["errors"])}
+        self.manager.distribution_state["offers"] = copy.deepcopy(self.offers)
+        self.manager.save()
+
+    @staticmethod
+    def offer_key(identity, offer):
+        return json.dumps([identity, offer.get("chain"), offer.get("release_sequence"),
+                           bool(offer.get("rollback"))], separators=(",", ":"))
+
+    def offer_for(self, identity):
+        record, offer = self.manager.records.get(identity), self.offers.get(identity)
+        return offer if record and offer and record["current"]["directory"] == offer["from_directory"] else None
+
+    def notification(self):
+        dismissed = self.manager.distribution_state.get("dismissed_updates", {})
+        if not isinstance(dismissed, dict):
+            dismissed = {}
+        keys = sorted(self.offer_key(identity, offer) for identity, offer in self.offers.items()
+                      if identity in self.manager.records
+                      and self.manager.records[identity]["current"]["directory"] == offer["from_directory"]
+                      and dismissed.get(identity) != self.offer_key(identity, offer))
+        return {"count": len(keys), "key": hashlib.sha256("\n".join(keys).encode()).hexdigest() if keys else ""}
+
+    def dismiss_notification(self):
+        self.manager.check_thread()
+        dismissed = self.manager.distribution_state.get("dismissed_updates", {})
+        dismissed = dict(dismissed) if isinstance(dismissed, dict) else {}
+        dismissed.update({identity: self.offer_key(identity, offer) for identity, offer in self.offers.items()})
+        self.manager.distribution_state["dismissed_updates"] = {
+            identity: key for identity, key in dismissed.items() if identity in self.manager.records}
         self.manager.save()
 
     def status(self):
         return {"checking": self.checking, "busy": bool(self.jobs), "notices": self.notices[-20:],
-                "configured": bool(self.registry.url and self.registry.keys)}
+                "configured": bool(self.registry.url and self.registry.keys),
+                "last_check": copy.deepcopy(self.last_check), "notification": self.notification()}
 
     def close(self):
         self.closed = True

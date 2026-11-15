@@ -11,6 +11,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "apiwrap.h"
 #include "base/call_delayed.h"
 #include "core/application.h"
+#ifdef OVYGRAM_ENABLED
+#include "ovygram/plugin_updates.h"
+#endif
 #include "data/components/gift_auctions.h"
 #include "data/components/promo_suggestions.h"
 #include "data/data_peer_values.h" // Data::AmPremiumValue.
@@ -247,6 +250,9 @@ rpl::producer<Ui::SlideWrap<Ui::RpWidget>*> TopBarSuggestionValue(
 		}, lifetime);
 
 		rpl::merge(
+#ifdef OVYGRAM_ENABLED
+			Ovygram::PluginUpdateChanges(),
+#endif
 			session->promoSuggestions().value(),
 			session->api().authorizations().unreviewedChanges(),
 			Data::AmPremiumValue(session) | rpl::skip(1) | rpl::to_empty,

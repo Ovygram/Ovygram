@@ -74,9 +74,10 @@ restart; configuration and signature failures are not labelled server outages.
 Import from Settings → Plugins or open a downloaded `.ovyplugin`/`.ovyzip`
 in a chat. A Telegram-native `Ui::GenericBox` shows the complete metadata,
 safe author display and server status; a disclosure contains the ID and exact
-SHA-256. The selected layout uses a summary card and a large installation
-button above Cancel. Full descriptions wrap and scroll; the footer stays
-visible. Package-provided text uses plain text. Cancel receives initial focus,
+SHA-256. The window sizes to its contents, up to a scrollable maximum height.
+The primary action and Cancel sit together at the bottom right in the native
+box footer. Full descriptions wrap and scroll; the footer stays visible.
+Package-provided text uses plain text. Cancel receives initial focus,
 including on warnings; Enter does not implicitly accept installation.
 `blocked` cannot be installed or enabled. An unconfirmed author resembling
 Ovygram, including common Cyrillic/Greek lookalikes and invisible characters,
@@ -91,14 +92,20 @@ allows. Descriptions in the installer, list and details remain complete,
 including line breaks, with wrapping and scrolling rather than elision.
 Unverified statuses use a muted red rounded badge; author and version keep
 normal secondary text colors. Verified and official badges remain green
-and blue respectively, using the active theme palette.
+and blue respectively, with contrast adjusted to the active theme. Their hues
+stay green/blue even in night palettes where Telegram's generic success color
+is blue, or when a custom accent is selected. Card headings and toggles share
+a correctly measured row height. Hover feedback stays around the action text;
+it does not fill the title/toggle row or the entire Send/Delete area.
 
 Preparation reads, hashes and checks a package in a background worker.
 The installer retains those bytes, so a change to the selected path between
 preview and confirmation cannot replace the payload. On ID collisions, the
-dialog shows both sets of full metadata and offers updates of the individual
-installations. Two trusted instances cannot be installed alongside each
-other. A separate unverified instance gets independent settings and data.
+dialog separates the new version and each installed instance into full-width
+rounded cards containing their complete metadata, description and trust badge.
+It offers updates of the individual installations. Two trusted instances cannot
+be installed alongside each other. A separate unverified instance gets
+independent settings and data.
 Replacing a trusted version with an unconfirmed version needs a separate
 warning and leaves the new code disabled. Trust is never inherited.
 
@@ -110,6 +117,10 @@ arbitrary Python in the application process. It is **not a process sandbox**
 against direct ctypes/Qt/process access or monkey-patching Python internals.
 
 ## Checks, updates and recovery
+
+Enabled plugins start only after the native Desktop dispatcher is connected.
+This lets `on_plugin_load` register menus without racing the client bridge at
+startup. Reconnecting the dispatcher does not load an existing instance twice.
 
 The host timer polls worker results on the main thread. On startup and at
 subsequent half-day boundaries, it starts one check per local calendar date
@@ -123,9 +134,24 @@ The client offers a previously approved version from the same author chain,
 using the saved local package or a published URL from the signed chain API.
 The rollback target is checked again when requested, including its SHA-256.
 
+The manual check shows progress followed by the number of available versions,
+an explicit no-update result, or the actual network/registry error. Its result
+does not depend on transient notices that the host poller may already consume.
+Available update actions appear directly in the installed plugin's card as
+well as its details page.
+
+Available updates also use Telegram's native suggestion banner above the chat
+list, with the same presentation as birthday suggestions. Plugin updates take
+priority over birthdays; unreviewed account logins retain higher priority.
+Clicking opens Plugins settings. Closing the banner records each offered
+installation/chain/release sequence and hides it until another version appears,
+including across restarts. Valid offers are restored for the interval between
+background checks. Applying or manually replacing an installation clears its
+old offer; candidates are revalidated against signed responses before use.
+
 The GitHub index only discovers update candidates. A user requests an update
-from the installation's details page; the client downloads once, checks the
-actual hash and signed tuple, chain, release flag, sequence, version and SDK.
+from the installation's card or details page; the client downloads once, checks
+the actual hash and signed tuple, chain, release flag, sequence, version and SDK.
 Only a higher `release_sequence` can update a confirmed public installation.
 An installed `release: false` or unverified file does not automatically join
 a public chain. A manual file update can make that transition.
