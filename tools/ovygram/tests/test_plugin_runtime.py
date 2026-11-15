@@ -11,7 +11,7 @@ import zipfile
 ROOT = Path(__file__).resolve().parents[3]
 EXAMPLE = ROOT / "tools/ovygram/examples/lifecycle.ovyplugin"
 sys.path.insert(0, str(ROOT / "Telegram/PluginSDK"))
-from ovygram_runtime import Manager, read_package
+from ovygram_runtime import InProcessManager as Manager, read_package
 from ovygram_package import InvalidPlugin
 
 

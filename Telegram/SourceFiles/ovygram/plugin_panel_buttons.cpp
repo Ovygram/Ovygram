@@ -2,6 +2,7 @@
 
 #include "ovygram/plugin_install.h"
 #include "ovygram/plugin_menus.h"
+#include "ovygram/protected_ui.h"
 #include "base/weak_ptr.h"
 #include "data/data_peer.h"
 #include "data/data_session.h"
@@ -105,7 +106,7 @@ void RemoveWidgets(const QString &id) {
 }
 
 void Clicked(QWidget *owner, const QString &ruleId) {
-	if (InstallationUiActive()) return;
+	if (InstallationUiActive() || InsideProtected(owner)) return;
 	const auto host = Find(owner);
 	const auto i = Get().items.find(ruleId);
 	if (!host || i == end(Get().items) || !Get().send || !i->second.enabled) return;

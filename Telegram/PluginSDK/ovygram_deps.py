@@ -1,7 +1,8 @@
 """Third-party libraries of plugins.
 
 All plugins share one environment: a directory pip installs into with
---target, appended to sys.path. Its packages are resolved together from the
+--target, appended to sys.path of the plugin host process. The client never
+imports from it. Its packages are resolved together from the
 requirements of every enabled plugin, so a version conflict is reported by
 pip's resolver instead of one plugin silently replacing another's library.
 
@@ -95,13 +96,32 @@ def default_runner(command, environment, log_path):
     return result.returncode, output
 
 
+def python_command(python_dir):
+    """(executable, its PYTHON* environment, whether it is the bundled one):
+    the interpreter of this build, or the system one of the same version."""
+    python_dir = Path(python_dir)
+    executable = python_dir / ("python.exe" if os.name == "nt" else "python")
+    stdlib = python_dir / "python313.zip"
+    if executable.is_file() and stdlib.is_file():
+        # The bundled interpreter finds its library only through these.
+        return str(executable), {"PYTHONHOME": str(python_dir), "PYTHONPATH": os.pathsep.join(
+            (str(stdlib), str(python_dir)))}, True
+    version = f"{sys.version_info.major}.{sys.version_info.minor}"
+    python = shutil.which(f"python{version}") or shutil.which("python3")
+    if python is None:
+        raise DependencyError(f"Не найден системный Python {version}.")
+    return python, {}, False
+
+
 class Dependencies:
-    def __init__(self, root, python_dir, runner=default_runner):
+    def __init__(self, root, python_dir, runner=default_runner, activate=None):
         self.root = Path(root) / "dependencies"
         self.root.mkdir(parents=True, exist_ok=True)
         self.state_path = Path(root) / "dependencies.json"
         self.python_dir = Path(python_dir)
         self.runner = runner
+        # Puts a resolution on the import path of whatever runs plugins.
+        self.activate = activate or self.add_to_path
         self.lock = threading.Lock()
         self.job = None  # (Future, plugin ID, requirements)
         self.state = {"active": None, "pending": None, "requirements": [], "packages": {},
@@ -131,7 +151,7 @@ class Dependencies:
                 shutil.rmtree(child, ignore_errors=True)
         self.save()
         if active:
-            self.add_to_path(self.root / active)
+            self.activate(self.root / active)
 
     def save(self):
         temporary = self.state_path.with_suffix(".tmp")
@@ -150,6 +170,11 @@ class Dependencies:
         importlib.invalidate_caches()
 
     # Queries.
+
+    def active(self):
+        """The directory in use, as a string, or None."""
+        active = self.state.get("active")
+        return str(self.root / active) if active else None
 
     def satisfied(self, requirements):
         return set(requirements) <= set(self.state["requirements"])
@@ -181,18 +206,8 @@ class Dependencies:
         environment = {key: value for key, value in os.environ.items()
                        if not key.startswith("PYTHON")}
         environment.update(PYTHONNOUSERSITE="1", PYTHONUTF8="1", PIP_NO_INPUT="1")
-        executable = self.python_dir / ("python.exe" if os.name == "nt" else "python")
-        stdlib = self.python_dir / "python313.zip"
-        if executable.is_file() and stdlib.is_file():
-            # The bundled interpreter finds its library only through these.
-            environment.update(PYTHONHOME=str(self.python_dir), PYTHONPATH=os.pathsep.join(
-                (str(stdlib), str(self.python_dir))))
-            python = str(executable)
-        else:
-            version = f"{sys.version_info.major}.{sys.version_info.minor}"
-            python = shutil.which(f"python{version}") or shutil.which("python3")
-            if python is None:
-                raise DependencyError(f"Не найден системный Python {version}.")
+        python, bundled, _ = python_command(self.python_dir)
+        environment.update(bundled)
         # pip runs from its wheel, the documented way to use a pip wheel.
         return [python, str(pip / "pip")], environment
 
@@ -259,7 +274,7 @@ class Dependencies:
             self.state.update(active=target.name, requirements=requirements, packages=packages,
                               pending=None, pending_requirements=[], pending_packages={})
             self.save()
-            self.add_to_path(target, replace=self.root / previous if previous else None)
+            self.activate(target, replace=self.root / previous if previous else None)
         else:
             self.state.update(pending=target.name, pending_requirements=requirements,
                               pending_packages=packages)

@@ -78,6 +78,7 @@ private:
 	bool _relayoutQueued = false;
 	bool _updating = false;
 	rpl::event_stream<QString> _sectionClosed;
+	rpl::lifetime _lifetime;
 
 };
 

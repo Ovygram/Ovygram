@@ -154,7 +154,10 @@ class Runtime:
         for entry in self.registrations:
             if entry.active:
                 mask |= POINT_BITS[entry.point]
-        self.hook_mask = mask
+        if mask != self.hook_mask:
+            self.hook_mask = mask
+            # The client asks for hooks by this mask, from its own process.
+            self.manager.hook_mask_changed(mask)
 
     def handlers(self, point):
         return sorted((entry for entry in self.registrations if entry.active and entry.point == point),

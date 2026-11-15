@@ -25,7 +25,7 @@ from desktop.models import Attachment, Chat, Message
 from desktop_utils import run_on_ui
 from generate_tl import parse_schema, stubs
 from hook_utils import CANCEL, MODIFY, MODIFY_FINAL, HookCancelled, HookError, HookResult
-from ovygram_runtime import Manager
+from ovygram_runtime import InProcessManager as Manager
 
 
 class CodecTests(unittest.TestCase):

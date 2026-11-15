@@ -3,6 +3,7 @@
 #include "core/application.h"
 #include "core/plugin_runtime.h"
 #include "ovygram/plugin_trust_badge.h"
+#include "ovygram/protected_ui.h"
 #include "ui/layers/generic_box.h"
 #include "ui/layers/show.h"
 #include "ui/widgets/buttons.h"
@@ -72,6 +73,7 @@ public:
 	, _installationId(std::move(installationId))
 	, _done(std::move(done)) {
 		++ActiveInstallers;
+		ProtectSurface(box);
 		box->setTitle(rpl::single(u"Установка плагина"_q));
 		box->setWidth(st::settingsPluginsLayerWidth);
 		box->setMinHeight(500);

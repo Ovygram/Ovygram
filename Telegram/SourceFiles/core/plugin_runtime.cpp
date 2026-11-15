@@ -166,7 +166,7 @@ void PluginRuntime::setClient(
 	}
 	if (ready) {
 		const auto lock = py::gil_scoped_acquire();
-		_private->manager.attr("runtime").attr("ready").attr("set")();
+		_private->manager.attr("bridge_ready")();
 	}
 }
 
@@ -181,7 +181,7 @@ std::string PluginRuntime::dispatch(const std::string &request) {
 
 unsigned int PluginRuntime::hookMask() const {
 	const auto lock = py::gil_scoped_acquire();
-	return _private->manager.attr("runtime").attr("hook_mask").cast<unsigned int>();
+	return _private->manager.attr("hook_mask").cast<unsigned int>();
 }
 
 } // namespace Core

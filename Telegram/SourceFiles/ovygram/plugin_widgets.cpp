@@ -2,6 +2,7 @@
 #include "ovygram/plugin_install.h"
 
 #include "ovygram/plugin_elements.h"
+#include "ovygram/protected_ui.h"
 
 #include <QtCore/QJsonArray>
 #include <QtCore/QMetaProperty>
@@ -141,7 +142,7 @@ quint64 HandleOf(QWidget *widget) {
 }
 
 [[nodiscard]] bool MatchesSelf(QWidget *widget, const Selector &selector) {
-	if (InstallationUiActive()) return false;
+	if (InstallationUiActive() || ProtectedFromPlugins(widget)) return false;
 	if (!selector.className.isEmpty()
 		&& ClassName(widget) != selector.className) {
 		return false;
@@ -293,7 +294,7 @@ void Send(const QString &installationId, const QString &type, const QString &rul
 }
 
 bool Filter::eventFilter(QObject *watched, QEvent *e) {
-	if (InstallationUiActive()) return false;
+	if (InstallationUiActive() || ProtectedFromPlugins(watched)) return false;
 	const auto type = e->type();
 	auto &state = Get();
 	if (type == QEvent::ShortcutOverride && !state.keys.empty()) {
@@ -414,7 +415,9 @@ QJsonObject Describe(QWidget *widget, int depth, int maxDepth, int &count) {
 	++count;
 	const auto geometry = widget->geometry();
 	auto result = QJsonObject{
-		{ u"handle"_q, QString::number(HandleOf(widget)) },
+		// Empty for a container of a protected surface: it is listed to
+		// reach its other children, but can't be addressed itself.
+		{ u"handle"_q, HandleFor(widget) },
 		{ u"cls"_q, ClassName(widget) },
 		{ u"visible"_q, widget->isVisible() },
 		{ u"geometry"_q, QJsonArray{
@@ -434,7 +437,9 @@ QJsonObject Describe(QWidget *widget, int depth, int maxDepth, int &count) {
 		auto children = QJsonArray();
 		for (const auto child : widget->children()) {
 			const auto childWidget = qobject_cast<QWidget*>(child);
-			if (childWidget && count < kMaximumTreeNodes) {
+			if (childWidget
+				&& count < kMaximumTreeNodes
+				&& !InsideProtected(childWidget)) {
 				children.push_back(Describe(childWidget, depth + 1, maxDepth, count));
 			}
 		}
@@ -463,6 +468,8 @@ QWidget *Resolve(const QJsonValue &handle) {
 		return nullptr;
 	} else if (!i->second) {
 		handles.erase(i);
+		return nullptr;
+	} else if (ProtectedFromPlugins(i->second.data())) {
 		return nullptr;
 	}
 	return i->second.data();
@@ -529,6 +536,10 @@ void Handle(const QJsonObject &command) {
 		if (index < 0 || !meta->property(index).isWritable()) {
 			throw std::runtime_error("Unknown or read-only property.");
 		}
+		if (CouldCoverProtected(widget, QString::fromLatin1(name))) {
+			throw std::runtime_error(
+				"Layout of this window is locked while Ovygram's plugin manager is open.");
+		}
 		const auto property = meta->property(index);
 		property.write(
 			widget,
@@ -554,7 +565,7 @@ QJsonValue Request(const QJsonObject &command) {
 				}
 			}
 		}
-		if (!root) {
+		if (!root || InsideProtected(root)) {
 			return QJsonValue(QJsonValue::Null);
 		}
 		auto count = 0;
@@ -594,7 +605,7 @@ void RemovePlugin(const QString &installationId) {
 }
 
 QString HandleFor(QWidget *widget) {
-	if (InstallationUiActive()) return QString();
+	if (InstallationUiActive() || ProtectedFromPlugins(widget)) return QString();
 	return QString::number(HandleOf(widget));
 }
 

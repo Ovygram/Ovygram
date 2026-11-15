@@ -4,13 +4,11 @@ from desktop._runtime import context
 
 
 def get_plugin_dir():
-    owner = context()
-    return owner.manager.directory(owner.manager.records[owner.installation_id]["current"])
+    return context().directory
 
 
 def get_plugin_data_dir(account_id=None):
-    owner = context()
-    directory = owner.manager.root / "data" / owner.installation_id
+    directory = context().data_directory
     if account_id is not None:
         account_id = str(account_id)
         if not account_id.isdecimal():

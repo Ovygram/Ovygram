@@ -1,15 +1,19 @@
-"""The process-wide Python side of the desktop plugin host.
+"""The trusted manager of plugins, in the process of the client.
 
 Installed plugins are installations: each has a random installation_id that
 keys its state, settings, data, handlers and errors. Several installations
 may share one plugin_id (spec §3.2); an update keeps the installation_id.
+
+The manager checks and stores packages and decides what starts. It never
+runs plugin code: that happens in the plugin host process, reached through
+ovygram_hosts.py, which gets the checked source of a plugin and answers
+hooks and events.
 """
 
 import ast
+import base64
 import copy
 import hashlib
-import importlib.util
-import inspect
 import io
 import json
 import logging
@@ -23,15 +27,13 @@ import threading
 import uuid
 import zipfile
 
-from base_plugin import BasePlugin
-from desktop._runtime import Runtime
 from hook_utils import HookCancelled
 from ovygram_deps import Dependencies, normalize_all
 from ovygram_distribution import Distribution
+from ovygram_hosts import HostError, LocalHost, ProcessHost
 from ovygram_registry import TRUSTED, protected_author
 from ovygram_package import (MAX_PACKAGE, MAX_SOURCE, SDK_VERSION, archive_path, read_source,
                              read_zip)
-from ui.settings import Button, Header, Input, Selector, Switch
 
 
 STATE_VERSION = 2
@@ -126,36 +128,32 @@ def unpack_package(payload, kind, target):
     return entry
 
 
-class PluginContext:
-    def __init__(self, manager, installation_id, plugin_id):
-        self.manager = manager
-        self.installation_id = installation_id
-        self.plugin_id = plugin_id
-        self.active = True
+MAX_SETTINGS = 256
+SETTING_KINDS = {"header": {"text": str}, "button": {"key": str, "text": str, "action_id": str},
+                 "switch": {"key": str, "text": str, "value": bool},
+                 "input": {"key": str, "text": str, "value": str},
+                 "selector": {"key": str, "text": str, "value": int, "items": list}}
 
-    def get(self, key, default, account_id=None):
-        self.check_active()
-        record = self.manager.records[self.installation_id]
-        settings = record["settings"] if account_id is None else record.get(
-            "account_settings", {}).get(self.manager.account_key(account_id), {})
-        return copy.deepcopy(settings.get(key, default))
 
-    def set(self, key, value, account_id=None):
-        self.check_active()
-        self.manager.check_thread()
-        self.manager.set_setting(self.installation_id, key, value, account_id)
-
-    def log(self, message):
-        self.check_active()
-        self.manager.logger.info("%s: %s", self.manager.label(self.installation_id), message)
-
-    def check_active(self):
-        if not self.active:
-            raise RuntimeError("Плагин уже выгружен.")
+def checked_settings(fields):
+    """The description of settings as the host returned it. The client draws
+    it, so its shape is checked here and not trusted to the plugin side."""
+    if not isinstance(fields, list) or len(fields) > MAX_SETTINGS:
+        raise ValueError("Некорректное описание настроек.")
+    for field in fields:
+        expected = SETTING_KINDS.get(field.get("kind")) if isinstance(field, dict) else None
+        if expected is None or field.keys() != {"kind", *expected} or any(
+                type(field[key]) is not kind for key, kind in expected.items()):
+            raise ValueError("Некорректное описание настройки.")
+        if field["kind"] == "selector" and (
+                not field["items"] or not all(isinstance(text, str) for text in field["items"])
+                or not 0 <= field["value"] < len(field["items"])):
+            raise ValueError("Некорректное описание списка.")
+    return fields
 
 
 class Manager:
-    def __init__(self, root, disabled=False, registry=None):
+    def __init__(self, root, disabled=False, registry=None, host=ProcessHost):
         self.root = Path(root).resolve()
         self.root.mkdir(parents=True, exist_ok=True)
         self.packages = self.root / "packages"
@@ -166,9 +164,13 @@ class Manager:
         self.recovery = self.marker.exists()
         self.restart_required = False
         self.owner = threading.get_ident()
-        self.loaded = {}
+        self._loaded = {}  # installation_id -> module namespace in the host.
         self.errors = {}
-        self.setting_actions = {}
+        self.loading = None  # The installation whose on_plugin_load runs.
+        self.hook_mask = 0
+        self.bridge = False
+        self.sender = None
+        self.closing = False
         self.distribution_state = {}
         self.pending_updates = {}
         self.logger = logging.Logger("ovygram")
@@ -178,16 +180,79 @@ class Manager:
         )
         self.log_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
         self.logger.addHandler(self.log_handler)
-        self.runtime = Runtime(self)
         # The SDK lies in python/sdk, next to the bundled interpreter and pip.
-        self.dependencies = Dependencies(self.root, Path(__file__).resolve().parent.parent)
+        self.python_dir = Path(__file__).resolve().parent.parent
+        self.host = host(self)
+        self.dependencies = Dependencies(self.root, self.python_dir, activate=self.dependencies_path)
         self.records = self.read_state()
         self.distribution = Distribution(self, registry)
         self.recover_updates()
         if not (self.disabled or self.recovery):
-            for installation_id, record in self.records.items():
-                if record["enabled"]:
-                    self.load(installation_id)
+            self.load_enabled()
+
+    def load_enabled(self):
+        for installation_id, record in self.records.items():
+            # A plugin that takes the host down stops the rest, as a crash
+            # of the client used to.
+            if record["enabled"] and not self.recovery:
+                self.load(installation_id)
+
+    # The host and what it reports. Events arrive on its reader thread.
+
+    @property
+    def loaded(self):
+        executor = getattr(self.host, "executor", None)
+        return executor.loaded if executor is not None else self._loaded
+
+    @property
+    def runtime(self):
+        """The runtime of the in-process host, for tests and tools."""
+        return self.host.executor.runtime
+
+    def bridge_ready(self):
+        self.bridge = True
+        self.forward("bridge_ready", None)
+
+    def forward(self, action, default, **params):
+        """An action of the executor, or default while no plugin runs."""
+        if not self.host.running:
+            return default
+        return self.host.call(action, **params)
+
+    def dependencies_path(self, directory, replace=None):
+        self.forward("dependencies_path", None, directory=str(directory),
+                     replace=str(replace) if replace else None)
+
+    def host_submit(self, command):
+        if not isinstance(command, dict) or command.get("installation_id") not in self.records:
+            return
+        if self.sender is not None:
+            self.sender(command)
+            return
+        try:
+            import _ovygram_native
+            _ovygram_native.submit(json.dumps(command, ensure_ascii=False))
+        except (ImportError, RuntimeError) as error:
+            self.logger.warning("Команда плагина не доставлена: %s", error)
+
+    def host_error(self, installation_id, message):
+        if installation_id in self.records:
+            self.errors[installation_id] = message
+
+    def host_set_setting(self, installation_id, key, value, account_id=None):
+        if installation_id not in self._loaded and installation_id != self.loading:
+            raise ValueError("Плагин не запущен.")
+        self.store_setting(installation_id, key, value, account_id)
+
+    def host_exited(self, reason):
+        """The host process died or was stopped; on the main thread."""
+        for installation_id in self._loaded:
+            self.errors[installation_id] = reason
+        self._loaded.clear()
+        self.hook_mask = 0
+        if not self.closing:
+            self.recovery = True
+            self.logger.error("%s", reason)
 
     def read_state(self):
         state = json.loads(self.state.read_text(encoding="utf-8")) if self.state.exists() else {
@@ -363,15 +428,10 @@ class Manager:
         self.errors[installation_id] = message
         self.logger.exception("%s: %s", self.label(installation_id), message)
 
-    def call(self, installation_id, method, *args):
-        return self.runtime.call(self.runtime.contexts[installation_id], method, *args)
-
     def load(self, installation_id):
         record = self.records[installation_id]
         version = record["current"]
         namespace = "_ovygram_" + version["directory"]
-        context = PluginContext(self, installation_id, record["plugin_id"])
-        self.runtime.contexts[installation_id] = context
         self.marker.write_text(installation_id, encoding="utf-8")
         try:
             if version.get("blocked") or self.distribution.registry.cached(version)["status"] == "blocked":
@@ -389,11 +449,6 @@ class Manager:
             path = directory / entry
             if path.resolve().parent != directory:
                 raise ValueError("Точка входа выходит за пределы каталога плагина.")
-            spec = importlib.util.spec_from_loader(namespace, loader=None, is_package=True)
-            module = importlib.util.module_from_spec(spec)
-            module.__file__ = str(path)
-            module.__path__ = [str(directory)]
-            sys.modules[namespace] = module
             if checked_source is None:
                 with path.open("rb") as stream:
                     source = stream.read(MAX_SOURCE + 1)
@@ -402,55 +457,38 @@ class Manager:
             reader = legacy_metadata if version.get("format") == "legacy" else plugin_metadata
             if reader(source, str(path)) != version["metadata"]:
                 raise ValueError("Метаданные изменились. Импортируйте новую версию из файла.")
-            exec(compile(source, str(path), "exec"), module.__dict__)
-            classes = {
-                value for value in module.__dict__.values()
-                if isinstance(value, type) and value is not BasePlugin
-                and issubclass(value, BasePlugin)
-                and value.__module__ in (namespace, version["metadata"]["name"])
-            }
-            if len(classes) != 1:
-                raise ValueError("В точке входа должен быть один класс BasePlugin.")
-            instance = classes.pop()()
-            instance._desktop_context = context
-            self.call(installation_id, instance.on_plugin_load)
-            self.loaded[installation_id] = (instance, context, namespace)
+            data = self.root / "data" / installation_id
+            # The host runs exactly the bytes checked above, not the file.
+            self.loading = installation_id
+            self.host.call(
+                "load", installation_id=installation_id, plugin_id=record["plugin_id"],
+                namespace=namespace, directory=str(directory), entry=entry,
+                source=base64.b64encode(source).decode("ascii"), name=version["metadata"]["name"],
+                data_directory=str(data), settings=record["settings"],
+                account_settings=record.get("account_settings", {}))
+            self._loaded[installation_id] = namespace
             self.errors.pop(installation_id, None)
             return True
         except BaseException as error:
-            context.active = False
-            self.runtime.remove(installation_id)
-            self.clear_modules(namespace)
             message = str(error) or type(error).__name__
-            if isinstance(error, ModuleNotFoundError) and (error.name or "").split(".")[0] in {
-                "android", "java", "jnius", "chaquopy", "org",
-            }:
-                message = "Этот импорт относится к Android. Адаптируйте плагин для Desktop SDK."
-            self.report_error(installation_id, message)
+            if isinstance(error, HostError):
+                # The host has logged the traceback of the plugin.
+                self.errors[installation_id] = message
+            else:
+                self.report_error(installation_id, message)
             return False
-
-    @staticmethod
-    def clear_modules(namespace):
-        for name in tuple(sys.modules):
-            if name == namespace or name.startswith(namespace + "."):
-                sys.modules.pop(name, None)
+        finally:
+            self.loading = None
 
     def unload(self, installation_id):
-        if installation_id not in self.loaded:
+        if installation_id not in self._loaded:
             return
-        instance, context, namespace = self.loaded.pop(installation_id)
         try:
-            self.call(installation_id, instance.on_plugin_unload)
-        except BaseException as error:
-            self.restart_required = True
-            self.report_error(installation_id, str(error) or type(error).__name__)
-            raise RuntimeError("Выгрузка завершилась ошибкой. Перезапустите клиент.") from error
+            if self.host.running:
+                # Raises when on_plugin_unload fails; the host has reported it.
+                self.host.call("unload", installation_id=installation_id)
         finally:
-            self.setting_actions = {key: value for key, value in self.setting_actions.items()
-                                    if key[0] != installation_id}
-            context.active = False
-            self.runtime.remove(installation_id)
-            self.clear_modules(namespace)
+            self._loaded.pop(installation_id, None)
 
     def change_record(self, installation_id, record):
         previous = self.records.get(installation_id)
@@ -581,12 +619,12 @@ class Manager:
                                installation_id, trust=package["trust"])
             if old["enabled"]:
                 self.enable(installation_id)
-                if installation_id not in self.loaded:
+                if installation_id not in self._loaded:
                     raise RuntimeError("Обновление не запущено. Сохранена предыдущая версия.")
             self.finish_update(installation_id)
         except BaseException:
             failed = self.records[installation_id]
-            if installation_id in self.loaded:
+            if installation_id in self._loaded:
                 self.unload(installation_id)
             self.change_record(installation_id, old)
             if failed["current"]["directory"] != old["current"]["directory"]:
@@ -604,7 +642,7 @@ class Manager:
     def enable(self, installation_id):
         if self.disabled or self.recovery or self.restart_required:
             raise RuntimeError("Запуск плагинов сейчас отключён.")
-        if installation_id in self.loaded:
+        if installation_id in self._loaded:
             return
         record = self.records[installation_id]
         if record["current"].get("blocked") or self.distribution.registry.cached(
@@ -699,9 +737,7 @@ class Manager:
         if not self.recovery:
             return
         self.recovery = False
-        for installation_id, record in self.records.items():
-            if record["enabled"]:
-                self.load(installation_id)
+        self.load_enabled()
 
     @staticmethod
     def account_key(account_id):
@@ -711,6 +747,18 @@ class Manager:
         return result
 
     def set_setting(self, installation_id, key, value, account_id=None):
+        self.store_setting(installation_id, key, value, account_id)
+        self.push_settings(installation_id)
+
+    def push_settings(self, installation_id):
+        """Plugin code reads settings from the copy its host keeps."""
+        if installation_id in self._loaded:
+            record = self.records[installation_id]
+            self.host.call("update_settings", installation_id=installation_id,
+                           settings=record["settings"],
+                           account_settings=record.get("account_settings", {}))
+
+    def store_setting(self, installation_id, key, value, account_id=None):
         if not isinstance(key, str) or not key or len(key) > 128:
             raise ValueError("Недопустимый ключ настройки.")
         if len(json.dumps(value, ensure_ascii=False, allow_nan=False)) > 65536:
@@ -729,53 +777,14 @@ class Manager:
         })
 
     def settings(self, installation_id):
-        instance, context, _ = self.loaded[installation_id]
-        result = []
-        keys = set()
-        actions = {}
-        for item in self.call(installation_id, instance.create_settings):
-            if isinstance(item, Header):
-                if not isinstance(item.text, str) or not item.text:
-                    raise ValueError("Подраздел настроек требует непустой заголовок.")
-                result.append({"kind": "header", "text": item.text})
-                continue
-            if (not isinstance(item, (Switch, Input, Selector, Button))
-                or not isinstance(item.key, str) or not 0 < len(item.key) <= 128
-                or not isinstance(item.text, str) or item.key in keys):
-                raise ValueError("Некорректное описание настройки.")
-            keys.add(item.key)
-            value = None if isinstance(item, Button) else context.get(item.key, item.default)
-            field = {"key": item.key, "text": item.text}
-            if isinstance(item, Button):
-                if not callable(item.on_click):
-                    raise ValueError("Кнопка настроек требует обработчик нажатия.")
-                previous = self.setting_actions.get((installation_id, item.key))
-                token = previous["token"] if previous and previous["context"] is context else uuid.uuid4().hex
-                actions[(installation_id, item.key)] = {"token": token, "context": context, "callback": item.on_click}
-                field.update(kind="button", action_id=token)
-            elif isinstance(item, Switch):
-                field.update(kind="switch", value=bool(value))
-            elif isinstance(item, Input):
-                field.update(kind="input", value=str(value))
-            else:
-                if not item.items or not all(isinstance(text, str) for text in item.items):
-                    raise ValueError("Selector требует непустой список строк.")
-                index = value if type(value) is int and 0 <= value < len(item.items) else 0
-                field.update(kind="selector", value=index, items=item.items)
-            result.append(field)
-        self.setting_actions = {key: value for key, value in self.setting_actions.items()
-                                if key[0] != installation_id}
-        self.setting_actions.update(actions)
-        return result
+        if installation_id not in self._loaded:
+            raise ValueError("Плагин не запущен.")
+        return checked_settings(self.host.call("settings", installation_id=installation_id))
 
     def settings_action(self, installation_id, action_id):
-        action = next((entry for (identity, _), entry in self.setting_actions.items()
-                       if identity == installation_id and entry["token"] == action_id), None)
-        if action is None or not action["context"].active or installation_id not in self.loaded:
+        if installation_id not in self._loaded:
             raise ValueError("Кнопка настроек устарела или плагин выключен.")
-        result = self.call(installation_id, action["callback"])
-        if inspect.iscoroutine(result):
-            self.runtime.schedule(action["context"], result)
+        self.host.call("settings_action", installation_id=installation_id, action_id=action_id)
 
     def save_settings(self, installation_id, values):
         fields = [field for field in self.settings(installation_id)
@@ -792,6 +801,7 @@ class Manager:
                 raise ValueError("Некорректное значение списка.")
         record = self.records[installation_id]
         self.change_record(installation_id, {**record, "settings": {**record["settings"], **values}})
+        self.push_settings(installation_id)
 
     def describe(self, installation_id):
         record = self.records[installation_id]
@@ -816,11 +826,12 @@ class Manager:
             "restart_required": self.restart_required,
             "log_path": str(self.root / "plugins.log"),
             "dependencies": dependencies,
+            "isolation": self.host.status(),
             "distribution": self.distribution.status(),
             "plugins": [
                 {**self.describe(installation_id),
                  "installing": dependencies["installing"] == installation_id,
-                 "loaded": installation_id in self.loaded,
+                 "loaded": installation_id in self._loaded,
                  "previous": record["previous"] is not None,
                  "instances": len(self.installations_of(record["plugin_id"])),
                  "error": self.errors.get(installation_id, "")}
@@ -833,6 +844,7 @@ class Manager:
         self.check_thread()
         action = json.loads(request)
         name = action.pop("action")
+        self.host.check()
         if name in ("snapshot", "poll", "client_event", "ui_event"):
             # A finished dependency installation starts its plugin here, on
             # the main thread and outside of any hook.
@@ -852,13 +864,14 @@ class Manager:
             "resume": self.resume, "settings": self.settings, "save_settings": self.save_settings,
             "settings_action": self.settings_action,
             "share_file": self.share_file,
-            "client_reply": self.runtime.complete,
-            "client_pending": self.runtime.is_pending,
-            "bridge_ready": lambda: self.runtime.ready.set(),
-            "native_hook": self.runtime.native_hook,
-            "client_event": self.runtime.native_event,
-            "ui_execute": self.runtime.execute_ui,
-            "ui_event": self.runtime.ui_event,
+            "client_reply": lambda request: self.forward("complete", None, request=request),
+            "client_pending": lambda request_id, installation_id: bool(self.forward(
+                "is_pending", False, request_id=request_id, installation_id=installation_id)),
+            "bridge_ready": self.bridge_ready,
+            "native_hook": self.native_hook,
+            "client_event": self.client_event,
+            "ui_execute": lambda call_id: self.forward("execute_ui", None, call_id=call_id),
+            "ui_event": lambda event: self.forward("ui_event", None, event=event),
         }
         try:
             return json.dumps({"result": allowed[name](**action)}, ensure_ascii=False)
@@ -873,15 +886,28 @@ class Manager:
                 self.logger.exception("%s: %s", name, message)
             return json.dumps({"error": message}, ensure_ascii=False)
 
+    def native_hook(self, request):
+        unchanged = {"data": request["data"], "error": request.get("error")}
+        if not self.hook_mask or not self.host.running:
+            return unchanged
+        try:
+            return self.host.call("native_hook", request=request)
+        except HostError as error:
+            # A failing or silent plugin must not stop requests and updates.
+            self.logger.error("%s: %s", request.get("point"), error)
+            return unchanged
+
+    def client_event(self, event):
+        if self.hook_mask:
+            self.forward("native_event", None, event=event)
+
     def shutdown(self):
         self.check_thread()
+        self.closing = True
         self.distribution.close()
-        for installation_id in reversed(tuple(self.loaded)):
-            try:
-                self.unload(installation_id)
-            except RuntimeError:
-                pass
-        self.runtime.stop()
+        # Unloads every plugin in the reverse order and stops their tasks.
+        self.host.close()
+        self._loaded.clear()
         # The marker detects crashes: a clean exit removes it, also after a
         # failed unload. Recovery mode and --disable-plugins keep it, so the
         # next start still asks before loading plugins.
@@ -894,3 +920,11 @@ class Manager:
         self.distribution.poll()
         notices, self.distribution.notices = self.distribution.notices, []
         return notices
+
+
+class InProcessManager(Manager):
+    """Runs plugins inside the calling process, without any isolation: for
+    the SDK tests and tools. The client always uses Manager."""
+
+    def __init__(self, root, disabled=False, registry=None):
+        super().__init__(root, disabled, registry, host=LocalHost)

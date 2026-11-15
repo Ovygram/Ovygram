@@ -1,4 +1,5 @@
 #include "ovygram/plugin_ui.h"
+#include "ovygram/protected_ui.h"
 
 #include "ovygram/chat_bars.h"
 #include "ovygram/chat_decorations.h"
@@ -352,6 +353,16 @@ PluginUi::PluginUi(EventSender send)
 	Menus::SetEventSender(_send);
 	PanelButtons::SetEventSender(_send);
 	Native::SetEventSender(_send);
+	// A canvas over a widget that contains a protected surface would cover
+	// it: such overlays stay hidden while the surface exists.
+	ProtectedSurfacesChanged() | rpl::on_next([=] {
+		for (const auto &[id, object] : _objects) {
+			if (const auto overlay = object->overlay.get()) {
+				overlay->setVisible(
+					!ProtectedFromPlugins(overlay->parentWidget()));
+			}
+		}
+	}, _lifetime);
 }
 
 PluginUi *PluginUi::Instance() {
