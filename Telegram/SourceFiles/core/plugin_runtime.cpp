@@ -124,7 +124,8 @@ PluginRuntime::PluginRuntime(
 			ActiveNativeClient = _private->client;
 		}
 		_private->manager = py::module_::import("ovygram_runtime")
-			.attr("Manager")(profile.wstring(), disabled);
+			.attr("Manager")(
+				profile.wstring(), disabled, py::arg("defer_start") = true);
 		_private->threadState = PyEval_SaveThread();
 	} catch (const std::exception &error) {
 		failure = error.what();

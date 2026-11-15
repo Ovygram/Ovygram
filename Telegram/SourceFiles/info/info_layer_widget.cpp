@@ -98,7 +98,13 @@ void LayerWidget::setupHeightConsumers() {
 
 #ifdef OVYGRAM_ENABLED
 	_contentWrap->contentChanged() | rpl::on_next([this] {
-		InvokeQueued(this, [this] { parentResized(); });
+		if (_inResize || !parentWidget() || parentWidget()->width() < MinimalSupportedWidth()) {
+			_pendingResize = _pendingResize || _inResize;
+			InvokeQueued(this, [this] { parentResized(); });
+		} else {
+			// Resize before the new section is captured for its entrance.
+			parentResized();
+		}
 	}, lifetime());
 #endif
 

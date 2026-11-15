@@ -6,6 +6,7 @@
 #include "ovygram/protected_ui.h"
 #include "ui/layers/generic_box.h"
 #include "ui/layers/show.h"
+#include "ui/vertical_list.h"
 #include "ui/widgets/buttons.h"
 #include "ui/widgets/labels.h"
 #include "ui/wrap/slide_wrap.h"
@@ -76,11 +77,8 @@ public:
 		ProtectSurface(box);
 		box->setTitle(rpl::single(u"Установка плагина"_q));
 		box->setWidth(st::settingsPluginsLayerWidth);
-		box->setMinHeight(500);
 		box->setMaxHeight(680);
-		_rows = box->addRow(object_ptr<Ui::VerticalLayout>(box), style::margins());
-		_actions = box->setPinnedToBottomContent(
-			object_ptr<Ui::VerticalLayout>(box)).get();
+		_rows = box->addRow(object_ptr<Ui::VerticalLayout>(box), style::margins(), style::al_justify);
 		cancel();
 		box->setFocusCallback([this] {
 			if (_cancel) _cancel->setFocus();
@@ -114,7 +112,8 @@ private:
 			const style::FlatLabel &style = st::settingsPluginBody) {
 		const auto value = rows->add(
 			object_ptr<Ui::FlatLabel>(rows, std::move(text), style),
-			st::settingsPluginTextMargin);
+			st::settingsPluginTextMargin,
+			style::al_justify);
 		// FlatLabel's QString overload is multiline plain text, with no
 		// rich-text entities, parsed links, elision or height cap.
 		value->setBreakEverywhere(true);
@@ -122,25 +121,26 @@ private:
 	}
 
 	void cancel() {
-		_cancel = _actions->add(
-			object_ptr<Ui::RoundButton>(_actions, rpl::single(u"Отмена"_q), st::defaultLightButton),
-			st::boxRowPadding,
-			style::al_justify);
-		_cancel->setClickedCallback([this] { _box->closeBox(); });
+		_cancel = _box->addButton(rpl::single(u"Отмена"_q), [this] { _box->closeBox(); });
 	}
 
-	void action(QString text, Fn<void()> callback, bool inlineChoice = false) {
-		const auto rows = inlineChoice ? _rows : _actions;
-		auto owned = object_ptr<Ui::RoundButton>(rows, rpl::single(std::move(text)),
-			inlineChoice ? st::defaultLightButton : st::defaultActiveButton);
-		const auto button = inlineChoice
-			? rows->add(std::move(owned), st::boxRowPadding, style::al_justify)
-			: rows->insert(0, std::move(owned), st::boxRowPadding, style::al_justify);
-		button->setClickedCallback([callback = std::move(callback)] {
+	void action(QString text, Fn<void()> callback, Ui::VerticalLayout *choices = nullptr) {
+		auto invoke = [callback = std::move(callback)] {
 			// The callback may rebuild the controls containing this button.
 			const auto invoke = callback;
 			invoke();
-		});
+		};
+		if (choices) {
+			const auto button = choices->add(object_ptr<Ui::RoundButton>(
+				choices, rpl::single(std::move(text)), st::defaultLightButton),
+				st::boxRowPadding, style::al_right);
+			button->setClickedCallback(std::move(invoke));
+		} else {
+			_box->clearButtons();
+			_box->addButton(rpl::single(std::move(text)), std::move(invoke), st::defaultActiveButton);
+			cancel();
+			if (_cancel) _cancel->setFocus();
+		}
 	}
 
 	void poll() {
@@ -162,9 +162,9 @@ private:
 		}
 	}
 
-	void details(const QJsonObject &metadata, const QJsonObject &trust) {
+	not_null<Ui::VerticalLayout*> details(const QJsonObject &metadata, const QJsonObject &trust) {
 		const auto card = _rows->add(
-			object_ptr<Ui::VerticalLayout>(_rows), st::settingsPluginCardMargin);
+			object_ptr<Ui::VerticalLayout>(_rows), st::settingsPluginCardMargin, style::al_justify);
 		card->paintRequest() | rpl::on_next([=] {
 			auto p = QPainter(card);
 			const auto quality = PainterHighQualityEnabler(p);
@@ -172,35 +172,39 @@ private:
 			p.setBrush(st::windowBgOver);
 			p.drawRoundedRect(card->rect(), st::settingsPluginCardRadius, st::settingsPluginCardRadius);
 		}, card->lifetime());
+		Ui::AddSkip(card, 12);
 		label(card, metadata.value(u"name"_q).toString(), st::settingsPluginInstallTitle);
 		label(card, u"Версия %1 · %2"_q.arg(metadata.value(u"version"_q).toString(),
 			metadata.value(u"id"_q).toString(metadata.value(u"plugin_id"_q).toString())),
 			st::settingsPluginCardMeta);
 		label(card, u"Автор: "_q + metadata.value(u"display_author"_q).toString(
 			metadata.value(u"author"_q).toString()), st::settingsPluginCardMeta);
-		label(_rows, metadata.value(u"description"_q).toString());
+		label(card, metadata.value(u"description"_q).toString());
 		const auto status = trust.value(u"status"_q).toString();
-		AddPluginTrustBadge(_rows, StatusText(status), status);
+		AddPluginTrustBadge(card, StatusText(status), status);
 		if (const auto reason = trust.value(u"reason"_q).toString(); !reason.isEmpty()) {
-			label(_rows, reason, st::settingsPluginCardMeta);
+			label(card, reason, st::settingsPluginCardMeta);
 		} else if (status == u"unverified"_q) {
-			label(_rows, u"Файл ещё не проходил модерацию."_q, st::settingsPluginCardMeta);
+			label(card, u"Файл ещё не проходил модерацию."_q, st::settingsPluginCardMeta);
 		}
+		Ui::AddSkip(card, 4);
+		return card;
 	}
 
 	void showChoices() {
 		const auto metadata = _info.value(u"metadata"_q).toObject();
 		const auto trust = _info.value(u"trust"_q).toObject();
 		const auto status = trust.value(u"status"_q).toString();
-		details(metadata, trust);
-		label(_rows, metadata.value(u"release"_q).toBool()
+		label(_rows, u"Новая версия"_q, st::settingsPluginCardMeta);
+		const auto selected = details(metadata, trust);
+		label(selected, metadata.value(u"release"_q).toBool()
 			? u"Публичная версия — доступна для механизма обновлений"_q
 			: u"Непубличный плагин"_q, st::settingsPluginCardMeta);
 
-		const auto disclosure = _rows->add(object_ptr<Ui::SettingsButton>(
-			_rows, rpl::single(u"Подробности файла"_q), st::settingsButtonLightNoIcon));
-		const auto technical = _rows->add(object_ptr<Ui::SlideWrap<Ui::VerticalLayout>>(
-			_rows, object_ptr<Ui::VerticalLayout>(_rows)));
+		const auto disclosure = selected->add(object_ptr<Ui::SettingsButton>(
+			selected, rpl::single(u"Подробности файла"_q), st::settingsPluginCardAction));
+		const auto technical = selected->add(object_ptr<Ui::SlideWrap<Ui::VerticalLayout>>(
+			selected, object_ptr<Ui::VerticalLayout>(selected)), style::al_justify);
 		label(technical->entity(), u"ID: "_q + metadata.value(u"id"_q).toString(),
 			st::settingsPluginCardMeta);
 		label(technical->entity(), u"SHA-256: "_q + _info.value(u"sha256"_q).toString(),
@@ -212,21 +216,30 @@ private:
 
 		const auto installations = _info.value(u"installations"_q).toArray();
 		auto hasTrusted = false;
+		auto updateChoices = 0;
+		for (const auto &value : installations) {
+			const auto old = value.toObject();
+			hasTrusted = hasTrusted || Trusted(old.value(u"trust"_q).toObject().value(u"status"_q).toString());
+			if (_installationId.isEmpty() || _installationId == old.value(u"installation_id"_q).toString()) {
+				++updateChoices;
+			}
+		}
+		const auto separateChoice = _installationId.isEmpty() && (!hasTrusted || !Trusted(status));
 		for (const auto &value : installations) {
 			const auto old = value.toObject();
 			const auto id = old.value(u"installation_id"_q).toString();
 			label(_rows, u"Установленный экземпляр "_q + id.left(8), st::settingsPluginCardMeta);
-			details(old, old.value(u"trust"_q).toObject());
-			hasTrusted = hasTrusted || Trusted(old.value(u"trust"_q).toObject().value(u"status"_q).toString());
+			const auto installed = details(old, old.value(u"trust"_q).toObject());
 			if (_installationId.isEmpty() || _installationId == id) {
-				action(u"Обновить "_q + id.left(8), [=, this] { confirm(id, false, old); }, true);
+				action(u"Обновить "_q + id.left(8), [=, this] { confirm(id, false, old); },
+					(updateChoices == 1 && !separateChoice) ? nullptr : installed.get());
 			}
 		}
 		if (!_installationId.isEmpty() && installations.isEmpty()) {
 			label(_rows, u"ID файла не совпадает с ID обновляемого экземпляра."_q);
 			return;
 		}
-		if (_installationId.isEmpty() && (!hasTrusted || !Trusted(status))) {
+		if (separateChoice) {
 			action(installations.isEmpty() ? u"Установить"_q : u"Установить отдельно"_q,
 				[=, this] { confirm(QString(), !installations.isEmpty(), QJsonObject()); });
 		}
@@ -240,7 +253,7 @@ private:
 		const auto unavailable = status == u"verification_unavailable"_q;
 		if ((loss || unavailable) && !_warned) {
 			Clear(_rows);
-			Clear(_actions);
+			_box->clearButtons();
 			cancel();
 			details(_info.value(u"metadata"_q).toObject(), trust);
 			if (loss) label(_rows, u"Вы заменяете проверенный плагин непроверенной версией. Автор и безопасность "
@@ -271,7 +284,6 @@ private:
 	Fn<void()> _done;
 	QJsonObject _info;
 	Ui::VerticalLayout *_rows = nullptr;
-	Ui::VerticalLayout *_actions = nullptr;
 	QTimer *_timer = nullptr;
 	rpl::variable<bool> _showDetails = false;
 	bool _warned = false;

@@ -198,7 +198,8 @@ void AddNotice(
 		not_null<Ui::VerticalLayout*> layout) {
 	const auto card = layout->add(
 		object_ptr<Ui::VerticalLayout>(layout),
-		st::settingsPluginCardMargin);
+		st::settingsPluginCardMargin,
+		style::al_justify);
 	card->paintRequest() | rpl::on_next([=] {
 		auto p = QPainter(card);
 		const auto quality = PainterHighQualityEnabler(p);
@@ -216,7 +217,8 @@ not_null<Ui::FlatLabel*> AddCardLabel(
 		const style::FlatLabel &style = st::defaultFlatLabel) {
 	const auto label = card->add(
 		object_ptr<Ui::FlatLabel>(card, std::move(text), style),
-		st::settingsPluginTextMargin);
+		st::settingsPluginTextMargin,
+		style::al_justify);
 	label->setBreakEverywhere(true);
 	return label;
 }
@@ -231,6 +233,32 @@ void AddTrustMetadata(not_null<Ui::VerticalLayout*> card, const QJsonObject &plu
 	}
 }
 
+class PluginCardButton final : public Ui::SettingsButton {
+public:
+	PluginCardButton(QWidget *parent, QString text, const style::SettingsButton &style, bool toggle)
+	: Ui::SettingsButton(parent, rpl::single(std::move(text)), style)
+	, _toggle(toggle) {
+	}
+
+protected:
+	void paintEvent(QPaintEvent *event) override {
+		if (!_toggle && (isOver() || isDown()) && !isDisabled()) {
+			auto p = QPainter(this);
+			const auto quality = PainterHighQualityEnabler(p);
+			auto fill = st::windowFg->c;
+			fill.setAlpha(isDown() ? 22 : 12);
+			p.setPen(Qt::NoPen);
+			p.setBrush(fill);
+			const auto bounds = QRect(4, 4, std::min(width() - 8, fullTextWidth() + 20), height() - 8);
+			p.drawRoundedRect(bounds, 6, 6);
+		}
+		Ui::SettingsButton::paintEvent(event);
+	}
+
+private:
+	const bool _toggle;
+};
+
 class PluginButtonRow final : public Ui::RpWidget {
 public:
 	PluginButtonRow(QWidget *parent, bool hasToggle = false)
@@ -242,10 +270,11 @@ public:
 			QString text,
 			const style::SettingsButton &style,
 			Fn<void()> action = nullptr) {
-		const auto button = Ui::CreateChild<Ui::SettingsButton>(
+		const auto button = Ui::CreateChild<PluginCardButton>(
 			this,
-			rpl::single(std::move(text)),
-			style);
+			std::move(text),
+			style,
+			_hasToggle && !_buttons.empty());
 		if (action) {
 			button->setClickedCallback(std::move(action));
 		}
@@ -263,13 +292,15 @@ protected:
 		const auto regular = count - (_hasToggle ? 1 : 0);
 		const auto space = width - toggleWidth;
 		auto left = 0;
+		auto height = 0;
 		for (auto i = 0; i != count; ++i) {
 			const auto right = (i < regular) ? (space * (i + 1) / regular) : width;
 			_buttons[i]->resizeToWidth(right - left);
+			height = std::max(height, _buttons[i]->height());
 			_buttons[i]->moveToLeft(left, 0, width);
 			left = right;
 		}
-		return st::settingsPluginCardAction.height;
+		return height;
 	}
 
 private:
@@ -288,7 +319,7 @@ void AddPluginHeader(
 	row->addButton(std::move(title), st::settingsPluginCardTitle, std::move(open));
 	const auto button = row->addButton(
 		enabled ? u"Отключить плагин"_q : u"Включить плагин"_q,
-		st::settingsPluginCardAction,
+		st::settingsPluginToggleAction,
 		std::move(toggle));
 	button->toggleOn(rpl::single(enabled), true);
 	button->setDisabled(blocked && !enabled);
@@ -616,10 +647,12 @@ private:
 
 	std::unique_ptr<Ui::SearchFieldController> _search;
 	Ui::VerticalLayout *_content = nullptr;
+	Ui::SettingsButton *_checkUpdates = nullptr;
 	QJsonObject _snapshot;
 	QString _query;
 	rpl::variable<QString> _notice;
 	bool _polling = false;
+	bool _manualCheckPending = false;
 };
 
 Plugins::Plugins(
@@ -634,8 +667,11 @@ Plugins::Plugins(
 	setNavigationAnchor(layout);
 	AddNotice(layout, _notice);
 	AddAction(layout, u"Импортировать плагин"_q, [this] { install(); }, st::settingsPluginImport);
-	AddAction(layout, u"Проверить обновления"_q, [this] {
-		(void)Request({ { u"action"_q, u"check_updates"_q } }, _notice);
+	_checkUpdates = AddAction(layout, u"Проверить обновления"_q, [this] {
+		const auto started = Request({ { u"action"_q, u"check_updates"_q } }, _notice);
+		if (started.isUndefined()) return;
+		_manualCheckPending = true;
+		_notice = started.toBool() ? u"Проверяю обновления плагинов…"_q : u"Проверка уже выполняется…"_q;
 		refresh();
 	});
 	_content = layout->add(object_ptr<Ui::VerticalLayout>(layout));
@@ -659,6 +695,25 @@ void Plugins::showFinished() {
 
 void Plugins::refresh() {
 	_snapshot = Request({ { u"action"_q, u"snapshot"_q } }, _notice).toObject();
+	const auto distribution = _snapshot.value(u"distribution"_q).toObject();
+	_checkUpdates->setDisabled(distribution.value(u"checking"_q).toBool());
+	if (_manualCheckPending && !distribution.value(u"checking"_q).toBool()
+		&& distribution.value(u"last_check"_q).isObject()) {
+		_manualCheckPending = false;
+		const auto result = distribution.value(u"last_check"_q).toObject();
+		const auto errors = result.value(u"errors"_q).toArray();
+		const auto updates = result.value(u"updates"_q).toInt();
+		_notice = updates
+			? u"Найдены обновления или безопасные версии: %1. Выберите плагин ниже."_q.arg(updates)
+			: result.value(u"checked"_q).toInt()
+			? u"Проверка завершена. Новых проверенных версий нет."_q
+			: u"Установленных плагинов для проверки нет."_q;
+		if (!errors.isEmpty()) {
+			_notice = u"Проверка завершена с ошибками. "_q
+				+ (updates ? u"Доступно обновлений: %1. "_q.arg(updates) : QString())
+				+ errors.first().toString();
+		}
+	}
 	populate();
 	// The plugin starts when its libraries are installed in the background.
 	if ((InstallingDependencies(_snapshot) || _snapshot.value(u"distribution"_q).toObject().value(u"busy"_q).toBool()) && !_polling) {
@@ -725,6 +780,14 @@ void Plugins::populate() {
 			[=, this] { operate(id, enabled ? u"disable"_q : u"enable"_q); });
 		AddTrustMetadata(card, plugin);
 		AddCardLabel(card, plugin.value(u"description"_q).toString(), st::settingsPluginBody);
+		if (plugin.value(u"update"_q).isObject()) {
+			const auto offer = plugin.value(u"update"_q).toObject();
+			const auto target = offer.value(u"latest_version"_q).toString(offer.value(u"version"_q).toString());
+			AddAction(card, offer.value(u"rollback"_q).toBool()
+				? u"Установить безопасную версию %1"_q.arg(target)
+				: u"Обновить до версии %1"_q.arg(target),
+				[=, this] { operate(id, u"apply_update"_q); }, st::settingsPluginCardAction);
+		}
 		if (const auto line = DependencyLine(plugin); !line.isEmpty()) {
 			AddCardLabel(card, line, st::settingsPluginCardMeta);
 		}

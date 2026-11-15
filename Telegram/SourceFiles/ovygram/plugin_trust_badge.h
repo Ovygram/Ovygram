@@ -19,6 +19,16 @@ inline QColor PluginTrustColor(const QString &status) {
 		: status == u"verified"_q
 		? st::boxTextFgGood->c
 		: st::attentionButtonFg->c;
+	if (!warning) {
+		// Telegram's night palettes map boxTextFgGood to blue, while custom
+		// accents can turn active text green/purple. Trust has fixed semantics:
+		// verified is green, official is blue; retain theme contrast/chroma.
+		const auto dark = st::windowBg->c.lightnessF() < 0.5;
+		color.setHslF(
+			(status == u"verified"_q ? 125. : 210.) / 360.,
+			std::clamp(double(color.hslSaturationF()), 0.48, 0.72),
+			std::clamp(double(color.lightnessF()), dark ? 0.60 : 0.38, dark ? 0.72 : 0.46));
+	}
 	if (warning && st::windowBg->c.lightnessF() < 0.5) {
 		color.setHslF(
 			color.hslHueF(),

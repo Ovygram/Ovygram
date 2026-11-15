@@ -15,6 +15,7 @@ endif()
 set(plugin_python ${OVYGRAM_PYTHON_ROOT})
 
 target_sources(Telegram PRIVATE
+    SourceFiles/dialogs/suggestions/suggestion_plugin_updates.cpp
     SourceFiles/api/api_plugins.cpp
     SourceFiles/api/api_plugins.h
     SourceFiles/core/plugin_runtime_bridge.cpp
@@ -31,6 +32,8 @@ target_sources(Telegram PRIVATE
     SourceFiles/ovygram/plugin_elements.h
     SourceFiles/ovygram/plugin_install.cpp
     SourceFiles/ovygram/plugin_install.h
+    SourceFiles/ovygram/plugin_updates.cpp
+    SourceFiles/ovygram/plugin_updates.h
     SourceFiles/ovygram/plugin_trust_badge.h
     SourceFiles/ovygram/plugin_menus.cpp
     SourceFiles/ovygram/plugin_menus.h

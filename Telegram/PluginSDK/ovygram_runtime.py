@@ -173,6 +173,7 @@ class Manager:
         self.closing = False
         self.distribution_state = {}
         self.pending_updates = {}
+        self._startup_pending = True
         self.logger = logging.Logger("ovygram")
         self.log_handler = RotatingFileHandler(
             self.root / "plugins.log", maxBytes=1024 * 1024, backupCount=2,
@@ -187,72 +188,30 @@ class Manager:
         self.records = self.read_state()
         self.distribution = Distribution(self, registry)
         self.recover_updates()
+        if not defer_start:
+            self._start_enabled()
+
+    def _start_enabled(self):
+        if not self._startup_pending:
+            return
+        self._startup_pending = False
         if not (self.disabled or self.recovery):
-            self.load_enabled()
+            for installation_id, record in tuple(self.records.items()):
+                if record["enabled"]:
+                    self.load(installation_id)
 
-    def load_enabled(self):
-        for installation_id, record in self.records.items():
-            # A plugin that takes the host down stops the rest, as a crash
-            # of the client used to.
-            if record["enabled"] and not self.recovery:
-                self.load(installation_id)
+    def set_client_ready(self, ready):
+        """The native host connects its UI dispatcher before any on_plugin_load.
 
-    # The host and what it reports. Events arrive on its reader thread.
-
-    @property
-    def loaded(self):
-        executor = getattr(self.host, "executor", None)
-        return executor.loaded if executor is not None else self._loaded
-
-    @property
-    def runtime(self):
-        """The runtime of the in-process host, for tests and tools."""
-        return self.host.executor.runtime
-
-    def bridge_ready(self):
-        self.bridge = True
-        self.forward("bridge_ready", None)
-
-    def forward(self, action, default, **params):
-        """An action of the executor, or default while no plugin runs."""
-        if not self.host.running:
-            return default
-        return self.host.call(action, **params)
-
-    def dependencies_path(self, directory, replace=None):
-        self.forward("dependencies_path", None, directory=str(directory),
-                     replace=str(replace) if replace else None)
-
-    def host_submit(self, command):
-        if not isinstance(command, dict) or command.get("installation_id") not in self.records:
-            return
-        if self.sender is not None:
-            self.sender(command)
-            return
-        try:
-            import _ovygram_native
-            _ovygram_native.submit(json.dumps(command, ensure_ascii=False))
-        except (ImportError, RuntimeError) as error:
-            self.logger.warning("Команда плагина не доставлена: %s", error)
-
-    def host_error(self, installation_id, message):
-        if installation_id in self.records:
-            self.errors[installation_id] = message
-
-    def host_set_setting(self, installation_id, key, value, account_id=None):
-        if installation_id not in self._loaded and installation_id != self.loading:
-            raise ValueError("Плагин не запущен.")
-        self.store_setting(installation_id, key, value, account_id)
-
-    def host_exited(self, reason):
-        """The host process died or was stopped; on the main thread."""
-        for installation_id in self._loaded:
-            self.errors[installation_id] = reason
-        self._loaded.clear()
-        self.hook_mask = 0
-        if not self.closing:
-            self.recovery = True
-            self.logger.error("%s", reason)
+        Standalone SDK/test users retain immediate startup by default. Embedded
+        startup is deferred, and reconnecting a client never loads plugins twice.
+        """
+        self.check_thread()
+        if ready:
+            self.runtime.ready.set()
+            self._start_enabled()
+        else:
+            self.runtime.ready.clear()
 
     def read_state(self):
         state = json.loads(self.state.read_text(encoding="utf-8")) if self.state.exists() else {
@@ -812,7 +771,7 @@ class Manager:
                 "trust": trust, "display_author": "Неизвестный автор" if author_hidden else version["metadata"]["author"],
                 "author_hidden": author_hidden,
                 "previously_trusted": version.get("trust", {}).get("status") in TRUSTED,
-                "update": self.distribution.offers.get(installation_id),
+                "update": self.distribution.offer_for(installation_id),
                 "plugin_id": record["plugin_id"], "enabled": record["enabled"],
                 "sha256": version.get("sha256"), "package_type": version.get("package_type"),
                 "legacy": version.get("format") == "legacy"}
@@ -857,6 +816,8 @@ class Manager:
             "commit_install": self.distribution.commit,
             "discard_install": self.distribution.discard,
             "check_updates": lambda: self.distribution.start_check(manual=True),
+            "distribution_status": self.distribution.status,
+            "dismiss_update_notification": self.distribution.dismiss_notification,
             "apply_update": self.distribution.apply_offer,
             "snapshot": self.snapshot, "inspect": self.inspect, "install": self.install,
             "enable": self.enable,

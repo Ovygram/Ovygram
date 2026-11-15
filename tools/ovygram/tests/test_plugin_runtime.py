@@ -96,6 +96,37 @@ class PluginRuntimeTests(unittest.TestCase):
         recovery.disable(plugin_id)
         self.assertFalse(recovery.loaded)
 
+    def test_embedded_startup_waits_for_native_client_before_registering_ui(self):
+        source = self.root / "startup_ui.ovyplugin"
+        source.write_text(
+            'from base_plugin import BasePlugin\nfrom desktop import ui\n'
+            '__id__="startup_ui"\n__name__="Startup"\n__description__="Startup UI"\n'
+            '__author__="Test"\n__version__="1.0"\n__release__=False\n'
+            '__platform__="desktop"\n__desktop_sdk__=2\n'
+            'class StartupPlugin(BasePlugin):\n'
+            '    def on_plugin_load(self):\n'
+            '        ui.add_menu_item("message", "Test", lambda _: None)\n'
+            '        self.set_setting("loads", self.get_setting("loads", 0) + 1)\n', encoding="utf-8")
+        initial = Manager(self.profile)
+        identity = initial.install(str(source))
+        initial.records[identity]["enabled"] = True
+        initial.save()
+        initial.shutdown()
+        restored = Manager(self.profile, defer_start=True)
+        self.addCleanup(restored.shutdown)
+        self.assertFalse(restored.loaded)
+        self.assertNotIn(identity, restored.errors)
+        commands = []
+        restored.runtime.sender = commands.append
+        restored.set_client_ready(True)
+        self.assertIn(identity, restored.loaded)
+        self.assertEqual(restored.records[identity]["settings"]["loads"], 1)
+        self.assertTrue(any(command["method"] == "ui.menu.add" for command in commands))
+        restored.set_client_ready(False)
+        self.assertFalse(restored.runtime.ready.is_set())
+        restored.set_client_ready(True)
+        self.assertEqual(restored.records[identity]["settings"]["loads"], 1)
+
     def test_zip_resources_and_rollback(self):
         manager = Manager(self.profile)
         self.addCleanup(manager.shutdown)

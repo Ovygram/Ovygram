@@ -140,6 +140,60 @@ class DistributionTests(unittest.TestCase):
         self.assertEqual(plugin["trust"]["release_sequence"], 1)
         self.assertEqual(json.loads(self.manager.state.read_text(encoding="utf-8"))["installations"][identity]["current"]["trust"]["chain"], 7)
 
+    def test_manual_check_reports_results_even_after_notice_queue_is_drained(self):
+        self.approve(self.source())
+        self.install()
+        self.check()
+        self.manager.poll_distribution()
+        result = self.manager.distribution.status()["last_check"]
+        self.assertEqual(result, {"checked": 1, "updates": 0, "errors": []})
+        self.offer()
+        self.check()
+        self.assertEqual(self.manager.distribution.status()["last_check"]["updates"], 1)
+        self.offline = True
+        self.check()
+        self.assertTrue(self.manager.distribution.status()["last_check"]["errors"])
+
+    def test_offer_and_dismissal_survive_restart_until_a_new_version_appears(self):
+        self.approve(self.source())
+        identity = self.install()
+        self.offer()
+        self.check()
+        self.assertEqual(self.manager.distribution.notification()["count"], 1)
+        self.manager.shutdown()
+        self.manager = Manager(self.root / "profile", registry=self.registry)
+        self.addCleanup(self.manager.shutdown)
+        self.assertIn(identity, self.manager.distribution.offers)
+        self.assertEqual(self.manager.distribution.notification()["count"], 1)
+        self.manager.distribution.dismiss_notification()
+        self.assertEqual(self.manager.distribution.notification()["count"], 0)
+        self.manager.shutdown()
+        self.manager = Manager(self.root / "profile", registry=self.registry)
+        self.addCleanup(self.manager.shutdown)
+        self.assertEqual(self.manager.distribution.notification()["count"], 0)
+        self.check()
+        self.assertEqual(self.manager.distribution.notification()["count"], 0)
+        self.offer("1.2", 3)
+        self.check()
+        self.assertEqual(self.manager.distribution.notification()["count"], 1)
+
+    def test_manual_replacement_clears_the_old_update_notification(self):
+        self.approve(self.source())
+        identity = self.install()
+        self.offer()
+        self.check()
+        self.assertEqual(self.manager.distribution.notification()["count"], 1)
+        self.install(self.source("1.1"), installation_id=identity)
+        self.assertIsNone(self.manager.describe(identity)["update"])
+        self.assertEqual(self.manager.distribution.notification()["count"], 0)
+        self.manager.shutdown()
+        self.manager = Manager(self.root / "profile", registry=self.registry)
+        self.addCleanup(self.manager.shutdown)
+        self.assertIsNone(self.manager.describe(identity)["update"])
+        self.assertEqual(self.manager.distribution.notification()["count"], 0)
+        with self.assertRaisesRegex(ValueError, "устарело"):
+            self.manager.distribution.apply_offer(identity)
+
     def test_missing_release_prepares_and_installs_as_nonpublic(self):
         payload = self.source(release=False).replace(b"__release__ = False\n", b"")
         token, path = self.prepare(payload)
