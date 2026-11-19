@@ -1,0 +1,78 @@
+name: Transfer Ovygram Windows dependency caches
+
+on:
+  workflow_dispatch:
+    inputs:
+      key:
+        description: Release dependency cache key without the group suffix
+        required: true
+        type: string
+      source_run_id:
+        description: Leave empty to export this branch's caches, or provide the export run ID to import on main
+        type: string
+
+permissions:
+  actions: read
+
+jobs:
+  transfer:
+    if: (github.ref == 'refs/heads/main') == (inputs.source_run_id != '')
+    runs-on: windows-2025-vs2026
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        group: [foundation, qt, extras]
+    steps:
+      - name: Restore the existing GitHub Actions cache
+        if: inputs.source_run_id == ''
+        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684
+        with:
+          path: dependency-cache/${{ matrix.group }}
+          key: ${{ inputs.key }}-${{ matrix.group }}
+          fail-on-cache-miss: true
+
+      - name: Download the exported snapshot
+        if: inputs.source_run_id != ''
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: dependency-cache-${{ inputs.key }}-${{ matrix.group }}
+          path: dependency-cache/${{ matrix.group }}
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.source_run_id }}
+
+      - name: Check the snapshot identity
+        env:
+          SNAPSHOT_GROUP: ${{ matrix.group }}
+          SNAPSHOT_KEY: ${{ inputs.key }}
+        run: |
+          @'
+          import json
+          import os
+          from pathlib import Path
+          from zipfile import ZipFile
+
+          group = os.environ['SNAPSHOT_GROUP']
+          archive = Path('dependency-cache') / group / 'dependencies.zip'
+          expected = {'group': group, 'identity': os.environ['SNAPSHOT_KEY'], 'format': 2}
+          with ZipFile(archive) as snapshot:
+              if json.loads(snapshot.read('manifest.json')) != expected:
+                  raise SystemExit('The snapshot manifest does not match the requested cache.')
+          '@ | python -
+
+      - name: Export the snapshot for import on main
+        if: inputs.source_run_id == ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: dependency-cache-${{ inputs.key }}-${{ matrix.group }}
+          path: dependency-cache/${{ matrix.group }}/dependencies.zip
+          compression-level: 0
+          retention-days: 1
+          if-no-files-found: error
+
+      - name: Save the snapshot in the main branch cache
+        if: inputs.source_run_id != ''
+        uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684
+        with:
+          path: dependency-cache/${{ matrix.group }}
+          key: ${{ inputs.key }}-${{ matrix.group }}
