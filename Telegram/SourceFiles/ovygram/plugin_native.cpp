@@ -2,6 +2,7 @@
 #include "ovygram/plugin_install.h"
 
 #include "ovygram/plugin_widgets.h"
+#include "ovygram/protected_ui.h"
 
 #include <QtCore/QJsonArray>
 #include <QtCore/QMetaMethod>
@@ -108,7 +109,8 @@ bool WindowFilter::eventFilter(QObject *watched, QEvent *e) {
 	const auto widget = qobject_cast<QWidget*>(watched);
 	if (!widget
 		|| !widget->isWindow()
-		|| widget->windowType() == Qt::ToolTip) {
+		|| widget->windowType() == Qt::ToolTip
+		|| ProtectedFromPlugins(widget)) {
 		return false;
 	}
 	const auto &state = Get();
@@ -179,6 +181,10 @@ QJsonValue Invoke(not_null<QWidget*> widget, const QJsonObject &command) {
 	const auto args = command.value(u"args"_q).toArray();
 	if (args.size() > kMaximumArguments) {
 		throw std::runtime_error("Too many arguments.");
+	}
+	if (CouldCoverProtected(widget, QString::fromLatin1(name))) {
+		throw std::runtime_error(
+			"Layout of this window is locked while Ovygram's plugin manager is open.");
 	}
 	const auto meta = widget->metaObject();
 	auto lastError = std::string("Unknown method or wrong argument count.");

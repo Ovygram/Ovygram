@@ -180,7 +180,7 @@ std::string PluginRuntime::dispatch(const std::string &request) {
 
 unsigned int PluginRuntime::hookMask() const {
 	const auto lock = py::gil_scoped_acquire();
-	return _private->manager.attr("runtime").attr("hook_mask").cast<unsigned int>();
+	return _private->manager.attr("hook_mask").cast<unsigned int>();
 }
 
 } // namespace Core

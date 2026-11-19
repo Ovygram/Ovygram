@@ -9,7 +9,7 @@ ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "Telegram/PluginSDK"))
 
 from ovygram_deps import Dependencies, normalize, normalize_all
-from ovygram_runtime import Manager, plugin_metadata
+from ovygram_runtime import InProcessManager as Manager, plugin_metadata
 
 
 class FakePip:

@@ -1,5 +1,6 @@
 #include "ovygram/plugin_elements.h"
 #include "ovygram/plugin_install.h"
+#include "ovygram/protected_ui.h"
 
 #include "ui/style/style_core.h"
 #include "ui/widgets/fields/input_field.h"
@@ -52,6 +53,9 @@ struct State {
 	std::function<void(QJsonObject)> send;
 	Filter filter;
 	std::optional<QByteArray> palette;
+	// The plugin colors, while a protected surface shows the original ones.
+	std::optional<QByteArray> suspendedPalette;
+	rpl::lifetime protection;
 	std::set<QString> paletteOwners;
 };
 
@@ -129,7 +133,7 @@ void ApplyAll(const QString &name) {
 }
 
 bool Filter::eventFilter(QObject *watched, QEvent *e) {
-	if (InstallationUiActive()) return false;
+	if (InstallationUiActive() || InsideProtected(watched)) return false;
 	const auto type = e->type();
 	if (type == QEvent::Show) {
 		const auto element = Find(watched);
@@ -268,8 +272,33 @@ void WatchField(not_null<Ui::InputField*> field) {
 	return result;
 }
 
+// Protected surfaces are drawn in the colors of the user's theme: a plugin
+// palette could hide a warning or recolor a trust badge.
+void SuspendColors(bool suspended) {
+	auto &state = Get();
+	if (!state.palette || suspended == state.suspendedPalette.has_value()) {
+		return;
+	} else if (suspended) {
+		state.suspendedPalette = style::main_palette::save();
+		style::main_palette::load(*state.palette);
+	} else {
+		style::main_palette::load(*state.suspendedPalette);
+		state.suspendedPalette.reset();
+	}
+	style::NotifyPaletteChanged();
+}
+
 void SetColors(const QString &installationId, const QJsonObject &colors) {
 	auto &state = Get();
+	if (ProtectedSurfaceExists()) {
+		// Its texts and warnings keep the colors of the user's theme.
+		throw std::runtime_error(
+			"Colors can't be changed while Ovygram's plugin manager is open.");
+	} else if (!state.protection) {
+		ProtectedSurfacesChanged() | rpl::on_next([] {
+			SuspendColors(ProtectedSurfaceExists());
+		}, state.protection);
+	}
 	auto parsed = std::vector<std::pair<QByteArray, QColor>>();
 	for (auto i = colors.begin(); i != colors.end(); ++i) {
 		const auto color = QColor(i.value().toString());
@@ -306,9 +335,12 @@ void ResetColors(const QString &installationId) {
 		return;
 	}
 	if (state.palette) {
-		style::main_palette::load(*state.palette);
+		if (!state.suspendedPalette) {
+			style::main_palette::load(*state.palette);
+			style::NotifyPaletteChanged();
+		}
 		state.palette.reset();
-		style::NotifyPaletteChanged();
+		state.suspendedPalette.reset();
 	}
 }
 

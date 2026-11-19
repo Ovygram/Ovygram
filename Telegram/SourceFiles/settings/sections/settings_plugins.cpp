@@ -5,6 +5,7 @@
 #include "core/plugin_runtime.h"
 #include "ovygram/plugin_install.h"
 #include "ovygram/plugin_trust_badge.h"
+#include "ovygram/protected_ui.h"
 #include "lang/lang_keys.h"
 #include "mainwidget.h"
 #include "settings/settings_common_session.h"
@@ -147,6 +148,29 @@ void AddNotice(
 	return snapshot.value(u"dependencies"_q).toObject().value(u"restart"_q).toBool()
 		? u"Новые версии библиотек плагинов применятся после перезапуска клиента."_q
 		: QString();
+}
+
+// A text that came from the plugin's own process is the plugin speaking,
+// not Ovygram: it is labelled so.
+[[nodiscard]] QString ErrorTitle(const QJsonObject &plugin) {
+	return plugin.value(u"error_from_plugin"_q).toBool()
+		? u"Сообщение плагина: "_q
+		: u"Ошибка: "_q;
+}
+
+// What the user must know about the process plugins run in: why it can't
+// start, that it has no network, or that it isn't restricted at all.
+[[nodiscard]] QString IsolationStatus(const QJsonObject &snapshot) {
+	const auto isolation = snapshot.value(u"isolation"_q).toObject();
+	const auto reason = isolation.value(u"reason"_q).toString().simplified();
+	if (isolation.value(u"active"_q).toBool()) {
+		return reason;
+	} else if (isolation.value(u"running"_q).toBool() || reason.isEmpty()) {
+		return reason.isEmpty()
+			? QString()
+			: u"Плагины работают без изоляции от системы. %1"_q.arg(reason);
+	}
+	return u"Плагины не запущены. %1"_q.arg(reason);
 }
 
 [[nodiscard]] QString PluginMetadata(const QJsonObject &plugin) {
@@ -324,6 +348,7 @@ void ConfirmRemove(
 		not_null<Window::SessionController*> controller,
 		Fn<void(bool)> remove) {
 	controller->show(Box([=](not_null<Ui::GenericBox*> box) {
+		Ovygram::ProtectSurface(box);
 		box->setTitle(rpl::single(u"Удаление плагина"_q));
 		box->addRow(object_ptr<Ui::FlatLabel>(box,
 			rpl::single(u"Сохранить настройки и данные этого экземпляра?"_q), st::boxLabel));
@@ -401,6 +426,7 @@ PluginDetails::PluginDetails(
 , _installationId(std::move(installationId))
 , _name(std::move(name))
 , _content(Ui::CreateChild<Ui::VerticalLayout>(this)) {
+	Ovygram::ProtectSurface(this);
 	setNavigationAnchor(_content);
 	Ui::ResizeFitChild(this, _content);
 	refresh();
@@ -458,7 +484,7 @@ void PluginDetails::refresh() {
 		AddCardLabel(card, line, st::settingsPluginCardMeta);
 	}
 	if (const auto error = plugin.value(u"error"_q).toString(); !error.isEmpty()) {
-		Ui::AddDividerText(_content, rpl::single(u"Ошибка: "_q + error));
+		Ui::AddDividerText(_content, rpl::single(ErrorTitle(plugin) + error));
 	}
 	if (!status.isEmpty()) {
 		Ui::AddDividerText(_content, rpl::single(status));
@@ -641,6 +667,7 @@ Plugins::Plugins(
 	QWidget *parent,
 	not_null<Window::SessionController*> controller)
 : Section(parent, controller) {
+	Ovygram::ProtectSurface(this);
 	const auto layout = Ui::CreateChild<Ui::VerticalLayout>(this);
 	auto search = CreateSectionSearchRow(layout);
 	_search = std::move(search.controller);
@@ -722,6 +749,9 @@ void Plugins::populate() {
 	if (const auto text = DependencyStatus(_snapshot); !text.isEmpty()) {
 		Ui::AddDividerText(_content, rpl::single(text));
 	}
+	if (const auto text = IsolationStatus(_snapshot); !text.isEmpty()) {
+		Ui::AddDividerText(_content, rpl::single(text));
+	}
 	if (_snapshot.value(u"recovery"_q).toBool()
 		&& !_snapshot.value(u"disabled"_q).toBool()
 		&& !_snapshot.value(u"restart_required"_q).toBool()) {
@@ -770,7 +800,7 @@ void Plugins::populate() {
 			AddCardLabel(card, line, st::settingsPluginCardMeta);
 		}
 		if (const auto error = plugin.value(u"error"_q).toString(); !error.isEmpty()) {
-			AddCardLabel(card, u"Ошибка: "_q + ErrorPreview(error), st::settingsPluginCardMeta);
+			AddCardLabel(card, ErrorTitle(plugin) + ErrorPreview(error), st::settingsPluginCardMeta);
 		}
 		AddCardActions(
 			card,

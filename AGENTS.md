@@ -17,9 +17,13 @@
   remain reserved but cannot receive `official` without a corrected file.
 - Settings/data/handlers belong to installation_id. A separate plugin permission
   model is not part of the current scope; do not introduce permission grants/UI.
-- Full protection of application-owned windows/tabs against arbitrary plugin
-  code is deferred by the owner. Keep the future TODO in
-  `docs/protected-ui-architecture.md`; do not implement process/OS isolation now.
+- Plugin code runs only in the plugin host process (`ovygram_host.py`), never
+  in the client: the manager in `ovygram_runtime.py` must not import plugin
+  code or libraries. On Linux the host starts only inside the sandbox of
+  `ovygram_sandbox.py`. Application-owned windows/tabs are registered with
+  `Ovygram::ProtectSurface`. The design and what is still open are in
+  `docs/protected-ui-architecture.md`; the Windows restrictions in
+  `ovygram_sandbox_windows.py` stay unverified until they have run on Windows.
 - Registry/index URLs will be supplied at deployment. Keep them configurable;
   their absence is not an implementation blocker. Pin the generated public key
   in the client. Never commit the private signing key or put it in client files.

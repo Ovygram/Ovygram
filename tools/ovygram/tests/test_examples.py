@@ -13,7 +13,7 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "Telegram/PluginSDK"))
 
-from ovygram_runtime import Manager, plugin_metadata
+from ovygram_runtime import InProcessManager as Manager, plugin_metadata
 
 EXAMPLES = ROOT / "tools/ovygram/examples"
 

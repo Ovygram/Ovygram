@@ -19,7 +19,7 @@ key `543138e5eaa5851c` and the production HTTPS URL; no private key is shipped.
 The source fix for font size checks finite double values and clamps before
 conversion to int. It requires a future explicitly authorized native build;
 this update does not build or replace the executable. Plugin process/OS
-isolation remains deferred as described in `protected-ui-architecture.md`.
+isolation is described in `protected-ui-architecture.md`.
 
 The shared parser is `Telegram/PluginSDK/ovygram_package.py`. Distribution
 uses `.ovyplugin` and `.ovyzip`; local import also accepts `.py`, `.plugin`
@@ -112,9 +112,9 @@ warning and leaves the new code disabled. Trust is never inherited.
 While the dialog is open, the C++ plugin boundary refuses widget, native,
 compose, UI creation and run-on-UI commands; native/widget event filters and
 client hooks do not expose its controls. The installer is outside the Plugin
-API surface tree. This protects the supported SDK boundary; plugins still run
-arbitrary Python in the application process. It is **not a process sandbox**
-against direct ctypes/Qt/process access or monkey-patching Python internals.
+API surface tree. Plugin code runs in a separate host process, restricted by
+the OS on Linux, so it cannot bypass this boundary through ctypes, Qt or the
+Python objects of the manager; see `protected-ui-architecture.md`.
 
 ## Checks, updates and recovery
 

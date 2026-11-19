@@ -24,7 +24,7 @@ import urllib.parse
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "Telegram/PluginSDK"))
 from ovygram_registry import Registry, canonical, json_document, protected_author, verify_ed25519
-from ovygram_runtime import Manager
+from ovygram_runtime import InProcessManager as Manager
 
 EXAMPLE = ROOT / "tools/ovygram/examples/lifecycle.ovyplugin"
 
@@ -459,7 +459,7 @@ class DistributionTests(unittest.TestCase):
         script = '''import os, sys
 from pathlib import Path
 sys.path.insert(0, sys.argv[1])
-from ovygram_runtime import Manager, read_package
+from ovygram_runtime import InProcessManager as Manager, read_package
 manager = Manager(sys.argv[2])
 manager.runtime.sender = lambda command: None
 payload = Path(sys.argv[3]).read_bytes().replace(b'"1.0.0"', b'"2.0"')

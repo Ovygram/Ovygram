@@ -15,7 +15,7 @@ import base64
 from desktop import tl, ui
 from desktop._runtime import _current
 from desktop.models import Event, Message
-from ovygram_runtime import Manager
+from ovygram_runtime import InProcessManager as Manager
 
 
 class DesktopUiTests(unittest.TestCase):

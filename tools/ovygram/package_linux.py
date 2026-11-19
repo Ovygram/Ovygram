@@ -25,7 +25,8 @@ APP_ID = "io.github.maxutka00.Ovygram"
 ICON_SIZES = (16, 32, 48, 64, 128, 256, 512)
 # A stale python directory would ship without dependency support.
 REQUIRED_RUNTIME = ("ovygram_host.so", "python313.zip", "pip.whl",
-                    "sdk/ovygram_runtime.py", "sdk/ovygram_deps.py")
+                    "sdk/ovygram_runtime.py", "sdk/ovygram_deps.py",
+                    "sdk/ovygram_host.py", "sdk/ovygram_sandbox.py")
 
 
 def check_build(build):

@@ -12,6 +12,7 @@ license=('GPL-3.0-or-later WITH OpenSSL-exception')
 # runtime: icons, PipeWire, Qt image formats.
 depends=('abseil-cpp'
          'ada'
+         'bubblewrap'
          'bzip2'
          'cairo'
          'ffmpeg'

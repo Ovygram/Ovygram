@@ -14,7 +14,8 @@ class PackageLinuxTests(unittest.TestCase):
         build = Path(directory) / "build"
         (build / "python/sdk").mkdir(parents=True)
         (build / "Ovygram").write_bytes(b"binary")
-        names = ["ovygram_host.so", "python313.zip", "sdk/ovygram_runtime.py", "sdk/ovygram_deps.py"]
+        names = ["ovygram_host.so", "python313.zip", "sdk/ovygram_runtime.py", "sdk/ovygram_deps.py",
+                 "sdk/ovygram_host.py", "sdk/ovygram_sandbox.py"]
         if complete:
             names.append("pip.whl")
         for name in names:
