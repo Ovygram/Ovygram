@@ -171,13 +171,14 @@ class BaselineTests(unittest.TestCase):
         self.assertEqual(baseline.cache_size([
             self.root, self.root / 'missing']), 7)
 
-    def dependency_cache_fixture(self):
+    def dependency_cache_fixture(self, toolchain=None):
         source = self.root / 'TBuild/tdesktop'
         recipe = source / 'Telegram/build/prepare/prepare.py'
         recipe.parent.mkdir(parents=True)
         recipe.write_text('pinned recipe')
-        toolchain = dict(image='fixture', image_version='image', msvc='14.44',
-                         sdk='26100', python_version='3.12')
+        if toolchain is None:
+            toolchain = dict(image='fixture', image_version='image', msvc='14.44',
+                             sdk='26100', python_version='3.12')
         baseline.write_json(self.root / 'reports/toolchain.json', toolchain)
         baseline.write_json(self.root / 'reports/baseline.json',
                             {'configuration': 'Release'})
@@ -214,6 +215,18 @@ class BaselineTests(unittest.TestCase):
         library.unlink()
         self.restore_dependencies(f'{identity}-foundation')
         self.assertEqual(library.read_bytes(), b'release library fixture')
+
+    def test_november_16_image_accepts_november_3_release_snapshot(self):
+        toolchain = dict(image='win25-vs2026', image_version='20261103.298.1',
+                         msvc='14.44.35207', sdk='10.0.26100.0\\',
+                         python_version='Python 3.12.10', cmake_version='cmake version 4.4.5')
+        identity = baseline.release_cache_identity(self.dependency_cache_fixture(toolchain))
+        baseline.write_json(self.root / 'reports/toolchain.json', {
+            **toolchain, 'image_version': '20261116.315.1', 'cmake_version': 'cmake version 4.5.0',
+        })
+        with patch.object(dependency_cache, 'restore', return_value=True) as restore:
+            self.restore_dependencies(f'{identity}-foundation')
+        restore.assert_called_once_with(self.root, 'foundation', identity)
 
     def test_optional_dependency_cache_allows_initial_preparation(self):
         self.dependency_cache_fixture()

@@ -212,18 +212,22 @@ def main():
         release_fallback = ''
         if state['configuration'] == 'Release':
             identity = release_cache_identity(debug_identity)
-            # These two images provide the same pinned Windows toolchain.
-            compatible_images = ('20261030.294.1', '20261103.298.1')
+            # These images use the same pinned MSVC and SDK. The November 16
+            # image uses a newer CMake to consume the prebuilt libraries.
+            compatible_images = {
+                ('20261030.294.1', 'cmake version 4.4.5'): '20261103.298.1',
+                ('20261103.298.1', 'cmake version 4.4.5'): '20261030.294.1',
+                ('20261116.315.1', 'cmake version 4.5.0'): '20261103.298.1',
+            }
+            fallback_image = compatible_images.get(
+                (toolchain['image_version'], toolchain.get('cmake_version')))
             if (toolchain['image'] == 'win25-vs2026'
-                    and toolchain['image_version'] in compatible_images
+                    and fallback_image
                     and toolchain['msvc'] == '14.44.35207'
                     and toolchain['sdk'].rstrip('\\') == '10.0.26100.0'
-                    and toolchain['python_version'] == 'Python 3.12.10'
-                    and toolchain['cmake_version'] == 'cmake version 4.4.5'):
-                other = next(image for image in compatible_images
-                             if image != toolchain['image_version'])
+                    and toolchain['python_version'] == 'Python 3.12.10'):
                 release_fallback = release_cache_identity(
-                    cache_identity(source, {**toolchain, 'image_version': other}))
+                    cache_identity(source, {**toolchain, 'image_version': fallback_image}))
         if args.action == 'cache-restore':
             if not args.group:
                 parser.error('--group required')
