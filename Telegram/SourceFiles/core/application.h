@@ -11,6 +11,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "mtproto/mtproto_proxy_data.h"
 #include "window/window_separate_id.h"
 
+#include <optional>
+
 class History;
 
 namespace base {
@@ -70,6 +72,12 @@ class AuthKey;
 using AuthKeyPtr = std::shared_ptr<AuthKey>;
 using AuthKeysList = std::vector<AuthKeyPtr>;
 } // namespace MTP
+
+#ifdef OVYGRAM_ENABLED
+namespace Ovygram {
+class ProxyProxy;
+} // namespace Ovygram
+#endif
 
 namespace Media {
 namespace Audio {
@@ -248,6 +256,10 @@ public:
 	void setCurrentProxy(
 		const MTP::ProxyData &proxy,
 		MTP::ProxyData::Settings settings);
+#ifdef OVYGRAM_ENABLED
+	[[nodiscard]] Ovygram::ProxyProxy &proxyProxy();
+	void setProxyProxy(std::optional<MTP::ProxyData> proxy);
+#endif
 	void proxyRotationSettingsChanged();
 	void checkProxyRotation(not_null<Main::Account*> account, int32 state);
 	[[nodiscard]] rpl::producer<ProxyChange> proxyChanges() const;
@@ -422,6 +434,7 @@ private:
 	void showOpenGLCrashNotification();
 	void clearPasscodeLock();
 	void closeAdditionalWindows();
+	void finishProxyChange(const MTP::ProxyData &was);
 
 	bool openCustomUrl(
 		const QString &protocol,

@@ -11,6 +11,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "lang/lang_keys.h"
 #include "chat_helpers/bot_command.h"
 #include "core/application.h"
+#ifdef OVYGRAM_ENABLED
+#include "ovygram/proxy_proxy.h"
+#endif
 #include "core/local_url_handlers.h"
 #include "core/file_utilities.h"
 #include "mainwidget.h"
@@ -513,6 +516,13 @@ void HiddenUrlClickHandler::Open(QString url, QVariant context) {
 	if (Core::InternalPassportOrOAuthLink(url)) {
 		return;
 	}
+
+#ifdef OVYGRAM_ENABLED
+	if (Ovygram::IsProxyLink(url)) {
+		Core::App().openLocalUrl(url, context);
+		return;
+	}
+#endif
 
 	if (url.startsWith(u"tg://"_q, Qt::CaseInsensitive)
 		|| url.startsWith(u"internal:"_q, Qt::CaseInsensitive)) {

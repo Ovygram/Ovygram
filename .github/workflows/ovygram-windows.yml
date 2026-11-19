@@ -79,6 +79,10 @@ jobs:
         run: |
           ./control/tools/ovygram/plugin_host_smoke.ps1 -Source "$env:GITHUB_WORKSPACE/TBuild/tdesktop" -PythonRoot "$env:GITHUB_WORKSPACE/plugin-python"
 
+      - name: Stage and verify Xray for PROXY
+        if: inputs.mode == 'plugins'
+        run: python control/tools/ovygram/xray_bundle.py "$env:GITHUB_WORKSPACE/proxy-xray"
+
       - name: Identify compatible dependency cache
         id: cache-key
         if: (inputs.mode == 'build' || inputs.mode == 'plugins')
