@@ -32,5 +32,10 @@ void Handle(const QJsonObject &command);
 [[nodiscard]] QJsonValue Request(const QJsonObject &command);
 void RemovePlugin(const QString &installationId);
 
+// Positions in the text of a field: QTextDocument counts UTF-16 code units,
+// the Python side code points.
+[[nodiscard]] int UnitsToCodePoints(const QString &text, int units);
+[[nodiscard]] int CodePointsToUnits(const QString &text, int points);
+
 } // namespace Elements
 } // namespace Ovygram

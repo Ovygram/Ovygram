@@ -28,6 +28,7 @@ import uuid
 import zipfile
 
 from hook_utils import HookCancelled
+from ovygram_commands import Engine
 from ovygram_deps import Dependencies, normalize_all
 from ovygram_distribution import Distribution
 from ovygram_hosts import HostError, LocalHost, PluginError, ProcessHost
@@ -173,6 +174,7 @@ class Manager:
         self.sender = None
         self.closing = False
         self.reported = {}  # installation_id -> the error text its plugin wrote.
+        self.commands = Engine()
         self.distribution_state = {}
         self.pending_updates = {}
         self._startup_pending = True
@@ -274,11 +276,93 @@ class Manager:
             raise ValueError("Плагин не запущен.")
         self.store_setting(installation_id, key, value, account_id)
 
+    def host_commands(self, installation_id, commands):
+        """The commands a plugin declares for the message field."""
+        if not self.running(installation_id):
+            return
+        try:
+            self.commands.set(installation_id, self.records[installation_id]["plugin_id"], commands)
+        except ValueError as error:
+            self.errors[installation_id] = str(error)
+            self.logger.error("%s: %s", self.label(installation_id), error)
+
+    def host_suggestions(self, token, items):
+        if self.commands.suggestions(token, items):
+            # The answer came after the view was returned: let the client ask again.
+            self.notify({"id": uuid.uuid4().hex, "method": "commands.refresh"})
+
+    def notify(self, command):
+        """A command of the manager itself for the client."""
+        if self.sender is not None:
+            self.sender(command)
+            return
+        try:
+            import _ovygram_native
+            _ovygram_native.submit(json.dumps(command, ensure_ascii=False))
+        except (ImportError, RuntimeError):
+            pass
+
+    def commands_view(self, view):
+        """Asks the plugin for the suggestions a view lacks."""
+        request = view.pop("request", None)
+        if request is not None:
+            try:
+                self.forward("command_suggest", None, **request)
+            except (HostError, HookCancelled) as error:
+                self.logger.error("%s: %s", self.label(request["installation_id"]), error)
+        return view
+
+    def commands_input(self, text, cursor, context):
+        return self.commands_view(self.commands.input(text, cursor, context))
+
+    def commands_key(self, key):
+        """Up, Down, Tab and Esc in the field while the list is shown."""
+        result = {}
+        if key in ("up", "down"):
+            view = self.commands.move(-1 if key == "up" else 1)
+        elif key == "escape":
+            view = self.commands.dismiss()
+        else:
+            view = self.commands_complete(result, None)
+        return {**result, "view": self.commands_view(view)}
+
+    def commands_pick(self, index):
+        result = {}
+        view = self.commands_complete(result, index)
+        return {**result, "view": self.commands_view(view)}
+
+    def commands_complete(self, result, index):
+        completed = self.commands.complete(index)
+        if completed is None:
+            return self.commands.view()
+        result["text"], result["cursor"] = completed
+        return self.commands.input(result["text"], result["cursor"], self.commands.context)
+
+    def commands_submit(self, text, context):
+        """Whether the text is a plugin command. A handled one must not be
+        sent, also when it fails."""
+        command = self.commands.submit(text, context.get("kind", ""))
+        if command is None:
+            completed = self.commands.finish_name(text)
+            if completed is None:
+                return {"handled": False, "error": ""}
+            view = self.commands.input(completed[0], completed[1], self.commands.context)
+            return {"handled": True, "error": "", "text": completed[0], "cursor": completed[1],
+                    "view": self.commands_view(view)}
+        if "error" in command:
+            return {"handled": True, "error": command["error"]}
+        try:
+            self.host.call("command", context=context, **command)
+        except (HostError, HookCancelled) as error:
+            return {"handled": True, "error": str(error) or "Команда не выполнена."}
+        return {"handled": True, "error": ""}
+
     def host_exited(self, reason):
         """The host process died or was stopped; on the main thread."""
         for installation_id in self._loaded:
             self.errors[installation_id] = reason
         self._loaded.clear()
+        self.commands.clear()
         self.hook_mask = 0
         if not self.closing:
             self.recovery = True
@@ -500,6 +584,7 @@ class Manager:
             self.errors.pop(installation_id, None)
             return True
         except BaseException as error:
+            self.commands.remove(installation_id)
             message = str(error) or type(error).__name__
             if isinstance(error, PluginError):
                 # The host has logged the traceback of the plugin.
@@ -521,6 +606,7 @@ class Manager:
                 self.host.call("unload", installation_id=installation_id)
         finally:
             self._loaded.pop(installation_id, None)
+            self.commands.remove(installation_id)
 
     def change_record(self, installation_id, record):
         previous = self.records.get(installation_id)
@@ -904,6 +990,9 @@ class Manager:
             "client_pending": lambda request_id, installation_id: bool(self.forward(
                 "is_pending", False, request_id=request_id, installation_id=installation_id)),
             "bridge_ready": lambda: self.set_client_ready(True),
+            "commands_input": self.commands_input, "commands_key": self.commands_key,
+            "commands_pick": self.commands_pick, "commands_submit": self.commands_submit,
+            "commands_view": lambda: self.commands_view(self.commands.view()),
             "native_hook": self.native_hook,
             "client_event": self.client_event,
             "ui_execute": lambda call_id: self.forward("execute_ui", None, call_id=call_id),

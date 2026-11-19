@@ -2,18 +2,18 @@
 
 Shows how to:
 - use a PyPI library (requests) declared in __requirements__;
-- turn an outgoing message into a command: the hook cancels sending and
-  starts a background task, because hooks are synchronous and must be fast;
-- find the chat of an outgoing request and answer in it;
+- add a command of the message field with desktop.commands: Ovygram lists
+  it after "/", and Enter runs the handler instead of sending the text;
+- suggest values of an argument while the user types, here the cities the
+  geocoder finds;
 - keep network code off the UI thread and report errors to the user.
 """
 
 import requests
 
 from base_plugin import BasePlugin
-from desktop import client, ui
+from desktop import commands, ui
 from desktop_utils import run_in_background
-from hook_utils import CANCEL, HookResult
 
 __id__ = "weather"
 __name__ = "Погода"
@@ -26,7 +26,6 @@ __platform__ = "desktop"
 __desktop_sdk__ = 2
 __requirements__ = ["requests>=2.31,<3"]
 
-COMMANDS = ("/погода", "/weather")
 GEOCODING = "https://geocoding-api.open-meteo.com/v1/search"
 FORECAST = "https://api.open-meteo.com/v1/forecast"
 TIMEOUT = 15
@@ -64,45 +63,35 @@ def weather(city):
             f"{current['wind_speed_10m']:.0f} м/с")
 
 
-async def chat_of(account_id, peer):
-    """The Chat an outgoing request goes to, from its InputPeer."""
-    kind = peer.constructor_name
-    if kind == "inputPeerSelf":
-        accounts = await client.accounts()
-        chat_id = next(account.user_id for account in accounts if account.id == account_id)
-    elif kind == "inputPeerUser":
-        chat_id = peer.user_id
-    elif kind == "inputPeerChat":
-        chat_id = peer.chat_id | (1 << 48)
-    elif kind == "inputPeerChannel":
-        chat_id = peer.channel_id | (2 << 48)
-    else:
-        raise ValueError(f"Неподдерживаемый чат {kind}.")
-    return await client.get_chat(account_id, chat_id)
+def cities(prefix):
+    """Blocking: (city, country) pairs the geocoder knows for a prefix."""
+    places = session.get(GEOCODING, params={"name": prefix, "count": 8, "language": "ru"},
+                         timeout=TIMEOUT).json().get("results") or []
+    return [(place["name"], place.get("country", "")) for place in places]
 
 
 class WeatherPlugin(BasePlugin):
     def on_plugin_load(self):
-        self.add_hook("before_send", self.before_send, request="messages.sendMessage")
+        commands.add("погода", self.answer, description="Текущая погода в городе",
+                     args=[commands.Arg("город", rest=True, suggest=self.suggest)],
+                     aliases=["weather"])
 
-    def before_send(self, message):
-        command, _, city = message.text.partition(" ")
-        if command.lower() not in COMMANDS:
-            return HookResult()  # Not ours: leave the message as is.
-        city = city.strip()
-        if not city:
-            return HookResult(CANCEL, reason="Укажите город: /погода Москва")
-        # The hook only starts the work; the reason is shown to the user.
-        self.run_async(self.answer(message.account_id, message.request.peer, city))
-        return HookResult(CANCEL, reason=f"Узнаю погоду: {city}…")
+    async def suggest(self, prefix, context):
+        # The geocoder needs two letters; an error only means no suggestions.
+        if len(prefix) < 2:
+            return []
+        try:
+            return await run_in_background(cities, prefix)
+        except requests.RequestException:
+            return []
 
-    async def answer(self, account_id, peer, city):
+    async def answer(self, context, city):
         try:
             text = await run_in_background(weather, city)
         except requests.RequestException as error:
             text = f"Не удалось получить погоду: {error}"
         try:
-            await client.send_message(await chat_of(account_id, peer), text)
+            await context.reply(text)
         except Exception as error:
             self.log(f"Погода не отправлена: {error}")
             ui.show_dialog(text, title="Погода")

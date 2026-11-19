@@ -21,6 +21,7 @@
 #include "main/main_domain.h"
 #include "main/main_session.h"
 #include "mtproto/facade.h"
+#include "ovygram/plugin_commands.h"
 #include "ovygram/plugin_elements.h"
 #include "ovygram/plugin_menus.h"
 #include "ovygram/plugin_native.h"
@@ -374,6 +375,11 @@ void PluginClient::receive(const QByteArray &request) {
 					} },
 				});
 			}
+			return;
+		}
+		if (method == u"commands.refresh"_q) {
+			// Sent by the manager itself: suggestions of a plugin arrived.
+			Ovygram::Commands::Refresh();
 			return;
 		}
 		if (method == u"cancel"_q) {

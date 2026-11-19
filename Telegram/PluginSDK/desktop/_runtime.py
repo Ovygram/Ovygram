@@ -113,6 +113,7 @@ class Runtime:
         self.surfaces = {}
         self.element_handlers = {}
         self.widget_rules = {}
+        self.commands = {}  # installation_id -> {name: desktop.commands.Command}
         self.sequence = 0
         self.loop = None
         self.thread = None
@@ -531,7 +532,71 @@ class Runtime:
             except BaseException as error:
                 self.manager.report_error(handler.installation_id, str(error))
 
+    # Commands of the message field, see desktop.commands. The client keeps
+    # the declarations and decides what runs; the handlers stay here.
+
+    def add_command(self, command):
+        owned = self.commands.setdefault(command.owner.installation_id, {})
+        if command.name in owned:
+            raise ValueError(f"Команда /{command.name} уже добавлена.")
+        owned[command.name] = command
+        try:
+            self.publish_commands(command.owner.installation_id)
+        except BaseException:
+            owned.pop(command.name, None)
+            raise
+
+    def remove_command(self, command):
+        owned = self.commands.get(command.owner.installation_id, {})
+        if owned.get(command.name) is command:
+            del owned[command.name]
+            self.publish_commands(command.owner.installation_id)
+
+    def publish_commands(self, installation_id):
+        self.manager.commands_changed(installation_id, [
+            command.declaration() for command in self.commands.get(installation_id, {}).values()])
+
+    def command(self, installation_id, name):
+        owner = self.contexts.get(installation_id)
+        command = self.commands.get(installation_id, {}).get(name)
+        if owner is None or not owner.active or command is None:
+            raise ValueError("Команда больше недоступна.")
+        return owner, command
+
+    def run_command(self, installation_id, name, values, context):
+        from .commands import CommandContext
+        from .models import chat_from_native
+        owner, command = self.command(installation_id, name)
+        chat = chat_from_native(context["chat"]) if context.get("chat") else None
+        result = self.call(owner, command.handler, CommandContext(
+            str(context.get("account_id", "")), chat, tuple(values)), *values)
+        if inspect.iscoroutine(result):
+            self.schedule(owner, result)
+
+    def suggest_command(self, installation_id, name, index, prefix, args, context, token):
+        from .commands import SuggestContext
+        owner, command = self.command(installation_id, name)
+        callback = command.args[index].suggest
+
+        def deliver(values):
+            items = []
+            for value in list(values or ())[:50]:
+                value, description = value if isinstance(value, (tuple, list)) else (value, "")
+                items.append({"value": str(value), "description": str(description)})
+            self.manager.command_suggestions(token, items)
+
+        result = self.call(owner, callback, prefix, SuggestContext(
+            str(context.get("account_id", "")), str(context.get("chat_id", "")),
+            str(context.get("kind", "")), tuple(args)))
+        if inspect.isawaitable(result):
+            async def wait():
+                deliver(await asyncio.wait_for(result, 2))
+            self.schedule(owner, wait())
+        else:
+            deliver(result)
+
     def remove(self, installation_id):
+        self.commands.pop(installation_id, None)
         for entry in self.registrations:
             if entry.installation_id == installation_id:
                 entry.cancel()

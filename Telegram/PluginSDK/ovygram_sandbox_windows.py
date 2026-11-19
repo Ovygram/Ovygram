@@ -107,7 +107,9 @@ def label_low(directory):
     icacls = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32", "icacls.exe")
     try:
         result = subprocess.run(
-            [icacls, str(directory), "/setintegritylevel", "(OI)(CI)L", "/T", "/C", "/Q"],
+            # /L: a link or junction a plugin left there is labelled itself,
+            # the walk never follows it out of the directory.
+            [icacls, str(directory), "/setintegritylevel", "(OI)(CI)L", "/T", "/L", "/C", "/Q"],
             stdin=subprocess.DEVNULL, capture_output=True, creationflags=CREATE_NO_WINDOW)
     except OSError as error:
         raise SandboxError(f"Изоляция плагинов: icacls: {error}") from error
