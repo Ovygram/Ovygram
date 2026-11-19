@@ -226,7 +226,7 @@ class BaselineTests(unittest.TestCase):
         })
         with patch.object(dependency_cache, 'restore', return_value=True) as restore:
             self.restore_dependencies(f'{identity}-foundation')
-        restore.assert_called_once_with(self.root, 'foundation', identity)
+        restore.assert_called_once_with(self.root.resolve(), 'foundation', identity)
 
     def test_optional_dependency_cache_allows_initial_preparation(self):
         self.dependency_cache_fixture()
