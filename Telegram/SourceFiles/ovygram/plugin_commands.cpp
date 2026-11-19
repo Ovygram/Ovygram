@@ -58,6 +58,7 @@ public:
 	, _chosen(std::move(chosen)) {
 		setFocusPolicy(Qt::NoFocus);
 		setMouseTracking(true);
+		setCursor(style::cur_pointer);
 	}
 
 	void setView(const QJsonObject &view) {
@@ -108,7 +109,7 @@ protected:
 		auto top = int(st::lineWidth);
 		for (auto i = 0; i != rows; ++i, top += height) {
 			const auto &row = _rows[_offset + i];
-			if (_offset + i == _selected) {
+			if (_offset + i == _selected || i == _hovered) {
 				p.fillRect(0, top, width(), height, st::windowBgOver);
 			}
 			const auto baseline = top
@@ -153,16 +154,34 @@ protected:
 		}
 	}
 
+	void mouseMoveEvent(QMouseEvent *e) override {
+		setHovered(rowAt(e->pos()));
+	}
+
+	void leaveEventHook(QEvent *e) override {
+		setHovered(-1);
+	}
+
 	void mousePressEvent(QMouseEvent *e) override {
-		const auto row = (e->pos().y() - st::lineWidth) / rowHeight();
-		if (e->button() == Qt::LeftButton
-			&& row >= 0
-			&& row < std::min(int(_rows.size()), kVisibleRows)) {
+		const auto row = rowAt(e->pos());
+		if (e->button() == Qt::LeftButton && row >= 0) {
 			_chosen(_offset + row);
 		}
 	}
 
 private:
+	// The visible row under a point, -1 for the footer and the border.
+	[[nodiscard]] int rowAt(QPoint point) const {
+		const auto row = (point.y() - st::lineWidth) / rowHeight();
+		return (point.y() >= st::lineWidth
+			&& row < std::min(int(_rows.size()), kVisibleRows)) ? row : -1;
+	}
+	void setHovered(int row) {
+		if (_hovered != row) {
+			_hovered = row;
+			update();
+		}
+	}
 	[[nodiscard]] int rowHeight() const {
 		return st::normalFont->height * 2;
 	}
@@ -175,6 +194,7 @@ private:
 	QString _footer;
 	int _selected = 0;
 	int _offset = 0;
+	int _hovered = -1;
 	bool _error = false;
 
 };
@@ -260,6 +280,8 @@ private:
 	const Fn<PeerData*()> _peer;
 	QPointer<Panel> _panel;
 	QPointer<Ghost> _ghost;
+	QString _shownText;
+	int _shownCursor = -1;
 	bool _active = false;
 	bool _hasItems = false;
 	bool _applying = false;
@@ -278,6 +300,16 @@ Controller::Controller(
 	_field->changes() | rpl::on_next([=] {
 		changed();
 	}, _field->lifetime());
+	// Moving the cursor inside a command changes what is being completed.
+	connect(
+		_field->rawTextEdit(),
+		&QTextEdit::cursorPositionChanged,
+		this,
+		[=] {
+			if (_active) {
+				changed();
+			}
+		});
 
 	// Installed after the field's own handlers, so it sees the keys first.
 	base::install_event_filter(this, _field->rawTextEdit(), [=](
@@ -364,13 +396,18 @@ void Controller::changed() {
 		hide();
 		return;
 	}
+	const auto cursor = _field->textCursor().position();
+	if (_active && _shownText == text && _shownCursor == cursor) {
+		// A typed character changes the text and then moves the cursor.
+		return;
+	}
+	_shownText = text;
+	_shownCursor = cursor;
 	try {
 		apply(Request({
 			{ u"action"_q, u"commands_input"_q },
 			{ u"text"_q, text },
-			{ u"cursor"_q, Elements::UnitsToCodePoints(
-				text,
-				_field->textCursor().position()) },
+			{ u"cursor"_q, Elements::UnitsToCodePoints(text, cursor) },
 			{ u"context"_q, current },
 		}));
 	} catch (const std::exception &) {

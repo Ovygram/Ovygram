@@ -115,7 +115,10 @@ def main():
             reply = {"reply": identity, "error": str(error) or type(error).__name__}
         try:
             channel.send(reply)
+        except ChannelClosed:
+            break
         except (TypeError, ValueError) as error:
+            # A result that isn't JSON or is too large.
             channel.send({"reply": identity, "error": str(error) or type(error).__name__})
         if message.get("action") == "shutdown":
             break
