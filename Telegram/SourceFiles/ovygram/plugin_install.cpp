@@ -152,14 +152,15 @@ private:
 			Clear(_rows);
 			if (state != u"ready"_q) {
 				label(_rows, info.value(u"error"_q).toString());
-				return;
+			} else {
+				_info = info;
+				showChoices();
 			}
-			_info = info;
-			showChoices();
 		} catch (const std::exception &error) {
 			_timer->stop();
 			label(_rows, QString::fromUtf8(error.what()));
 		}
+		_rows->resizeToWidth(_rows->widthNoMargins());
 	}
 
 	not_null<Ui::VerticalLayout*> details(const QJsonObject &metadata, const QJsonObject &trust) {
@@ -261,6 +262,7 @@ private:
 				"замену и установить файл отдельно."_q);
 			if (unavailable) label(_rows, u"Проверка недоступна. Невозможно уточнить, заблокирован ли этот файл. "
 				"Продолжайте только если доверяете источнику."_q);
+			_rows->resizeToWidth(_rows->widthNoMargins());
 			_warned = true;
 			action(u"Подтверждаю установку"_q, [=, this] { confirm(id, separate, old); });
 			if (_cancel) _cancel->setFocus();
@@ -274,6 +276,7 @@ private:
 			_box->closeBox();
 		} catch (const std::exception &error) {
 			label(_rows, QString::fromUtf8(error.what()));
+			_rows->resizeToWidth(_rows->widthNoMargins());
 		}
 	}
 

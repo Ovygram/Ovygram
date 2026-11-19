@@ -10,6 +10,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #ifdef OVYGRAM_ENABLED
 #include "api/api_plugins.h"
 #include "core/plugin_runtime.h"
+#include "ovygram/vless_proxy.h"
 #endif
 
 #include "data/data_abstract_structure.h"
@@ -166,6 +167,9 @@ struct Application::Private {
 	UiIntegration uiIntegration;
 	Settings settings;
 	std::unique_ptr<ProxyRotationManager> proxyRotation;
+#ifdef OVYGRAM_ENABLED
+	std::unique_ptr<Ovygram::VlessProxy> vlessProxy;
+#endif
 };
 
 Application::Application()
@@ -296,6 +300,9 @@ Application::~Application() {
 	closeAdditionalWindows();
 
 	_private->proxyRotation = nullptr;
+#ifdef OVYGRAM_ENABLED
+	_private->vlessProxy = nullptr;
+#endif
 	_domain->finish();
 	MTP::WebProxy::Transport::Shutdown();
 
@@ -931,13 +938,48 @@ void Application::setCurrentProxy(
 		const MTP::ProxyData &proxy,
 		MTP::ProxyData::Settings settings) {
 	auto &my = _private->settings.proxy();
-	const auto current = [&] {
-		return my.isEnabled() ? my.selected() : MTP::ProxyData();
-	};
-	const auto was = current();
+	const auto was = my.isEnabled() ? my.selected() : MTP::ProxyData();
+#ifdef OVYGRAM_ENABLED
+	const auto usingVless = my.temporaryProxy() && *my.temporaryProxy() == proxy;
+	if (usingVless && settings == MTP::ProxyData::Settings::Enabled) {
+		return;
+	}
+	if (_private->vlessProxy) {
+		_private->vlessProxy->stop();
+	}
+	my.setTemporaryProxy(std::nullopt);
+	if (!usingVless) {
+		my.setSelected(proxy);
+	}
+#else
 	my.setSelected(proxy);
+#endif
 	my.setSettings(settings);
-	const auto now = current();
+	finishProxyChange(was);
+}
+
+#ifdef OVYGRAM_ENABLED
+Ovygram::VlessProxy &Application::vlessProxy() {
+	if (!_private->vlessProxy) {
+		_private->vlessProxy = std::make_unique<Ovygram::VlessProxy>();
+	}
+	return *_private->vlessProxy;
+}
+
+void Application::setVlessProxy(std::optional<MTP::ProxyData> proxy) {
+	auto &my = _private->settings.proxy();
+	if (my.temporaryProxy() == proxy) {
+		return;
+	}
+	const auto was = my.isEnabled() ? my.selected() : MTP::ProxyData();
+	my.setTemporaryProxy(std::move(proxy));
+	finishProxyChange(was);
+}
+#endif
+
+void Application::finishProxyChange(const MTP::ProxyData &was) {
+	auto &my = _private->settings.proxy();
+	const auto now = my.isEnabled() ? my.selected() : MTP::ProxyData();
 	if (_badProxyConfiguration && *_badProxyConfiguration != now) {
 		_badProxyConfiguration.reset();
 		if (const auto box = base::take(_badProxyDisableBox)) {
@@ -1346,6 +1388,15 @@ void Application::registerWindowActivation(not_null<QWidget*> window) {
 
 bool Application::openLocalUrl(const QString &url, QVariant context) {
 	const auto urlTrimmed = url.trimmed();
+#ifdef OVYGRAM_ENABLED
+	if (Ovygram::IsVlessLink(urlTrimmed)) {
+		if (passcodeLocked()) {
+			return false;
+		}
+		Ovygram::ShowVlessBox(urlTrimmed);
+		return true;
+	}
+#endif
 	const auto protocol = u"tg://"_q;
 	if (urlTrimmed.startsWith(protocol, Qt::CaseInsensitive)
 		&& !passcodeLocked()) {

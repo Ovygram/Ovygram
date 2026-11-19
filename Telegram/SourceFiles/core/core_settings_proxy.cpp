@@ -253,15 +253,15 @@ bool SettingsProxy::setFromSerialized(const QByteArray &serialized) {
 }
 
 bool SettingsProxy::isEnabled() const {
-	return _settings == MTP::ProxyData::Settings::Enabled;
+	return settings() == MTP::ProxyData::Settings::Enabled;
 }
 
 bool SettingsProxy::isSystem() const {
-	return _settings == MTP::ProxyData::Settings::System;
+	return settings() == MTP::ProxyData::Settings::System;
 }
 
 bool SettingsProxy::isDisabled() const {
-	return _settings == MTP::ProxyData::Settings::Disabled;
+	return settings() == MTP::ProxyData::Settings::Disabled;
 }
 
 bool SettingsProxy::checkIpWarningShown() const {
@@ -333,7 +333,7 @@ void SettingsProxy::setProxyRotationTimeout(int value) {
 }
 
 MTP::ProxyData::Settings SettingsProxy::settings() const {
-	return _settings;
+	return _temporaryProxy ? MTP::ProxyData::Settings::Enabled : _settings;
 }
 
 void SettingsProxy::setSettings(MTP::ProxyData::Settings value) {
@@ -341,11 +341,19 @@ void SettingsProxy::setSettings(MTP::ProxyData::Settings value) {
 }
 
 MTP::ProxyData SettingsProxy::selected() const {
-	return _selected;
+	return _temporaryProxy ? *_temporaryProxy : _selected;
 }
 
 void SettingsProxy::setSelected(MTP::ProxyData value) {
 	_selected = value;
+}
+
+const std::optional<MTP::ProxyData> &SettingsProxy::temporaryProxy() const {
+	return _temporaryProxy;
+}
+
+void SettingsProxy::setTemporaryProxy(std::optional<MTP::ProxyData> value) {
+	_temporaryProxy = std::move(value);
 }
 
 const std::vector<MTP::ProxyData> &SettingsProxy::list() const {

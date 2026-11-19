@@ -15,6 +15,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/application.h"
 #include "core/core_settings.h"
 #include "core/local_url_handlers.h"
+#ifdef OVYGRAM_ENABLED
+#include "ovygram/vless_proxy.h"
+#endif
 #include "lang/lang_keys.h"
 #include "main/main_account.h"
 #include "main/main_session.h"
@@ -428,8 +431,15 @@ void AddProxyFromClipboard(
 	const auto webproxyString = u"webproxy"_q;
 	const auto protocol = u"tg://"_q;
 
-	const auto maybeUrls = ExtractLinkCandidates(
-		QGuiApplication::clipboard()->text());
+	const auto clipboard = QGuiApplication::clipboard()->text();
+#ifdef OVYGRAM_ENABLED
+	const auto trimmed = clipboard.trimmed();
+	if (Ovygram::IsVlessLink(trimmed)) {
+		Ovygram::ShowVlessBox(trimmed);
+		return;
+	}
+#endif
+	const auto maybeUrls = ExtractLinkCandidates(clipboard);
 	const auto isSingle = maybeUrls.size() == 1;
 
 	enum class Result {
@@ -1510,6 +1520,7 @@ void ProxiesBox::refreshProxyRotation() {
 	}
 	const auto visible = (_proxySettings->current()
 			== ProxyData::Settings::Enabled)
+		&& !_settings.temporaryProxy()
 		&& _settings.selected()
 		&& (_settings.list().size() > 1);
 	_proxyRotation->toggle(visible, anim::type::normal);
@@ -1790,6 +1801,9 @@ void ProxiesBox::refreshButtons() {
 			tr::lng_proxy_add(),
 			[=] { addNewProxy(); });
 		addButton(tr::lng_close(), [=] { closeBox(); });
+#ifdef OVYGRAM_ENABLED
+		addLeftButton(rpl::single(u"VLESS"_q), [] { Ovygram::ShowVlessBox(); });
+#endif
 	}
 }
 
