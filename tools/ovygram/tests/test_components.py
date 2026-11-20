@@ -29,15 +29,19 @@ class ComponentTests(unittest.TestCase):
         self.addCleanup(self.manager.shutdown)
         self.archive = self.root / "test.ovyzip"
         self.win = os.name == "nt"
-        binary = (Path(os.environ["SystemRoot"]) / "System32/findstr.exe" if self.win
-                  else Path(shutil.which("grep")))
+        if self.win:
+            probe = os.environ.get("OVYGRAM_COMPONENT_PROBE")
+            if not probe:
+                self.skipTest("needs the Windows component probe compiled by GitHub Actions")
+            binary = sleeper = Path(probe)
+        else:
+            binary, sleeper = Path(shutil.which("grep")), Path(shutil.which("sleep"))
         from ovygram_runtime import plugin_metadata
         pid = plugin_metadata(SOURCE, "main.py")["id"]
         with ZipFile(self.archive, "w", ZIP_DEFLATED) as z:
             z.writestr("plugin.json", json.dumps({"id": pid, "entry": "main.py"}))
             z.writestr("main.py", SOURCE)
             z.write(binary, "bin/tool")
-            sleeper = Path(os.environ["SystemRoot"]) / "System32/ping.exe" if self.win else Path(shutil.which("sleep"))
             z.write(sleeper, "bin/wait")
         self.owner = self.manager.install(str(self.archive))
         self.manager.enable(self.owner)
@@ -54,18 +58,20 @@ class ComponentTests(unittest.TestCase):
         return code
 
     def test_stdio_private_file_and_cleanup(self):
-        self.assertEqual(self.run_tool(["needle"], "needle\n"), 0)
+        self.assertEqual(self.run_tool(["check-stdin"] if self.win else ["needle"], "needle\n"), 0)
         secret = self.root / "profile" / "private.txt"
         secret.write_text("needle\n", encoding="ascii")
         if self.win:
             identity = subprocess.check_output(["whoami"], text=True).strip()
             subprocess.run(["icacls", str(secret), "/inheritance:r", "/grant:r", identity + ":(F)"],
                            check=True, capture_output=True)
-        self.assertNotEqual(self.run_tool(["needle", str(secret)]), 0)
+            self.assertEqual(self.run_tool(["check-private-file", str(secret)]), 0)
+        else:
+            self.assertNotEqual(self.run_tool(["needle", str(secret)]), 0)
         self.assertFalse(list(self.manager.root.glob("helper-*")))
 
     def test_disable_stops_component_and_withdraws_offer(self):
-        args = ["-t", "127.0.0.1"] if self.win else ["60"]
+        args = ["wait"] if self.win else ["60"]
         self.command("start", resource="bin/wait", arguments=args, config="")
         process = self.manager.helpers.children[self.owner][0]
         with self.assertRaises(ValueError):

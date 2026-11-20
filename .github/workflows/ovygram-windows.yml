@@ -67,6 +67,9 @@ jobs:
         run: |
           python control/tools/ovygram/baseline.py verify --root "$env:GITHUB_WORKSPACE"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $env:OVYGRAM_COMPONENT_PROBE = Join-Path $env:RUNNER_TEMP 'ovygram-component-probe.exe'
+          & cl.exe /nologo /std:c++20 /MT /W4 /WX "/Fo:$env:RUNNER_TEMP/ovygram-component-probe.obj" "/Fe:$env:OVYGRAM_COMPONENT_PROBE" control/tools/ovygram/tests/component_probe_win.cpp
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python -m unittest discover -s control/tools/ovygram/tests -v
 
       - name: Stage embedded Python
