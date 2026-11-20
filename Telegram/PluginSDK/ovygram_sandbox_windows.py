@@ -21,6 +21,7 @@ import subprocess
 from ovygram_sandbox import SandboxError
 
 CREATE_SUSPENDED = 0x00000004
+DETACHED_PROCESS = 0x00000008
 CREATE_NO_WINDOW = 0x08000000
 
 _LOW_INTEGRITY = "S-1-16-4096"
@@ -28,6 +29,7 @@ _LOW_RID = 0x1000
 _TOKEN_QUERY = 0x0008
 _TOKEN_ADJUST_DEFAULT = 0x0080
 _TOKEN_INTEGRITY_LEVEL = 25  # TOKEN_INFORMATION_CLASS.TokenIntegrityLevel
+_TOKEN_LOGON_SID = 28
 _SE_GROUP_INTEGRITY = 0x00000020
 _JOB_BASIC_UI_RESTRICTIONS = 4
 _JOB_EXTENDED_LIMIT_INFORMATION = 9
@@ -43,6 +45,10 @@ class _SidAndAttributes(ctypes.Structure):
 
 class _TokenMandatoryLabel(ctypes.Structure):
     _fields_ = [("Label", _SidAndAttributes)]
+
+
+class _TokenGroups(ctypes.Structure):
+    _fields_ = [("GroupCount", wintypes.DWORD), ("Groups", _SidAndAttributes * 1)]
 
 
 class _BasicLimitInformation(ctypes.Structure):
@@ -231,14 +237,26 @@ def run_restricted_helper(binary, arguments):
         if not security.OpenProcessToken(kernel.GetCurrentProcess(), _TOKEN_QUERY | 2 | 1,
                                          ctypes.byref(original)):
             raise _error("OpenProcessToken")
-        # Builtin Users can read Windows libraries. Restricted Code can read the staged engine.
-        restrictions = (_SidAndAttributes * 2)()
-        for i, text in enumerate(("S-1-5-32-545", "S-1-5-12")):
+        size = dword()
+        security.GetTokenInformation(original, _TOKEN_LOGON_SID, None, 0, ctypes.byref(size))
+        logon_info = ctypes.create_string_buffer(size.value)
+        if not security.GetTokenInformation(
+                original, _TOKEN_LOGON_SID, logon_info, size, ctypes.byref(size)):
+            raise _error("GetTokenInformation(TokenLogonSid)")
+        logon_groups = ctypes.cast(logon_info, ctypes.POINTER(_TokenGroups)).contents
+        if logon_groups.GroupCount != 1:
+            raise SandboxError("The helper launcher has no Windows logon SID.")
+        # The logon SID can access the session's window station and objects
+        # needed by the loader. Everyone and Users can read Windows resources.
+        # Restricted Code can read the staged engine. The user's SID is absent.
+        restrictions = (_SidAndAttributes * 4)()
+        for i, text in enumerate(("S-1-1-0", "S-1-5-32-545", "S-1-5-12")):
             sid = pointer()
             if not security.ConvertStringSidToSidW(text, ctypes.byref(sid)):
                 raise _error("ConvertStringSidToSid")
             sids.append(sid)
             restrictions[i].Sid = sid
+        restrictions[3].Sid = logon_groups.Groups[0].Sid
         if not security.CreateRestrictedToken(original, 1, 0, None, 0, None,
                                               len(restrictions), restrictions, ctypes.byref(restricted)):
             raise _error("CreateRestrictedToken")
@@ -251,7 +269,7 @@ def run_restricted_helper(binary, arguments):
         command = ctypes.create_unicode_buffer(subprocess.list2cmdline([binary, *arguments]))
         # The dedicated launcher inherited only its redirected standard streams.
         if not security.CreateProcessAsUserW(restricted, binary, command, None, None, True,
-                                             CREATE_NO_WINDOW, None, os.path.dirname(binary),
+                                             DETACHED_PROCESS, None, os.path.dirname(binary),
                                              ctypes.byref(startup), ctypes.byref(info)):
             raise _error("CreateProcessAsUser")
         if kernel.WaitForSingleObject(info.process, 0xffffffff) != 0:
