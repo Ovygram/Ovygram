@@ -5,7 +5,7 @@ from pathlib import Path
 import unittest
 
 SDK = Path(__file__).resolve().parents[3] / "Telegram/PluginSDK"
-STUBS = ("desktop/ui", "desktop/native", "desktop/client", "desktop/media", "desktop/commands",
+STUBS = ("desktop/ui", "desktop/native", "desktop/client", "desktop/media", "desktop/commands", "desktop/components",
          "base_plugin", "desktop_utils", "file_utils")
 
 

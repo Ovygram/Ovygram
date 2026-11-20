@@ -184,3 +184,85 @@ def confine(process):
 
 def release(job):
     ctypes.WinDLL("kernel32").CloseHandle(wintypes.HANDLE(job))
+
+
+def grant_helper_read(directory):
+    # Only the private staging directory holding the verified executable.
+    icacls = os.path.join(os.environ["SystemRoot"], "System32", "icacls.exe")
+    subprocess.run([icacls, str(directory), "/grant", "*S-1-5-12:(OI)(CI)(RX)"],
+                   stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                   creationflags=CREATE_NO_WINDOW, check=True)
+
+
+def run_restricted_helper(binary, arguments):
+    """Called in an already low-integrity, job-confined launcher. The additional
+    restricted-SID access check excludes files accessible only to the user."""
+    kernel, security, _ = _libraries()
+    handle, dword, pointer = wintypes.HANDLE, wintypes.DWORD, ctypes.c_void_p
+
+    class Startup(ctypes.Structure):
+        _fields_ = [("cb", dword), ("reserved", pointer), ("desktop", pointer), ("title", pointer),
+                    *((name, dword) for name in ("x", "y", "width", "height", "cols", "rows",
+                                                 "fill", "flags")),
+                    ("show", wintypes.WORD), ("reservedSize", wintypes.WORD), ("reserved2", pointer),
+                    ("input", handle), ("output", handle), ("error", handle)]
+
+    class ProcessInfo(ctypes.Structure):
+        _fields_ = [("process", handle), ("thread", handle), ("processId", dword), ("threadId", dword)]
+
+    for lib, name, result, args in (
+        (kernel, "GetCurrentProcess", handle, ()),
+        (kernel, "GetStdHandle", handle, (dword,)),
+        (kernel, "SetHandleInformation", wintypes.BOOL, (handle, dword, dword)),
+        (kernel, "WaitForSingleObject", dword, (handle, dword)),
+        (kernel, "GetExitCodeProcess", wintypes.BOOL, (handle, ctypes.POINTER(dword))),
+        (security, "CreateRestrictedToken", wintypes.BOOL, (
+            handle, dword, dword, pointer, dword, pointer, dword, pointer, ctypes.POINTER(handle))),
+        (security, "CreateProcessAsUserW", wintypes.BOOL, (
+            handle, wintypes.LPCWSTR, wintypes.LPWSTR, pointer, pointer, wintypes.BOOL, dword,
+            pointer, wintypes.LPCWSTR, ctypes.POINTER(Startup), ctypes.POINTER(ProcessInfo))),
+    ):
+        fn = getattr(lib, name)
+        fn.restype, fn.argtypes = result, args
+    original, restricted = handle(), handle()
+    info = ProcessInfo()
+    sids = []
+    try:
+        if not security.OpenProcessToken(kernel.GetCurrentProcess(), _TOKEN_QUERY | 2 | 1,
+                                         ctypes.byref(original)):
+            raise _error("OpenProcessToken")
+        # Builtin Users can read Windows libraries. Restricted Code can read the staged engine.
+        restrictions = (_SidAndAttributes * 2)()
+        for i, text in enumerate(("S-1-5-32-545", "S-1-5-12")):
+            sid = pointer()
+            if not security.ConvertStringSidToSidW(text, ctypes.byref(sid)):
+                raise _error("ConvertStringSidToSid")
+            sids.append(sid)
+            restrictions[i].Sid = sid
+        if not security.CreateRestrictedToken(original, 1, 0, None, 0, None,
+                                              len(restrictions), restrictions, ctypes.byref(restricted)):
+            raise _error("CreateRestrictedToken")
+        startup = Startup(cb=ctypes.sizeof(Startup), flags=0x100)
+        for field, number in (("input", -10), ("output", -11), ("error", -12)):
+            value = kernel.GetStdHandle(number)
+            if not kernel.SetHandleInformation(value, 1, 1):
+                raise _error("SetHandleInformation")
+            setattr(startup, field, value)
+        command = ctypes.create_unicode_buffer(subprocess.list2cmdline([binary, *arguments]))
+        # The dedicated launcher inherited only its redirected standard streams.
+        if not security.CreateProcessAsUserW(restricted, binary, command, None, None, True,
+                                             CREATE_NO_WINDOW, None, os.path.dirname(binary),
+                                             ctypes.byref(startup), ctypes.byref(info)):
+            raise _error("CreateProcessAsUser")
+        if kernel.WaitForSingleObject(info.process, 0xffffffff) != 0:
+            raise _error("WaitForSingleObject")
+        code = dword()
+        if not kernel.GetExitCodeProcess(info.process, ctypes.byref(code)):
+            raise _error("GetExitCodeProcess")
+        return code.value
+    finally:
+        for obj in (info.process, info.thread, restricted, original):
+            if obj:
+                kernel.CloseHandle(obj)
+        for sid in sids:
+            kernel.LocalFree(sid)

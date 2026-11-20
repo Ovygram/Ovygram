@@ -145,19 +145,11 @@ class BaselineTests(unittest.TestCase):
         runtime.mkdir(parents=True)
         (release / 'Ovygram.exe').write_bytes(b'release executable')
         (runtime / 'ovygram_host.dll').write_bytes(b'release host')
-        xray = self.root / 'vless-xray'
-        xray.mkdir()
-        for name in ('xray.exe', 'LICENSE', 'SOURCE.txt'):
-            (xray / name).write_text(name)
-        (xray / 'config.json').write_text('local configuration')
-        archive = baseline.package(self.root, self.root / 'artifacts', True, 'Release', xray)
+        archive = baseline.package(self.root, self.root / 'artifacts', True, 'Release')
         self.assertEqual(archive.name, 'ovygram-0.1.0-7.4.3-win64-release.zip')
         with zipfile.ZipFile(archive) as source:
             self.assertEqual(source.read('Ovygram.exe'), b'release executable')
             self.assertEqual(source.read('python/ovygram_host.dll'), b'release host')
-            for name in ('xray.exe', 'LICENSE', 'SOURCE.txt'):
-                self.assertEqual(source.read(f'vless/{name}'), name.encode())
-            self.assertNotIn('vless/config.json', source.namelist())
 
     def test_cache_identity_changes_with_compiler_and_recipe(self):
         recipe = self.root / 'Telegram/build/prepare/prepare.py'

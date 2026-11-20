@@ -6,6 +6,14 @@
 #include "api/api_updates.h"
 #include "apiwrap.h"
 #include "core/application.h"
+#include "core/core_settings.h"
+#include "boxes/abstract_box.h"
+#include "ovygram/protected_ui.h"
+#include "ui/layers/generic_box.h"
+#include "ui/widgets/buttons.h"
+#include "ui/widgets/labels.h"
+#include "styles/style_layers.h"
+#include "styles/style_widgets.h"
 #include "core/plugin_runtime.h"
 #include "data/data_channel.h"
 #include "data/data_document.h"
@@ -346,6 +354,77 @@ void PluginClient::fail(
 	}
 }
 
+QJsonArray PluginClient::proxyOffers() {
+	const auto offers = dispatch({ { u"action"_q, u"proxy_offers"_q } }).toArray();
+	if (!_activeProxyToken.isEmpty()) {
+		if (!Core::App().settings().proxy().temporaryProxy()) {
+			_activeProxyToken.clear();
+		} else if (std::none_of(offers.begin(), offers.end(), [&](const QJsonValue &value) {
+			return value.toObject().value(u"token"_q).toString() == _activeProxyToken;
+		})) {
+			_activeProxyToken.clear();
+			Core::App().setPluginProxy(std::nullopt);
+		}
+	}
+	return offers;
+}
+
+void PluginClient::showPluginProxies() {
+	Ui::show(Box([=](not_null<Ui::GenericBox*> box) {
+		Ovygram::ProtectSurface(box);
+		box->setTitle(rpl::single(u"Прокси плагинов"_q));
+		const auto label = [=](QString text) {
+			box->addRow(object_ptr<Ui::FlatLabel>(box, std::move(text), st::defaultFlatLabel));
+		};
+		try {
+			const auto offers = proxyOffers();
+			label(offers.isEmpty()
+				? u"Включённые плагины пока не предложили прокси."_q
+				: u"Выберите плагин для подключения Ovygram через его локальный SOCKS5."_q);
+			for (const auto &value : offers) {
+				const auto offer = value.toObject();
+				const auto token = offer.value(u"token"_q).toString();
+				const auto name = offer.value(u"plugin_id"_q).toString()
+					+ u" · "_q + offer.value(u"owner"_q).toString().left(8);
+				const auto button = box->addRow(object_ptr<Ui::RoundButton>(box,
+					rpl::single(token == _activeProxyToken ? name + u" (подключён)"_q : name),
+					st::defaultLightButton));
+				button->setClickedCallback([=] {
+					try {
+						for (const auto &entry : proxyOffers()) {
+							const auto current = entry.toObject();
+							if (current.value(u"token"_q).toString() != token) continue;
+							auto proxy = MTP::ProxyData();
+							proxy.type = MTP::ProxyData::Type::Socks5;
+							proxy.host = u"127.0.0.1"_q;
+							proxy.port = current.value(u"port"_q).toInt();
+							proxy.user = current.value(u"user"_q).toString();
+							proxy.password = current.value(u"password"_q).toString();
+							_activeProxyToken = token;
+							Core::App().setPluginProxy(proxy);
+							box->closeBox();
+							return;
+						}
+						label(u"Компонент остановлен или настройки изменились. Откройте список снова."_q);
+					} catch (const std::exception &error) {
+						label(QString::fromUtf8(error.what()));
+					}
+				});
+			}
+		} catch (const std::exception &error) {
+			label(QString::fromUtf8(error.what()));
+		}
+		if (!_activeProxyToken.isEmpty()) {
+			box->addLeftButton(rpl::single(u"Отключить"_q), [=] {
+				_activeProxyToken.clear();
+				Core::App().setPluginProxy(std::nullopt);
+				box->closeBox();
+			});
+		}
+		box->addButton(rpl::single(u"Закрыть"_q), [=] { box->closeBox(); });
+	}), Ui::LayerOption::KeepOther);
+}
+
 void PluginClient::receive(const QByteArray &request) {
 	const auto command = QJsonDocument::fromJson(request).object();
 	const auto id = command.value(u"id"_q).toString();
@@ -377,6 +456,10 @@ void PluginClient::receive(const QByteArray &request) {
 			}
 			return;
 		}
+		if (method == u"proxy.refresh"_q) {
+			proxyOffers();
+			return;
+		}
 		if (method == u"commands.refresh"_q) {
 			// Sent by the manager itself: suggestions of a plugin arrived.
 			Ovygram::Commands::Refresh();
@@ -395,6 +478,25 @@ void PluginClient::receive(const QByteArray &request) {
 				{ u"request_id"_q, id },
 				{ u"installation_id"_q, command.value(u"installation_id"_q) },
 			}).toBool()) {
+			return;
+		}
+		if (method.startsWith(u"helper."_q)) {
+			const auto owner = command.value(u"installation_id"_q).toString();
+			if (method == u"helper.proxy_active"_q) {
+				const auto offers = proxyOffers();
+				reply(id, std::any_of(offers.begin(), offers.end(), [&](const QJsonValue &value) {
+					const auto offer = value.toObject();
+					return offer.value(u"owner"_q).toString() == owner
+						&& offer.value(u"token"_q).toString() == _activeProxyToken;
+				}));
+			} else {
+				reply(id, dispatch({
+					{ u"action"_q, u"helper_command"_q },
+					{ u"installation_id"_q, owner },
+					{ u"operation"_q, method.mid(7) },
+					{ u"params"_q, command.value(u"params"_q).toObject() },
+				}));
+			}
 			return;
 		}
 		if (method.startsWith(u"compose."_q)) {

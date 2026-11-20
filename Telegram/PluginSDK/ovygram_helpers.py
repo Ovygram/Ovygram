@@ -1,0 +1,149 @@
+"""Native components supplied by an installation. Only the trusted manager uses this module."""
+import hashlib
+import io
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import tempfile
+import threading
+import uuid
+import zipfile
+
+from ovygram_deps import python_command
+from ovygram_package import MAX_PACKAGE, archive_path
+from ovygram_sandbox import SandboxError, confine, release, wrap
+
+
+def _send_config(pipe, data):
+    try:
+        with pipe:
+            pipe.write(data)
+    except (BrokenPipeError, OSError):
+        # A child can exit or be stopped without reading its configuration.
+        pass
+
+
+class Helpers:
+    def __init__(self, manager):
+        self.manager = manager
+        self.children = {}
+        self.offers = {}
+
+    def stop(self, owner):
+        removed = self.offers.pop(owner, None)
+        child = self.children.pop(owner, None)
+        try:
+            if child:
+                process, guard, directory = child
+                try:
+                    try:
+                        process.kill()
+                    finally:
+                        release(guard)  # The Windows job includes all descendants.
+                    process.wait()
+                finally:
+                    directory.cleanup()
+        finally:
+            if removed:
+                self.manager.notify({"id": uuid.uuid4().hex, "method": "proxy.refresh"})
+
+    def poll(self):
+        for owner, (process, _, _) in list(self.children.items()):
+            if process.poll() is not None:
+                self.stop(owner)
+
+    def start(self, owner, resource, arguments, config):
+        if owner in self.children:
+            raise ValueError("Сначала остановите работающий компонент.")
+        if not isinstance(resource, str) or len(resource) > 240:
+            raise ValueError("Недопустимое имя компонента.")
+        resource = archive_path(resource).as_posix()
+        if not isinstance(arguments, list) or len(arguments) > 32 or not all(
+                isinstance(arg, str) and len(arg) <= 1024 and "\x00" not in arg for arg in arguments):
+            raise ValueError("Недопустимые аргументы компонента.")
+        if not isinstance(config, str) or len(config.encode()) > 256 * 1024:
+            raise ValueError("Конфигурация превышает 256 КиБ.")
+        version = self.manager.records[owner]["current"]
+        if version["package_type"] != "ovyzip" or not version.get("sha256"):
+            raise ValueError("Компонент должен входить в установленный .ovyzip.")
+        with self.manager.original(version).open("rb") as stream:
+            package = stream.read(MAX_PACKAGE + 1)
+        if len(package) > MAX_PACKAGE or hashlib.sha256(package).hexdigest() != version["sha256"]:
+            raise ValueError("Контрольная сумма установленного архива изменилась.")
+        directory = tempfile.TemporaryDirectory(dir=self.manager.root, prefix="helper-")
+        process = guard = None
+        try:
+            folder = Path(directory.name)
+            binary = folder / ("component.exe" if os.name == "nt" else "component")
+            with zipfile.ZipFile(io.BytesIO(package)) as archive, archive.open(resource) as source:
+                with binary.open("xb") as target:
+                    shutil.copyfileobj(source, target)
+            with binary.open("rb") as stream:
+                magic = stream.read(4)
+            if not (magic.startswith(b"MZ") if os.name == "nt" else magic == b"\x7fELF"):
+                raise ValueError("Формат компонента не подходит для этой ОС.")
+            binary.chmod(0o500)
+            python, environment, bundled = python_command(self.manager.python_dir)
+            launcher = Path(__file__).resolve().with_name("ovygram_helper_launcher.py")
+            # The trusted launcher applies the final restrictions before executing any package bytes.
+            args = [python, *(["-s", "-S"] if bundled else ["-I", "-S"]), str(launcher)]
+            argv, descriptors, report = wrap(args, environment, read_only=[
+                self.manager.python_dir, folder], directory=folder)
+            try:
+                if not report["active"]:
+                    raise SandboxError("Для запуска компонента нужна системная песочница.")
+                if os.name == "nt":
+                    from ovygram_sandbox_windows import grant_helper_read
+                    grant_helper_read(folder)
+                    environment["SystemRoot"] = os.environ["SystemRoot"]
+                argv.extend([str(int(bool(report.get("scoped")))), str(binary), *arguments])
+                process = subprocess.Popen(
+                    argv, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                    close_fds=True, pass_fds=descriptors, env={} if descriptors else environment,
+                    creationflags=report.get("creation_flags", 0) | getattr(subprocess, "CREATE_NO_WINDOW", 0))
+                if report.get("creation_flags"):
+                    guard = confine(process)
+                # A component that does not read stdin must not block the manager.
+                threading.Thread(target=_send_config, args=(process.stdin, config.encode()),
+                                 name="Ovygram component input", daemon=True).start()
+            finally:
+                for descriptor in descriptors:
+                    os.close(descriptor)
+            self.children[owner] = process, guard, directory
+        except BaseException:
+            if process is not None:
+                process.kill()
+                release(guard)
+                process.wait()
+                process.stdin.close()
+            directory.cleanup()
+            raise
+
+    def command(self, installation_id, operation, params):
+        owner = installation_id
+        self.poll()
+        if owner not in self.manager._loaded or not self.manager.host.status()["active"]:
+            raise ValueError("Нужен активный плагин в системной песочнице.")
+        if operation == "start":
+            self.start(owner, params.get("resource"), params.get("arguments"), params.get("config"))
+        elif operation == "stop":
+            self.stop(owner)
+        elif operation == "status":
+            return owner in self.children
+        elif operation == "network_available":
+            return self.manager.host.status()["network"]
+        elif operation == "offer":
+            if owner not in self.children or not self.manager.host.status()["network"]:
+                raise ValueError("Сетевой компонент недоступен.")
+            port, user, password = (params.get(key) for key in ("port", "user", "password"))
+            if type(port) is not int or not 1024 <= port <= 65535 or not all(
+                    isinstance(v, str) and v.isascii() and v.isprintable() and 1 <= len(v) <= 255
+                    for v in (user, password)):
+                raise ValueError("Укажите локальный порт и данные SOCKS5.")
+            self.offers[owner] = dict(token=uuid.uuid4().hex, port=port, user=user, password=password,
+                                      plugin_id=self.manager.records[owner]["plugin_id"], owner=owner)
+            self.manager.notify({"id": uuid.uuid4().hex, "method": "proxy.refresh"})
+        else:
+            raise ValueError("Неизвестная операция компонента.")
+        return True

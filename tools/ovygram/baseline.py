@@ -109,14 +109,11 @@ def run_monitored(command, cwd, log, deadline, minimum_free=2 * GIB,
     return result
 
 
-def package(source, target, plugins=False, configuration='Debug', xray=None):
+def package(source, target, plugins=False, configuration='Debug'):
     binary_name = 'Ovygram.exe' if plugins else 'Telegram.exe'
     executable = source / 'out' / configuration / binary_name
     if not executable.is_file():
         raise RuntimeError('No compiled client executable; refusing to package.')
-    xray_files = ('xray.exe', 'LICENSE', 'SOURCE.txt')
-    if xray is not None and not all((xray / name).is_file() for name in xray_files):
-        raise RuntimeError('The staged Xray files are missing.')
     target.mkdir(parents=True, exist_ok=True)
     name = 'ovygram' if plugins else 'upstream-baseline'
     version = f'{OVYGRAM_VERSION}-{CLIENT_VERSION}' if plugins else CLIENT_VERSION
@@ -134,9 +131,6 @@ def package(source, target, plugins=False, configuration='Debug', xray=None):
                     output.write(path, path.relative_to(binary_dir).as_posix())
             if (binary_dir / 'd3dcompiler_47.dll').is_file():
                 output.write(binary_dir / 'd3dcompiler_47.dll', 'd3dcompiler_47.dll')
-            if xray is not None:
-                for name in xray_files:
-                    output.write(xray / name, f'vless/{name}')
             output.writestr('README.txt',
                             f'Ovygram {configuration} build. Test API credentials.\n')
         else:
@@ -309,9 +303,7 @@ def main():
             if free < 20 * GIB:
                 raise RuntimeError(f'Need 20 GiB initial reserve; available {free / GIB:.2f} GiB.')
         elif args.action == 'package':
-            state['archive'] = str(package(
-                source, root / 'artifacts', plugin_mode, configuration,
-                root / 'vless-xray' if plugin_mode else None))
+            state['archive'] = str(package(source, root / 'artifacts', plugin_mode, configuration))
             state['status'] = 'compiled'
         else:
             commands = {
@@ -330,13 +322,9 @@ def main():
                         f'Telegram/CMakeFiles/Telegram.dir/{configuration}/SourceFiles/' + unit + '.cpp.obj'
                         for unit in (
                             'core/plugin_runtime_bridge', 'core/application', 'core/launcher',
-                            'boxes/connection_box', 'core/core_settings_proxy',
-                            'core/click_handler_types', 'core/proxy_rotation_manager',
-                            'core/ui_integration',
                             'ovygram/chat_decorations', 'ovygram/chat_list_filter',
                             'ovygram/message_decorations', 'ovygram/plugin_elements',
-                            'ovygram/plugin_install', 'ovygram/plugin_paint', 'ovygram/plugin_ui',
-                            'ovygram/plugin_widgets', 'ovygram/vless_proxy',
+                            'ovygram/plugin_paint', 'ovygram/plugin_ui', 'ovygram/plugin_widgets',
                             'settings/sections/settings_main', 'settings/sections/settings_plugins',
                             'api/api_plugins', 'api/api_updates', 'mtproto/mtp_instance',
                             'window/window_session_controller',
