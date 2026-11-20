@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from zipfile import ZIP_DEFLATED, ZipFile
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -51,11 +52,27 @@ class ComponentTests(unittest.TestCase):
         return self.manager.helpers.command(self.owner, op, params)
 
     def run_tool(self, arguments, config=""):
-        self.command("start", resource="bin/tool", arguments=arguments, config=config)
-        process = self.manager.helpers.children[self.owner][0]
-        code = process.wait(timeout=12)
-        self.assertFalse(self.command("status"))
-        return code
+        if not self.win:
+            self.command("start", resource="bin/tool", arguments=arguments, config=config)
+            process = self.manager.helpers.children[self.owner][0]
+            code = process.wait(timeout=12)
+            self.assertFalse(self.command("status"))
+            return code
+        create = subprocess.Popen
+        with tempfile.TemporaryFile() as errors:
+            def capture_launcher(arguments, **kwargs):
+                if any(Path(arg).name == "ovygram_helper_launcher.py" for arg in arguments):
+                    kwargs["stderr"] = errors
+                return create(arguments, **kwargs)
+
+            with mock.patch("ovygram_helpers.subprocess.Popen", side_effect=capture_launcher):
+                self.command("start", resource="bin/tool", arguments=arguments, config=config)
+            process = self.manager.helpers.children[self.owner][0]
+            code = process.wait(timeout=12)
+            self.assertFalse(self.command("status"))
+            errors.seek(0)
+            self.assertEqual(code, 0, f"Windows process 0x{code:08X}: {errors.read(2048).decode(errors='replace')}")
+            return code
 
     def test_stdio_private_file_and_cleanup(self):
         self.assertEqual(self.run_tool(["check-stdin"] if self.win else ["needle"], "needle\n"), 0)

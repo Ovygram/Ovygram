@@ -9,7 +9,10 @@ def main():
     scoped, binary, *args = sys.argv[1:]
     if sys.platform == "win32":
         from ovygram_sandbox_windows import run_restricted_helper
-        return run_restricted_helper(binary, args)
+        # Windows reports an unsigned DWORD. Preserve all bits when passing
+        # it through Python's signed C int instead of collapsing NTSTATUS to -1.
+        code = run_restricted_helper(binary, args)
+        return code if code <= 0x7fffffff else code - 0x100000000
     if sys.platform.startswith("linux"):
         if scoped == "1":
             from ovygram_sandbox import apply_scope
