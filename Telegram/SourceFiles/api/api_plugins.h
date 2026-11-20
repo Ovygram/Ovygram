@@ -31,6 +31,7 @@ class PluginClient final : public QObject {
 public:
 	explicit PluginClient(not_null<Core::PluginRuntime*> runtime);
 	~PluginClient();
+	void showPluginProxies();
 
 	bool beforeRpc(
 		MTP::Instance *instance,
@@ -54,6 +55,8 @@ private:
 	};
 
 	void watchAccounts();
+	QJsonArray proxyOffers();
+	QString _activeProxyToken;
 	void synchronize();
 	Main::Session *session(const QString &accountId) const;
 	Main::Session *session(MTP::Instance *instance) const;

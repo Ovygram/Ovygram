@@ -399,7 +399,7 @@ class DistributionTests(unittest.TestCase):
         import re
         self.approve(self.source())
         identity = self.install()
-        latest = re.sub(rb"__desktop_sdk__\s*=\s*\d+", b"__desktop_sdk__ = 3", self.source("1.3"))
+        latest = re.sub(rb"__desktop_sdk__\s*=\s*\d+", b"__desktop_sdk__ = 4", self.source("1.3"))
         compatible = self.source("1.2")
         self.approve(latest, "1.3", 3)
         self.approve(compatible, "1.2", 2)

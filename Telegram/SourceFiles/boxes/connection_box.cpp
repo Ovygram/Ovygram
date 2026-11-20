@@ -13,11 +13,11 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "base/qthelp_url.h"
 #include "base/weak_ptr.h"
 #include "core/application.h"
+#ifdef OVYGRAM_ENABLED
+#include "api/api_plugins.h"
+#endif
 #include "core/core_settings.h"
 #include "core/local_url_handlers.h"
-#ifdef OVYGRAM_ENABLED
-#include "ovygram/proxy_proxy.h"
-#endif
 #include "lang/lang_keys.h"
 #include "main/main_account.h"
 #include "main/main_session.h"
@@ -431,15 +431,8 @@ void AddProxyFromClipboard(
 	const auto webproxyString = u"webproxy"_q;
 	const auto protocol = u"tg://"_q;
 
-	const auto clipboard = QGuiApplication::clipboard()->text();
-#ifdef OVYGRAM_ENABLED
-	const auto trimmed = clipboard.trimmed();
-	if (Ovygram::IsProxyLink(trimmed)) {
-		Ovygram::ShowProxyBox(trimmed);
-		return;
-	}
-#endif
-	const auto maybeUrls = ExtractLinkCandidates(clipboard);
+	const auto maybeUrls = ExtractLinkCandidates(
+		QGuiApplication::clipboard()->text());
 	const auto isSingle = maybeUrls.size() == 1;
 
 	enum class Result {
@@ -1802,7 +1795,9 @@ void ProxiesBox::refreshButtons() {
 			[=] { addNewProxy(); });
 		addButton(tr::lng_close(), [=] { closeBox(); });
 #ifdef OVYGRAM_ENABLED
-		addLeftButton(rpl::single(u"PROXY"_q), [] { Ovygram::ShowProxyBox(); });
+		if (const auto plugins = Core::App().pluginClient()) {
+			addLeftButton(rpl::single(u"Прокси плагинов"_q), [=] { plugins->showPluginProxies(); });
+		}
 #endif
 	}
 }

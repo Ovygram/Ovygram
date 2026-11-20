@@ -73,12 +73,6 @@ using AuthKeyPtr = std::shared_ptr<AuthKey>;
 using AuthKeysList = std::vector<AuthKeyPtr>;
 } // namespace MTP
 
-#ifdef OVYGRAM_ENABLED
-namespace Ovygram {
-class ProxyProxy;
-} // namespace Ovygram
-#endif
-
 namespace Media {
 namespace Audio {
 class Instance;
@@ -257,8 +251,7 @@ public:
 		const MTP::ProxyData &proxy,
 		MTP::ProxyData::Settings settings);
 #ifdef OVYGRAM_ENABLED
-	[[nodiscard]] Ovygram::ProxyProxy &proxyProxy();
-	void setProxyProxy(std::optional<MTP::ProxyData> proxy);
+	void setPluginProxy(std::optional<MTP::ProxyData> proxy);
 #endif
 	void proxyRotationSettingsChanged();
 	void checkProxyRotation(not_null<Main::Account*> account, int32 state);

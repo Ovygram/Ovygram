@@ -11,9 +11,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/local_url_handlers.h"
 #include "core/file_utilities.h"
 #include "core/application.h"
-#ifdef OVYGRAM_ENABLED
-#include "ovygram/proxy_proxy.h"
-#endif
 #include "core/bank_card_click_handler.h"
 #include "core/sandbox.h"
 #include "core/click_handler_types.h"
@@ -461,12 +458,6 @@ std::shared_ptr<ClickHandler> UiIntegration::createLinkHandler(
 bool UiIntegration::handleUrlClick(
 		const QString &original,
 		const QVariant &context) {
-#ifdef OVYGRAM_ENABLED
-	if (Ovygram::IsProxyLink(original)) {
-		Core::App().openLocalUrl(original, context);
-		return true;
-	}
-#endif
 	// Only our own token may be added below, never one that came with it,
 	// unless the url itself was given to us by the server for this login.
 	const auto url = context.value<ClickHandlerContext>().keepWebAuthTokens

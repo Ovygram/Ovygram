@@ -31,6 +31,7 @@ from hook_utils import HookCancelled
 from ovygram_commands import Engine
 from ovygram_deps import Dependencies, normalize_all
 from ovygram_distribution import Distribution
+from ovygram_helpers import Helpers
 from ovygram_hosts import HostError, LocalHost, PluginError, ProcessHost
 from ovygram_registry import TRUSTED, protected_author
 from ovygram_package import (MAX_PACKAGE, MAX_SOURCE, SDK_VERSION, archive_path, read_source,
@@ -188,6 +189,7 @@ class Manager:
         # The SDK lies in python/sdk, next to the bundled interpreter and pip.
         self.python_dir = Path(__file__).resolve().parent.parent
         self.host = host(self)
+        self.helpers = Helpers(self)
         self.dependencies = Dependencies(self.root, self.python_dir, activate=self.dependencies_path)
         self.records = self.read_state()
         self.distribution = Distribution(self, registry)
@@ -361,6 +363,8 @@ class Manager:
         """The host process died or was stopped; on the main thread."""
         for installation_id in self._loaded:
             self.errors[installation_id] = reason
+        for owner in list(self.helpers.children):
+            self.helpers.stop(owner)
         self._loaded.clear()
         self.commands.clear()
         self.hook_mask = 0
@@ -606,6 +610,7 @@ class Manager:
                 self.host.call("unload", installation_id=installation_id)
         finally:
             self._loaded.pop(installation_id, None)
+            self.helpers.stop(installation_id)
             self.commands.remove(installation_id)
 
     def change_record(self, installation_id, record):
@@ -965,6 +970,7 @@ class Manager:
         action = json.loads(request)
         name = action.pop("action")
         self.host.check()
+        self.helpers.poll()
         if name in ("snapshot", "poll", "client_event", "ui_event"):
             # A finished dependency installation starts its plugin here, on
             # the main thread and outside of any hook.
@@ -972,6 +978,8 @@ class Manager:
             self.distribution.poll()
         allowed = {
             "poll": self.poll_distribution,
+            "helper_command": self.helpers.command,
+            "proxy_offers": lambda: list(self.helpers.offers.values()),
             "prepare_install": self.distribution.prepare,
             "prepared_install": self.distribution.prepared,
             "commit_install": self.distribution.commit,
@@ -1031,7 +1039,11 @@ class Manager:
         self.closing = True
         self.distribution.close()
         # Unloads every plugin in the reverse order and stops their tasks.
-        self.host.close()
+        try:
+            self.host.close()
+        finally:
+            for owner in list(self.helpers.children):
+                self.helpers.stop(owner)
         self._loaded.clear()
         # The marker detects crashes: a clean exit removes it, also after a
         # failed unload. Recovery mode and --disable-plugins keep it, so the

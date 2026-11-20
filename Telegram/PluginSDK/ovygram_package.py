@@ -19,8 +19,9 @@ from pathlib import PurePosixPath
 
 from ovygram_validation import preflight_source, unique_json_object, valid_requirement, valid_text
 
-SDK_VERSION = 2
+SDK_VERSION = 3
 MAX_PACKAGE = 32 * 1024 * 1024
+MAX_UNPACKED = 64 * 1024 * 1024
 MAX_SOURCE = 1024 * 1024
 MAX_ENTRIES = 512
 MAX_RATIO = 100  # Uncompressed to compressed size of one ZIP entry.
@@ -211,8 +212,8 @@ def _read_zip(data: bytes) -> tuple[dict, list[str]]:
         entries = archive.infolist()
         if len(entries) > MAX_ENTRIES:
             raise InvalidPlugin(f"В архиве больше {MAX_ENTRIES} записей.")
-        if sum(entry.file_size for entry in entries) > MAX_PACKAGE:
-            raise InvalidPlugin("Распакованный архив больше 32 МиБ.")
+        if sum(entry.file_size for entry in entries) > MAX_UNPACKED:
+            raise InvalidPlugin("Распакованный архив больше 64 МиБ.")
         files: dict[str, zipfile.ZipInfo] = {}
         folded = set()
         for entry in entries:

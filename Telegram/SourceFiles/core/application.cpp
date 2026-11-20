@@ -10,7 +10,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #ifdef OVYGRAM_ENABLED
 #include "api/api_plugins.h"
 #include "core/plugin_runtime.h"
-#include "ovygram/proxy_proxy.h"
 #endif
 
 #include "data/data_abstract_structure.h"
@@ -167,9 +166,6 @@ struct Application::Private {
 	UiIntegration uiIntegration;
 	Settings settings;
 	std::unique_ptr<ProxyRotationManager> proxyRotation;
-#ifdef OVYGRAM_ENABLED
-	std::unique_ptr<Ovygram::ProxyProxy> proxyProxy;
-#endif
 };
 
 Application::Application()
@@ -300,9 +296,6 @@ Application::~Application() {
 	closeAdditionalWindows();
 
 	_private->proxyRotation = nullptr;
-#ifdef OVYGRAM_ENABLED
-	_private->proxyProxy = nullptr;
-#endif
 	_domain->finish();
 	MTP::WebProxy::Transport::Shutdown();
 
@@ -940,15 +933,12 @@ void Application::setCurrentProxy(
 	auto &my = _private->settings.proxy();
 	const auto was = my.isEnabled() ? my.selected() : MTP::ProxyData();
 #ifdef OVYGRAM_ENABLED
-	const auto usingProxy = my.temporaryProxy() && *my.temporaryProxy() == proxy;
-	if (usingProxy && settings == MTP::ProxyData::Settings::Enabled) {
+	const auto usingTemporary = my.temporaryProxy() && *my.temporaryProxy() == proxy;
+	if (usingTemporary && settings == MTP::ProxyData::Settings::Enabled) {
 		return;
 	}
-	if (_private->proxyProxy) {
-		_private->proxyProxy->stop();
-	}
 	my.setTemporaryProxy(std::nullopt);
-	if (!usingProxy) {
+	if (!usingTemporary) {
 		my.setSelected(proxy);
 	}
 #else
@@ -959,14 +949,7 @@ void Application::setCurrentProxy(
 }
 
 #ifdef OVYGRAM_ENABLED
-Ovygram::ProxyProxy &Application::proxyProxy() {
-	if (!_private->proxyProxy) {
-		_private->proxyProxy = std::make_unique<Ovygram::ProxyProxy>();
-	}
-	return *_private->proxyProxy;
-}
-
-void Application::setProxyProxy(std::optional<MTP::ProxyData> proxy) {
+void Application::setPluginProxy(std::optional<MTP::ProxyData> proxy) {
 	auto &my = _private->settings.proxy();
 	if (my.temporaryProxy() == proxy) {
 		return;
@@ -1388,15 +1371,6 @@ void Application::registerWindowActivation(not_null<QWidget*> window) {
 
 bool Application::openLocalUrl(const QString &url, QVariant context) {
 	const auto urlTrimmed = url.trimmed();
-#ifdef OVYGRAM_ENABLED
-	if (Ovygram::IsProxyLink(urlTrimmed)) {
-		if (passcodeLocked()) {
-			return false;
-		}
-		Ovygram::ShowProxyBox(urlTrimmed);
-		return true;
-	}
-#endif
 	const auto protocol = u"tg://"_q;
 	if (urlTrimmed.startsWith(protocol, Qt::CaseInsensitive)
 		&& !passcodeLocked()) {
