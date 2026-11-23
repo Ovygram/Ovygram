@@ -331,13 +331,19 @@ def main():
                             'settings/sections/settings_main', 'settings/sections/settings_plugins',
                             'api/api_plugins', 'api/api_updates', 'mtproto/mtp_instance',
                             'mtproto/session', 'dialogs/dialogs_widget', 'dialogs/dialogs_inner_widget',
-                            'dialogs/ui/chat_search_in', 'boxes/peer_list_box', 'boxes/send_files_box',
+                            'boxes/peer_list_box', 'boxes/send_files_box',
                             'history/history_widget', 'history/view/controls/history_view_compose_controls',
                             'history/view/history_view_chat_section', 'history/view/history_view_message',
                             'info/media/info_media_provider', 'info/profile/info_profile_members',
-                            'iv/iv_controller', 'ui/chat/attach/attach_bot_webview',
                             'window/notifications_manager', 'window/notifications_manager_default',
                             'window/window_session_controller',
+                        )
+                    ), *(
+                        f'Telegram/CMakeFiles/{target}.dir/{configuration}/SourceFiles/{unit}.cpp.obj'
+                        for target, unit in (
+                            ('td_ui', 'dialogs/ui/chat_search_in'),
+                            ('td_ui', 'ui/chat/attach/attach_bot_webview'),
+                            ('td_iv', 'iv/iv_controller'),
                         )
                     ), '--', '-k', '0',
                 ],
