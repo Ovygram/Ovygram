@@ -195,7 +195,10 @@ protected:
 			return 0;
 		}
 		_resizing = true;
-		const auto available = std::max(newWidth - _spacing * (count - 1), 0);
+		const auto spacing = (count > 1)
+			? std::min(_spacing, std::max(newWidth - count, 0) / (count - 1))
+			: 0;
+		const auto available = std::max(newWidth - spacing * (count - 1), 0);
 		auto widths = std::vector<int>(count, -1);
 		auto used = 0;
 		auto weights = 0;
@@ -212,23 +215,29 @@ protected:
 			used += widths[i];
 		}
 		auto remaining = std::max(available - used, 0);
+		auto reserved = std::min(available, used);
 		for (auto i = 0; i != count; ++i) {
 			if (widths[i] < 0) {
 				const auto stretch = _children[i].size.stretch;
 				widths[i] = weights ? (remaining * stretch / weights) : 0;
 				remaining -= widths[i];
 				weights -= stretch;
+			} else if (used) {
+				const auto requested = widths[i];
+				widths[i] = int(qint64(reserved) * requested / used);
+				reserved -= widths[i];
+				used -= requested;
 			}
 		}
 		auto height = 0;
 		for (auto i = 0; i != count; ++i) {
-			const auto &[widget, size] = _children[i];
+			const auto &widget = _children[i].widget;
 			const auto button = dynamic_cast<Ui::RoundButton*>(widget.data());
 			if (button) {
-				// Without an override a button keeps its natural width.
-				button->setFullWidth(size.fit ? 0 : std::max(widths[i], 1));
+				button->setFullWidth(std::max(widths[i], 1));
 			} else {
-				widget->resizeToWidth(std::max(widths[i], 1));
+				const auto margins = widget->getMargins();
+				widget->resizeToWidth(std::max(widths[i] - margins.left() - margins.right(), 1));
 			}
 			height = std::max(height, widget->height());
 		}
@@ -240,8 +249,9 @@ protected:
 				: (_align & Qt::AlignVCenter)
 				? (height - widget->height()) / 2
 				: 0;
-			widget->moveToLeft(left, top, newWidth);
-			left += widget->width() + _spacing;
+			const auto margins = widget->getMargins();
+			widget->moveToLeft(left + margins.left(), top + margins.top(), newWidth);
+			left += widget->width() + spacing;
 		}
 		_resizing = false;
 		return height;
@@ -254,13 +264,17 @@ private:
 	};
 
 	[[nodiscard]] static int natural(not_null<Ui::RpWidget*> widget) {
+		const auto margins = widget->getMargins();
 		if (const auto label = dynamic_cast<Ui::FlatLabel*>(widget.get())) {
-			return label->textMaxWidth();
-		} else if (dynamic_cast<Ui::RoundButton*>(widget.get())) {
-			return widget->width();
+			return label->textMaxWidth() + margins.left() + margins.right();
+		} else if (const auto button = dynamic_cast<Ui::RoundButton*>(widget.get())) {
+			button->setFullWidth(0);
+			return button->width();
 		}
 		const auto result = widget->naturalWidth();
-		return (result > 0) ? result : widget->sizeHint().width();
+		return (result > 0)
+			? result + margins.left() + margins.right()
+			: std::max(widget->sizeHint().width(), 0);
 	}
 
 	const Qt::Alignment _align;
@@ -528,7 +542,7 @@ void PluginUi::show(const QJsonObject &command) {
 			}
 			const auto raw = content->data();
 			raw->setParent(box);
-			box->addRow(std::move(*content));
+			box->addRow(std::move(*content), style::al_justify);
 			raw->show();
 			box->addButton(rpl::single(u"Закрыть"_q), [=] {
 				box->closeBox();
@@ -670,7 +684,8 @@ void PluginUi::show(const QJsonObject &command) {
 		// creates and destroys as the user navigates.
 		auto layout = base::make_unique_q<Ui::VerticalLayout>(
 			static_cast<QWidget*>(nullptr));
-		layout->add(build(*object, layout.get(), tree, 0), st::boxRowPadding);
+		layout->add(build(*object, layout.get(), tree, 0),
+			st::boxRowPadding, style::al_justify);
 		layout->hide();
 		object->title = title;
 		object->section = base::unique_qptr<Ui::RpWidget>(layout.release());
@@ -943,8 +958,10 @@ void PluginUi::update(const QJsonObject &command) {
 	// An overlay's parent is the Telegram widget it covers: not ours to lay
 	// out, and its size doesn't depend on the overlay.
 	const auto parent = object.overlay ? nullptr : widget->parentWidget();
-	if (const auto rp = dynamic_cast<Ui::RpWidget*>(parent)) {
-		rp->resizeToWidth(rp->width());
+	if (const auto rp = dynamic_cast<Ui::RpWidget*>(parent);
+			rp && props.contains(u"text"_q)) {
+		// resizeToWidth expects the content width and adds the margins itself.
+		rp->resizeToWidth(std::max(rp->widthNoMargins(), 0));
 	}
 	if (object.bar) {
 		relayoutChats();

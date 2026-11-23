@@ -391,6 +391,9 @@ private:
 	std::vector<std::unique_ptr<Suggestions>> _hidingSuggestions;
 	object_ptr<BottomButton> _updateTelegram = { nullptr };
 	object_ptr<BottomButton> _loadMoreChats = { nullptr };
+#ifdef OVYGRAM_ENABLED
+	object_ptr<BottomButton> _pluginProxyIndicator = { nullptr };
+#endif // OVYGRAM_ENABLED
 	std::unique_ptr<Ui::DownloadBar> _downloadBar;
 	std::unique_ptr<Window::ConnectionState> _connecting;
 

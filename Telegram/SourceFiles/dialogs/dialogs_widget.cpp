@@ -8,7 +8,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "dialogs/dialogs_widget.h"
 #include "data/data_media_types.h"
 #ifdef OVYGRAM_ENABLED
+#include "api/api_plugins.h"
 #include "ovygram/plugin_panel_buttons.h"
+#include "styles/style_menu_icons.h"
 #endif // OVYGRAM_ENABLED
 
 #include "base/call_delayed.h"
@@ -658,6 +660,39 @@ Widget::Widget(
 		setupMoreChatsBar();
 		setupDownloadBar();
 	}
+#ifdef OVYGRAM_ENABLED
+	if (_layout == Layout::Main) {
+		Api::PluginProxyIndicatorValue() | rpl::on_next([=](const QString &label) {
+			if (label.isEmpty()) {
+				if (!_pluginProxyIndicator) {
+					return;
+				}
+				_pluginProxyIndicator.destroy();
+			} else if (_pluginProxyIndicator) {
+				_pluginProxyIndicator->setText(label);
+			} else {
+				_pluginProxyIndicator.create(
+					this,
+					label,
+					st::dialogsLoadMoreButton,
+					st::menuIconNetwork,
+					st::menuIconNetwork,
+					false);
+				_pluginProxyIndicator->setClickedCallback([] {
+					if (const auto plugins = Core::App().pluginClient()) {
+						plugins->showPluginProxies();
+					}
+				});
+				_pluginProxyIndicator->show();
+			}
+			if (_pluginProxyIndicator) {
+				_pluginProxyIndicator->setAccessibleName(label);
+				_pluginProxyIndicator->setToolTip(label);
+			}
+			updateControlsGeometry();
+		}, lifetime());
+	}
+#endif // OVYGRAM_ENABLED
 	setupSwipeBack();
 
 	if (session().settings().dialogsFiltersEnabled()
@@ -1812,6 +1847,11 @@ void Widget::updateControlsVisibility(bool fast) {
 	if (_updateTelegram) {
 		_updateTelegram->show();
 	}
+#ifdef OVYGRAM_ENABLED
+	if (_pluginProxyIndicator) {
+		_pluginProxyIndicator->show();
+	}
+#endif // OVYGRAM_ENABLED
 	_searchControls->setVisible(
 		!_openedFolder && !_openedForum && !_openedCommunity);
 	if (_moreChatsBar) {
@@ -2838,6 +2878,11 @@ void Widget::showAnimated(
 	if (_updateTelegram) {
 		_updateTelegram->hide();
 	}
+#ifdef OVYGRAM_ENABLED
+	if (_pluginProxyIndicator) {
+		_pluginProxyIndicator->hide();
+	}
+#endif // OVYGRAM_ENABLED
 	if (_connecting) {
 		_connecting->setForceHidden(true);
 	}
@@ -4726,6 +4771,9 @@ void Widget::updateControlsGeometry() {
 	putBottomButton(_updateTelegram);
 	putBottomButton(_downloadBar);
 	putBottomButton(_loadMoreChats);
+#ifdef OVYGRAM_ENABLED
+	putBottomButton(_pluginProxyIndicator);
+#endif // OVYGRAM_ENABLED
 	if (_connecting) {
 		_connecting->setBottomSkip(bottomSkip);
 	}

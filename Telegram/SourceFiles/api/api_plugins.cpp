@@ -170,11 +170,26 @@ QJsonObject RpcError(const MTP::Error &error) {
 	};
 }
 
+auto PluginProxyIndicator = rpl::variable<QString>();
+
 } // namespace
+
+rpl::producer<QString> PluginProxyIndicatorValue() {
+	return PluginProxyIndicator.value();
+}
 
 PluginClient::PluginClient(not_null<Core::PluginRuntime*> runtime)
 : _runtime(runtime)
 , _media(std::make_unique<Ovygram::PluginMedia>()) {
+	Core::App().proxyChanges() | rpl::on_next([=] {
+		if (!Core::App().settings().proxy().temporaryProxy()) {
+			const auto route = u"default"_q;
+			if (_activeProxyTokens.erase(route)) {
+				_activeProxyLabels.erase(route);
+				updateProxyIndicator();
+			}
+		}
+	}, _lifetime);
 	Core::App().domain().accountsChanges(
 	) | rpl::on_next([=] { watchAccounts(); }, _lifetime);
 	Core::App().domain().activeSessionChanges(
@@ -249,6 +264,7 @@ PluginClient::PluginClient(not_null<Core::PluginRuntime*> runtime)
 }
 
 PluginClient::~PluginClient() {
+	PluginProxyIndicator = QString();
 	Ovygram::SetPluginUpdateDismissCallback({});
 	Ovygram::SetPluginUpdateNotification({});
 	_runtime->setClient({});
@@ -386,8 +402,11 @@ void PluginClient::setProxyRoute(const QString &route, const QJsonObject &offer)
 		proxy->user = offer.value(u"user"_q).toString();
 		proxy->password = offer.value(u"password"_q).toString();
 		_activeProxyTokens[route] = offer.value(u"token"_q).toString();
+		const auto label = offer.value(u"label"_q).toString();
+		_activeProxyLabels[route] = label.isEmpty() ? u"Прокси плагина"_q : label;
 	} else {
 		_activeProxyTokens.erase(route);
+		_activeProxyLabels.erase(route);
 	}
 	if (route == u"default"_q) {
 		Core::App().setPluginProxy(proxy);
@@ -404,6 +423,19 @@ void PluginClient::setProxyRoute(const QString &route, const QJsonObject &offer)
 		}
 		Webview::SetLocalProxy(category, std::move(local));
 	}
+	updateProxyIndicator();
+}
+
+void PluginClient::updateProxyIndicator() {
+	if (_activeProxyLabels.empty()) {
+		PluginProxyIndicator = QString();
+		return;
+	}
+	const auto &label = _activeProxyLabels.begin()->second;
+	const auto same = std::all_of(_activeProxyLabels.begin(), _activeProxyLabels.end(), [&](const auto &entry) {
+		return entry.second == label;
+	});
+	PluginProxyIndicator = same ? (label + u" · активен"_q) : u"Прокси плагинов активны"_q;
 }
 
 QJsonArray PluginClient::proxyOffers() {
@@ -411,7 +443,7 @@ QJsonArray PluginClient::proxyOffers() {
 	const auto active = _activeProxyTokens;
 	for (const auto &[route, token] : active) {
 		if (route == u"default"_q && !Core::App().settings().proxy().temporaryProxy()) {
-			_activeProxyTokens.erase(route);
+			setProxyRoute(route, {});
 		} else if (std::none_of(offers.begin(), offers.end(), [&](const QJsonValue &value) {
 			return value.toObject().value(u"token"_q).toString() == token;
 		})) {
@@ -451,7 +483,8 @@ void PluginClient::showPluginProxies() {
 						listed = true;
 					}
 					const auto token = offer.value(u"token"_q).toString();
-					const auto name = offer.value(u"plugin_id"_q).toString()
+					const auto display = offer.value(u"label"_q).toString();
+					const auto name = (display.isEmpty() ? offer.value(u"plugin_id"_q).toString() : display)
 						+ u" · "_q + offer.value(u"owner"_q).toString().left(8);
 					const auto button = box->addRow(object_ptr<Ui::RoundButton>(box,
 						rpl::single(token == tokenNow ? name + u" (подключён)"_q : name),
@@ -548,7 +581,16 @@ void PluginClient::receive(const QByteArray &request) {
 		}
 		if (method.startsWith(u"helper."_q)) {
 			const auto owner = command.value(u"installation_id"_q).toString();
-			if (method == u"helper.proxy_active"_q) {
+			if (method == u"helper.open_proxy_settings"_q) {
+				if (!Core::App().activePrimaryWindow()
+					|| Core::App().passcodeLocked()
+					|| Ovygram::ProtectedSurfaceExists()
+					|| Ovygram::InstallationUiActive()) {
+					throw std::runtime_error("Proxy settings are unavailable during protected UI.");
+				}
+				showPluginProxies();
+				reply(id, true);
+			} else if (method == u"helper.proxy_active"_q) {
 				const auto offers = proxyOffers();
 				reply(id, std::any_of(offers.begin(), offers.end(), [&](const QJsonValue &value) {
 					const auto offer = value.toObject();

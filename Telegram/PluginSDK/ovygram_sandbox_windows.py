@@ -17,6 +17,7 @@ import ctypes
 from ctypes import wintypes
 import os
 import subprocess
+import time
 
 from ovygram_sandbox import SandboxError
 
@@ -31,6 +32,7 @@ _TOKEN_ADJUST_DEFAULT = 0x0080
 _TOKEN_INTEGRITY_LEVEL = 25  # TOKEN_INFORMATION_CLASS.TokenIntegrityLevel
 _TOKEN_LOGON_SID = 28
 _SE_GROUP_INTEGRITY = 0x00000020
+_JOB_BASIC_ACCOUNTING_INFORMATION = 1
 _JOB_BASIC_UI_RESTRICTIONS = 4
 _JOB_EXTENDED_LIMIT_INFORMATION = 9
 _JOB_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000
@@ -75,6 +77,13 @@ class _ExtendedLimitInformation(ctypes.Structure):
 
 class _UiRestrictions(ctypes.Structure):
     _fields_ = [("UIRestrictionsClass", wintypes.DWORD)]
+
+
+class _BasicAccountingInformation(ctypes.Structure):
+    _fields_ = [(name, ctypes.c_int64) for name in (
+        "TotalUserTime", "TotalKernelTime", "ThisPeriodTotalUserTime", "ThisPeriodTotalKernelTime")
+    ] + [(name, wintypes.DWORD) for name in (
+        "TotalPageFaultCount", "TotalProcesses", "ActiveProcesses", "TotalTerminatedProcesses")]
 
 
 def _libraries():
@@ -190,6 +199,25 @@ def confine(process):
 
 def release(job):
     ctypes.WinDLL("kernel32").CloseHandle(wintypes.HANDLE(job))
+
+
+def terminate_helper_job(job):
+    """Give Windows time to release executable mappings from every job member."""
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    handle, dword = wintypes.HANDLE, wintypes.DWORD
+    terminate = kernel.TerminateJobObject
+    terminate.restype, terminate.argtypes = wintypes.BOOL, (handle, wintypes.UINT)
+    query = kernel.QueryInformationJobObject
+    query.restype, query.argtypes = wintypes.BOOL, (
+        handle, ctypes.c_int, ctypes.c_void_p, dword, ctypes.POINTER(dword))
+    if not terminate(job, 1):
+        return
+    counts = _BasicAccountingInformation()
+    deadline = time.monotonic() + 0.5
+    while query(job, _JOB_BASIC_ACCOUNTING_INFORMATION, ctypes.byref(counts), ctypes.sizeof(counts), None):
+        if not counts.ActiveProcesses or time.monotonic() >= deadline:
+            break
+        time.sleep(0.02)
 
 
 def grant_helper_read(directory):

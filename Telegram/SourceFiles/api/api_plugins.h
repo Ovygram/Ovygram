@@ -69,7 +69,9 @@ private:
 	void watchAccounts();
 	QJsonArray proxyOffers();
 	void setProxyRoute(const QString &route, const QJsonObject &offer);
+	void updateProxyIndicator();
 	std::map<QString, QString> _activeProxyTokens;
+	std::map<QString, QString> _activeProxyLabels;
 	void synchronize();
 	Main::Session *session(const QString &accountId) const;
 	Main::Session *session(MTP::Instance *instance) const;
@@ -99,6 +101,7 @@ private:
 
 };
 
+[[nodiscard]] rpl::producer<QString> PluginProxyIndicatorValue();
 bool PluginBeforeRpc(
 	MTP::Instance *instance,
 	mtpRequestId requestId,

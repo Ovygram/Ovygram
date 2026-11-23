@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import tempfile
 import threading
+import time
 import uuid
 import zipfile
 
@@ -29,6 +30,31 @@ class Helpers:
         self.manager = manager
         self.children = {}
         self.offers = {}
+        self.pending_cleanup = []
+
+    @staticmethod
+    def _terminate(process, guard):
+        if guard is not None:
+            from ovygram_sandbox_windows import terminate_helper_job
+            try:
+                terminate_helper_job(guard)
+            finally:
+                release(guard)  # Also kills descendants if the wait timed out.
+        if process.poll() is None:
+            process.kill()
+        process.wait()
+
+    def _cleanup(self, directory, *, remaining=30):
+        try:
+            directory.cleanup()
+        except OSError as error:
+            # Windows can retain an executable mapping briefly after its job
+            # exits. Access denied and sharing violations do not mean the
+            # component is still running or can still be selected.
+            if remaining and getattr(error, "winerror", None) in (5, 32, 33):
+                self.pending_cleanup.append((time.monotonic() + 1, directory, remaining - 1))
+            else:
+                self.manager.logger.warning("Не удалось удалить временный каталог компонента: %s", error)
 
     def stop(self, owner):
         removed = self.offers.pop(owner, None)
@@ -38,18 +64,20 @@ class Helpers:
             if child:
                 process, guard, directory = child
                 try:
-                    try:
-                        process.kill()
-                    finally:
-                        release(guard)  # The Windows job includes all descendants.
-                    process.wait()
+                    self._terminate(process, guard)
                 finally:
-                    directory.cleanup()
+                    self._cleanup(directory)
         finally:
             if removed or browser:
                 self.manager.notify({"id": uuid.uuid4().hex, "method": "proxy.refresh"})
 
     def poll(self):
+        pending, self.pending_cleanup = self.pending_cleanup, []
+        for retry_at, directory, remaining in pending:
+            if retry_at <= time.monotonic():
+                self._cleanup(directory, remaining=remaining)
+            else:
+                self.pending_cleanup.append((retry_at, directory, remaining))
         for owner, (process, _, _) in list(self.children.items()):
             if process.poll() is not None:
                 self.stop(owner)
@@ -84,7 +112,8 @@ class Helpers:
                 magic = stream.read(4)
             if not (magic.startswith(b"MZ") if os.name == "nt" else magic == b"\x7fELF"):
                 raise ValueError("Формат компонента не подходит для этой ОС.")
-            binary.chmod(0o500)
+            if os.name != "nt":
+                binary.chmod(0o500)
             python, environment, bundled = python_command(self.manager.python_dir)
             launcher = Path(__file__).resolve().with_name("ovygram_helper_launcher.py")
             # The trusted launcher applies the final restrictions before executing any package bytes.
@@ -113,12 +142,12 @@ class Helpers:
                     os.close(descriptor)
             self.children[owner] = process, guard, directory
         except BaseException:
-            if process is not None:
-                process.kill()
-                release(guard)
-                process.wait()
-                process.stdin.close()
-            directory.cleanup()
+            try:
+                if process is not None:
+                    self._terminate(process, guard)
+                    process.stdin.close()
+            finally:
+                self._cleanup(directory)
             raise
 
     def command(self, installation_id, operation, params):
@@ -145,12 +174,15 @@ class Helpers:
             protocol = "http" if operation == "offer_http" else "socks5"
             supported = ("pages", "mini_apps") if protocol == "http" else ("default", "api", "files")
             scopes = params.get("routes", list(supported))
+            label = params.get("label", "")
+            if not isinstance(label, str) or len(label) > 24 or any(not (c.isalnum() or c in " -_") for c in label):
+                raise ValueError("Недопустимое название для индикатора прокси.")
             if (not isinstance(scopes, list) or not 0 < len(scopes) <= len(supported)
                     or any(scope not in supported for scope in scopes) or len(set(scopes)) != len(scopes)):
                 raise ValueError("Недопустимые области маршрутизации для выбранного протокола.")
             key = owner + ":http" if protocol == "http" else owner
             self.offers[key] = dict(token=uuid.uuid4().hex, port=port, user=user, password=password,
-                                    protocol=protocol, routes=scopes,
+                                    protocol=protocol, routes=scopes, label=label.strip(),
                                     plugin_id=self.manager.records[owner]["plugin_id"], owner=owner)
             self.manager.notify({"id": uuid.uuid4().hex, "method": "proxy.refresh"})
         else:
