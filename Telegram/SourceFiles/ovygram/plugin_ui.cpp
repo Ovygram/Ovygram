@@ -8,6 +8,7 @@
 #include "ovygram/chat_list_filter.h"
 #include "ovygram/message_decorations.h"
 #include "ovygram/plugin_elements.h"
+#include "ovygram/plugin_install.h"
 #include "ovygram/plugin_menus.h"
 #include "ovygram/plugin_actions.h"
 #include "ovygram/plugin_panel_buttons.h"

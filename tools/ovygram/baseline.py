@@ -325,11 +325,21 @@ def main():
                             'ovygram/chat_decorations', 'ovygram/chat_list_filter',
                             'ovygram/message_decorations', 'ovygram/plugin_elements',
                             'ovygram/plugin_paint', 'ovygram/plugin_ui', 'ovygram/plugin_widgets',
+                            'ovygram/plugin_actions', 'ovygram/plugin_install',
+                            'ovygram/plugin_list_visibility', 'ovygram/plugin_media',
+                            'ovygram/plugin_panel_buttons', 'ovygram/plugin_search',
                             'settings/sections/settings_main', 'settings/sections/settings_plugins',
                             'api/api_plugins', 'api/api_updates', 'mtproto/mtp_instance',
+                            'mtproto/session', 'dialogs/dialogs_widget', 'dialogs/dialogs_inner_widget',
+                            'dialogs/ui/chat_search_in', 'boxes/peer_list_box', 'boxes/send_files_box',
+                            'history/history_widget', 'history/view/controls/history_view_compose_controls',
+                            'history/view/history_view_chat_section', 'history/view/history_view_message',
+                            'info/media/info_media_provider', 'info/profile/info_profile_members',
+                            'iv/iv_controller', 'ui/chat/attach/attach_bot_webview',
+                            'window/notifications_manager', 'window/notifications_manager_default',
                             'window/window_session_controller',
                         )
-                    ),
+                    ), '--', '-k', '0',
                 ],
             }
             if args.action.startswith('prepare-'):
