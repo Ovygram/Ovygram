@@ -1,5 +1,5 @@
 import re
-from dataclasses import dataclass, replace
+from dataclasses import field, dataclass, replace
 
 from . import tl
 
@@ -81,6 +81,8 @@ class Event:
     chat: Chat | None = None
     message_ids: tuple[int, ...] = ()
     chat_id: int | None = None
+    update: tl.TLObject | None = None
+    details: dict = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

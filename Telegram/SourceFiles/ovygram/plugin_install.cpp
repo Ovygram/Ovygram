@@ -1,4 +1,5 @@
 #include "ovygram/plugin_install.h"
+#include "ovygram/plugin_media.h"
 
 #include "core/application.h"
 #include "core/plugin_runtime.h"
@@ -295,7 +296,7 @@ private:
 } // namespace
 
 bool InstallationUiActive() {
-	return ActiveInstallers != 0;
+	return ActiveInstallers != 0 || PluginFilePickerActive();
 }
 
 void ShowPluginInstall(const QString &path, const QString &installationId, Fn<void()> done) {

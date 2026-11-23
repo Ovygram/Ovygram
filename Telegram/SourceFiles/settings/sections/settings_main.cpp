@@ -741,6 +741,7 @@ void Main::keyPressEvent(QKeyEvent *e) {
 
 void Main::setupContent() {
 	const auto content = Ui::CreateChild<Ui::VerticalLayout>(this);
+	content->setObjectName(u"settings.main"_q);
 
 	const auto window = controller();
 	const auto session = &window->session();

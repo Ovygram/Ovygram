@@ -252,6 +252,7 @@ public:
 		MTP::ProxyData::Settings settings);
 #ifdef OVYGRAM_ENABLED
 	void setPluginProxy(std::optional<MTP::ProxyData> proxy);
+	void setPluginSessionProxy(bool files, std::optional<MTP::ProxyData> proxy);
 #endif
 	void proxyRotationSettingsChanged();
 	void checkProxyRotation(not_null<Main::Account*> account, int32 state);

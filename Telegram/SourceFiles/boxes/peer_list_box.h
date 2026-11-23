@@ -762,6 +762,7 @@ public:
 	void setBelowWidget(object_ptr<Ui::RpWidget> width);
 	void setHideEmpty(bool hide);
 	void refreshRows();
+	void setPresentationFilter(Fn<bool(not_null<PeerListRow*>)> visible);
 
 	void mouseLeftGeometry();
 	void pressLeftToContextMenu(bool shown);
@@ -924,6 +925,7 @@ private:
 		return !_hiddenRows.empty() || !_searchQuery.isEmpty();
 	}
 	int shownRowsCount() const {
+		if (_presentationFilter) return _presentationRows.size();
 		return showingSearch() ? _filterResults.size() : _rows.size();
 	}
 	template <typename Callback>
@@ -974,6 +976,8 @@ private:
 	QString _normalizedSearchQuery;
 	QString _mentionHighlight;
 	std::vector<not_null<PeerListRow*>> _filterResults;
+	Fn<bool(not_null<PeerListRow*>)> _presentationFilter;
+	std::vector<not_null<PeerListRow*>> _presentationRows;
 	base::flat_set<not_null<PeerListRow*>> _hiddenRows;
 
 	std::unique_ptr<PeerListSectionHeaders> _sections;

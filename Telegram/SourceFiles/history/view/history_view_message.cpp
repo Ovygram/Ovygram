@@ -1800,6 +1800,9 @@ int Message::marginBottom() const {
 		return 0;
 	}
 	auto result = st::msgMargin.bottom();
+#ifdef OVYGRAM_ENABLED
+	result += Ovygram::MessageFooterHeight(data());
+#endif
 	if (const auto service = Get<ServicePreMessage>()) {
 		if (service->below) {
 			result += service->height;
@@ -1867,10 +1870,13 @@ void Message::draw(Painter &p, const PaintContext &context) const {
 #ifdef OVYGRAM_ENABLED
 	// Runs on every return below, over the finished message. The bubble
 	// shifts are undone by then, so they are applied again.
-	const auto ovygramDecorations = gsl::finally([&] {
+	const auto ovygramDecorations = gsl::finally([&, bubbleArea = g] {
 		const auto shift = gestureShift + selectionTranslation;
 		p.translate(shift, 0);
-		Ovygram::PaintMessage(p, data(), g);
+		const auto service = Get<ServicePreMessage>();
+		const auto footerTop = bubbleArea.y() + bubbleArea.height()
+			+ ((service && service->below) ? service->height : 0);
+		Ovygram::PaintMessage(p, data(), g, footerTop);
 		p.translate(-shift, 0);
 	});
 #endif // OVYGRAM_ENABLED

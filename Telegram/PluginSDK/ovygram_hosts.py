@@ -29,7 +29,7 @@ TIMEOUTS = {"load": 120, "unload": 30, "settings": 30, "settings_action": 30, "s
 HOOK_TIMEOUT = 10
 MAX_ERROR = 4096
 MAX_LOG = 16384
-MASK_BITS = (1 << 10) - 1
+MASK_BITS = (1 << 17) - 1
 
 
 class HostError(RuntimeError):

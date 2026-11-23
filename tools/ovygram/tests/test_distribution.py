@@ -23,6 +23,7 @@ import urllib.parse
 
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "Telegram/PluginSDK"))
+from ovygram_package import SDK_VERSION
 from ovygram_registry import Registry, canonical, json_document, protected_author, verify_ed25519
 from ovygram_runtime import InProcessManager as Manager
 
@@ -399,7 +400,7 @@ class DistributionTests(unittest.TestCase):
         import re
         self.approve(self.source())
         identity = self.install()
-        latest = re.sub(rb"__desktop_sdk__\s*=\s*\d+", b"__desktop_sdk__ = 4", self.source("1.3"))
+        latest = re.sub(rb"__desktop_sdk__\s*=\s*\d+", f"__desktop_sdk__ = {SDK_VERSION + 1}".encode(), self.source("1.3"))
         compatible = self.source("1.2")
         self.approve(latest, "1.3", 3)
         self.approve(compatible, "1.2", 2)

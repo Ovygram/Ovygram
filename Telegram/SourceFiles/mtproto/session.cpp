@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "mtproto/session.h"
+#include "mtproto/facade.h"
 
 #include "mtproto/details/mtproto_dcenter.h"
 #include "mtproto/session_private.h"
@@ -239,8 +240,11 @@ void Session::restart() {
 
 void Session::refreshOptions() {
 	const auto &settings = Core::App().settings().proxy();
-	const auto &proxy = settings.selected();
-	const auto isEnabled = settings.isEnabled();
+	const auto files = isDownloadDcId(_shiftedDcId) || isUploadDcId(_shiftedDcId)
+		|| GetDcIdShift(_shiftedDcId) == kExportMediaDcShift;
+	const auto &scoped = settings.sessionProxy(files);
+	const auto proxy = scoped.value_or(settings.selected());
+	const auto isEnabled = scoped.has_value() || settings.isEnabled();
 	const auto proxyType = (isEnabled ? proxy.type : ProxyData::Type::None);
 	const auto useTcp = (proxyType != ProxyData::Type::Http);
 	const auto useHttp = (proxyType != ProxyData::Type::Mtproto)

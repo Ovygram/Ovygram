@@ -2,12 +2,17 @@
 
 #include "ovygram/plugin_install.h"
 #include "ovygram/plugin_menus.h"
+#include "ovygram/plugin_widgets.h"
 #include "ovygram/protected_ui.h"
 #include "base/weak_ptr.h"
+#include "core/application.h"
 #include "data/data_peer.h"
+#include "dialogs/dialogs_widget.h"
 #include "data/data_session.h"
 #include "main/main_session.h"
 #include "ui/widgets/buttons.h"
+#include "ui/widgets/popup_menu.h"
+#include <QtGui/QAction>
 #include "styles/style_layers.h"
 #include "styles/style_widgets.h"
 
@@ -20,6 +25,7 @@
 #include <set>
 #include <stdexcept>
 #include <tuple>
+#include <utility>
 #include <vector>
 
 namespace Ovygram::PanelButtons {
@@ -50,6 +56,10 @@ struct Host {
 	std::function<void()> relayout;
 	std::map<QString, QPointer<Ui::RoundButton>> buttons;
 	std::vector<QString> placed;
+	std::vector<QString> overflow;
+	QPointer<Ui::RoundButton> more;
+	QPointer<Ui::PopupMenu> menu;
+	bool showMore = false;
 	base::weak_ptr<Main::Session> session;
 	PeerId peerId;
 };
@@ -106,7 +116,11 @@ void RemoveWidgets(const QString &id) {
 }
 
 void Clicked(QWidget *owner, const QString &ruleId) {
-	if (InstallationUiActive() || InsideProtected(owner)) return;
+	if (InstallationUiActive() || Core::App().passcodeLocked()
+		|| ProtectedFromPlugins(owner)
+		|| CouldCoverProtected(owner, u"geometry"_q)) {
+		return;
+	}
 	const auto host = Find(owner);
 	const auto i = Get().items.find(ruleId);
 	if (!host || i == end(Get().items) || !Get().send || !i->second.enabled) return;
@@ -115,6 +129,13 @@ void Clicked(QWidget *owner, const QString &ruleId) {
 	if (!peer || !Matches(i->second, *host, peer)) return;
 	auto value = Menus::DescribeContext(*session, peer, nullptr);
 	value.insert(u"panel"_q, host->panel);
+	auto target = owner;
+	if (host->panel == u"search.actions"_q) {
+		const auto search = dynamic_cast<Dialogs::Widget*>(owner->parentWidget());
+		target = search ? search->pluginSearchTarget() : nullptr;
+		if (!target || !target->isVisible()) return;
+	}
+	value.insert(u"handle"_q, Widgets::HandleFor(target));
 	Get().send(QJsonObject{
 		{ u"installation_id"_q, i->second.installationId },
 		{ u"type"_q, u"panel_button_click"_q },
@@ -157,6 +178,10 @@ void RegisterHost(QWidget *owner, const QString &panel, std::function<void()> re
 	QObject::connect(owner, &QObject::destroyed, [owner] { Get().hosts.erase(owner); });
 }
 
+void UpdateProtectedSurfaces() {
+	RefreshHosts();
+}
+
 void SetEventSender(std::function<void(QJsonObject)> send) {
 	Get().send = std::move(send);
 }
@@ -182,8 +207,8 @@ void Handle(const QJsonObject &command) {
 			.accountId = command.value(u"account_id"_q).toString(),
 			.chatId = command.value(u"chat_id"_q).toString(),
 		};
-		if (item.panel != u"chat.top_bar"_q && item.panel != u"compose"_q) {
-			throw std::runtime_error("Panel must be chat.top_bar or compose.");
+		if (item.panel != u"chat.top_bar"_q && item.panel != u"compose"_q && item.panel != u"search.actions"_q) {
+			throw std::runtime_error("Unknown panel button target.");
 		}
 		if (item.text.isEmpty() || item.text.size() > 32 || item.tooltip.size() > 256) {
 			throw std::runtime_error("Panel button text/tooltip exceeds its limit.");
@@ -235,7 +260,13 @@ void RemovePlugin(const QString &installationId) {
 
 void Hide(QWidget *owner) {
 	if (const auto host = Find(owner)) {
+		if (const auto menu = std::exchange(host->menu, nullptr)) {
+			menu->hideMenu(true);
+		}
 		host->placed.clear();
+		host->overflow.clear();
+		host->showMore = false;
+		if (host->more) host->more->hide();
 		host->session = {};
 		for (const auto &[id, button] : host->buttons) {
 			if (button) button->hide();
@@ -252,7 +283,12 @@ int Prepare(QWidget *owner, PeerData *peer, int availableWidth, int rowHeight) {
 		delete entry.second.data();
 		return true;
 	});
-	if (!peer || availableWidth <= 0 || rowHeight <= 0) return 0;
+	if (!peer || availableWidth <= 0 || rowHeight <= 0
+		|| InstallationUiActive() || Core::App().passcodeLocked()
+		|| ProtectedFromPlugins(owner)
+		|| CouldCoverProtected(owner, u"geometry"_q)) {
+		return 0;
+	}
 	host->session = base::make_weak(&peer->session());
 	host->peerId = peer->id;
 	auto items = std::vector<std::pair<QString, Item>>();
@@ -276,11 +312,62 @@ int Prepare(QWidget *owner, PeerData *peer, int availableWidth, int rowHeight) {
 		button->setDisabled(!item.enabled);
 		button->setFullWidth(std::max(item.width, button->height()));
 		const auto required = button->width() + kSpacing;
-		if (button->height() > rowHeight || required > availableWidth - used) continue;
+		if (button->height() > rowHeight || required > availableWidth - used) {
+			host->overflow.push_back(id);
+			continue;
+		}
 		host->placed.push_back(id);
 		used += required;
 	}
-	return used;
+	if (host->overflow.empty()) return used;
+	if (!host->more) {
+		host->more = new Ui::RoundButton(owner, rpl::single(u"…"_q), st::defaultActiveButton);
+		host->more->setFullWidth(host->more->height());
+		host->more->setAccessibleName(u"Другие действия плагинов"_q);
+		host->more->setFocusPolicy(Qt::StrongFocus);
+		host->more->setClickedCallback([owner] {
+			const auto host = Find(owner);
+			if (!host || !host->showMore || host->menu
+				|| InstallationUiActive() || Core::App().passcodeLocked()
+				|| ProtectedSurfaceExists()) {
+				return;
+			}
+			const auto account = host->session;
+			const auto peer = host->peerId;
+			host->menu = new Ui::PopupMenu(owner, st::popupMenuWithIcons);
+			for (const auto &id : host->overflow) {
+				const auto i = Get().items.find(id);
+				if (i == end(Get().items)) continue;
+				const auto action = host->menu->addAction(i->second.text, [=] {
+					const auto current = Find(owner);
+					if (current && current->showMore && !ProtectedSurfaceExists()
+						&& current->session.get() == account.get()
+						&& current->peerId == peer
+						&& std::find(current->overflow.begin(), current->overflow.end(), id)
+							!= current->overflow.end()) {
+						Clicked(owner, id);
+					}
+				});
+				action->setEnabled(i->second.enabled);
+			}
+			host->menu->popup(host->more->mapToGlobal(QPoint(0, host->more->height())));
+		});
+	}
+	const auto required = host->more->width() + kSpacing;
+	if (required > availableWidth || host->more->height() > rowHeight) return used;
+	while (required > availableWidth - used && !host->placed.empty()) {
+		const auto id = host->placed.back();
+		used -= host->buttons[id]->width() + kSpacing;
+		host->placed.pop_back();
+	}
+	host->overflow.clear();
+	for (const auto &[id, item] : items) {
+		if (std::find(host->placed.begin(), host->placed.end(), id) == host->placed.end()) {
+			host->overflow.push_back(id);
+		}
+	}
+	host->showMore = true;
+	return used + required;
 }
 
 void Place(QWidget *owner, int left, int top, int rowHeight) {
@@ -292,6 +379,10 @@ void Place(QWidget *owner, int left, int top, int rowHeight) {
 		button->moveToLeft(left, top + (rowHeight - button->height()) / 2, owner->width());
 		button->show();
 		left += button->width() + kSpacing;
+	}
+	if (host->showMore) {
+		host->more->moveToLeft(left, top + (rowHeight - host->more->height()) / 2, owner->width());
+		host->more->show();
 	}
 }
 

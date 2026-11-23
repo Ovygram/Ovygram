@@ -4440,6 +4440,10 @@ bool InnerWidget::hasChatTypeFilter() const {
 		&& (_searchState.tab == ChatSearchTab::MyMessages);
 }
 
+QWidget *InnerWidget::pluginSearchTarget() const {
+	return _searchIn ? _searchIn->pluginSearchTarget() : nullptr;
+}
+
 void InnerWidget::searchRequested(bool loading) {
 	_searchWaiting = false;
 	_searchLoading = loading;
@@ -4450,8 +4454,9 @@ void InnerWidget::searchRequested(bool loading) {
 	refresh(true);
 }
 
-void InnerWidget::applySearchState(SearchState state) {
-	if (_searchState == state) {
+void InnerWidget::applySearchState(SearchState state, bool pluginMediaSearch) {
+	const auto pluginChanged = (_pluginMediaSearch != pluginMediaSearch);
+	if (_searchState == state && !pluginChanged) {
 		return;
 	}
 	auto withSameQuery = state;
@@ -4517,6 +4522,12 @@ void InnerWidget::applySearchState(SearchState state) {
 		_chatTypeFilterWidth = 0;
 		update();
 	}
+#ifdef OVYGRAM_ENABLED
+	if (_searchState.inChat != state.inChat || _searchState.tab != state.tab) {
+		_searchIn.reset();
+	}
+#endif
+	_pluginMediaSearch = pluginMediaSearch;
 	_searchState = std::move(state);
 	_searchHashOrCashtag = IsHashOrCashtagSearchQuery(_searchState.query);
 	_searchWithPostsPreview = computeSearchWithPostsPreview();
@@ -4530,11 +4541,12 @@ void InnerWidget::applySearchState(SearchState state) {
 		? QStringList(newFilter)
 		: TextUtilities::PrepareSearchWords(newFilter);
 	newFilter = words.isEmpty() ? QString() : words.join(' ');
-	if (newFilter != _filter || otherChanged) {
+	if (newFilter != _filter || otherChanged || pluginChanged) {
 		_filter = newFilter;
 		if (_filter.isEmpty()
 			&& !_searchState.fromPeer
 			&& _searchState.tags.empty()
+			&& !_pluginMediaSearch
 			&& _searchState.tab != ChatSearchTab::PublicPosts) {
 			clearFilter();
 		} else {
@@ -4546,7 +4558,7 @@ void InnerWidget::applySearchState(SearchState state) {
 	}
 	if (_state != WidgetState::Default) {
 		_searchWaiting = true;
-		_searchRequests.fire(otherChanged
+		_searchRequests.fire((otherChanged || pluginChanged)
 			? SearchRequestDelay::Instant
 			: SearchRequestDelay::Delayed);
 		if (_searchWaiting) {
@@ -5466,6 +5478,9 @@ void InnerWidget::updateSearchIn() {
 	} else if (!_searchIn) {
 		_searchIn = std::make_unique<ChatSearchIn>(this);
 		_searchIn->show();
+		_searchIn->heightValue() | rpl::skip(1) | rpl::on_next([=] {
+			Ui::PostponeCall(this, [=] { refresh(); });
+		}, _searchIn->lifetime());
 		_searchIn->changeFromRequests() | rpl::start_to_stream(
 			_changeSearchFromRequests,
 			_searchIn->lifetime());

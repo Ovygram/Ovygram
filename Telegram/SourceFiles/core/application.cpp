@@ -949,6 +949,14 @@ void Application::setCurrentProxy(
 }
 
 #ifdef OVYGRAM_ENABLED
+void Application::setPluginSessionProxy(bool files, std::optional<MTP::ProxyData> proxy) {
+	auto &settings = _private->settings.proxy();
+	if (settings.sessionProxy(files) == proxy) return;
+	settings.setSessionProxy(files, std::move(proxy));
+	const auto selected = settings.isEnabled() ? settings.selected() : MTP::ProxyData();
+	_proxyChanges.fire({ selected, selected });
+}
+
 void Application::setPluginProxy(std::optional<MTP::ProxyData> proxy) {
 	auto &my = _private->settings.proxy();
 	if (my.temporaryProxy() == proxy) {

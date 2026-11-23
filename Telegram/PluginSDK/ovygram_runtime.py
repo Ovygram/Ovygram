@@ -361,8 +361,13 @@ class Manager:
 
     def host_exited(self, reason):
         """The host process died or was stopped; on the main thread."""
-        for installation_id in self._loaded:
+        affected = set(self._loaded)
+        if self.loading is not None:
+            affected.add(self.loading)
+        for installation_id in sorted(affected):
             self.errors[installation_id] = reason
+            self.notify({"id": uuid.uuid4().hex, "method": "ui.close_plugin",
+                         "installation_id": installation_id})
         for owner in list(self.helpers.children):
             self.helpers.stop(owner)
         self._loaded.clear()
@@ -994,6 +999,7 @@ class Manager:
             "resume": self.resume, "settings": self.settings, "save_settings": self.save_settings,
             "settings_action": self.settings_action,
             "share_file": self.share_file,
+            "installation_plugin_id": lambda installation_id: self.records[installation_id]["plugin_id"],
             "client_reply": lambda request: self.forward("complete", None, request=request),
             "client_pending": lambda request_id, installation_id: bool(self.forward(
                 "is_pending", False, request_id=request_id, installation_id=installation_id)),

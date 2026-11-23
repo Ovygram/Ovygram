@@ -6,6 +6,9 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "dialogs/dialogs_row.h"
+#ifdef OVYGRAM_ENABLED
+#include "ovygram/chat_decorations.h"
+#endif
 
 #include "ui/chat/chat_theme.h" // CountAverageColor.
 #include "ui/color_contrast.h"
@@ -429,6 +432,11 @@ void Row::recountHeight(float64 narrowRatio, FilterId filterId) {
 			st.height,
 			st::defaultDialogRow.height,
 			narrowRatio);
+#ifdef OVYGRAM_ENABLED
+	if (const auto history = _id.history()) {
+		_height += Ovygram::ChatFooterHeight(history->peer.get());
+	}
+#endif
 }
 
 uint64 Row::sortKey(FilterId filterId) const {

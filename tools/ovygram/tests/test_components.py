@@ -116,6 +116,46 @@ class ComponentTests(unittest.TestCase):
         self.assertFalse(self.manager.helpers.children)
 
 
+class ProxyOfferTests(unittest.TestCase):
+    def setUp(self):
+        from ovygram_helpers import Helpers
+        self.manager = mock.Mock()
+        self.manager._loaded = {"instance"}
+        self.manager.records = {"instance": {"plugin_id": "demo"}}
+        self.manager.host.status.return_value = {"active": True, "network": True}
+        self.helpers = Helpers(self.manager)
+        process = mock.Mock()
+        process.poll.return_value = None
+        self.helpers.children["instance"] = process, None, mock.Mock()
+
+    def offer(self, operation, **kwargs):
+        return self.helpers.command("instance", operation, {
+            "port": 15678, "user": "example", "password": "test-password", **kwargs})
+
+    def test_independent_offers_and_expiration(self):
+        self.offer("offer")
+        old = self.helpers.offers["instance"]
+        self.offer("offer_http", routes=["mini_apps"])
+        browser = self.helpers.offers["instance:http"]
+        self.assertEqual(browser["routes"], ["mini_apps"])
+        self.assertEqual(browser["protocol"], "http")
+        self.offer("offer", routes=["files"])
+        self.assertNotEqual(self.helpers.offers["instance"]["token"], old["token"])
+        self.assertEqual(self.helpers.offers["instance:http"], browser)
+        self.helpers.stop("instance")
+        self.assertFalse(self.helpers.offers)
+
+    def test_wrong_scope_and_sandbox_are_rejected(self):
+        for operation, scopes in [("offer", ["mini_apps"]), ("offer_http", ["api"]),
+                                   ("offer_http", ["pages", "pages"]), ("offer", [])]:
+            with self.subTest(operation=operation, scopes=scopes), self.assertRaises(ValueError):
+                self.offer(operation, routes=scopes)
+        self.manager.host.status.return_value = {"active": True, "network": False}
+        with self.assertRaises(ValueError):
+            self.offer("offer_http")
+        self.assertFalse(self.helpers.offers)
+
+
 class ArchiveLimitsTests(unittest.TestCase):
     def test_archive_and_unpacked_limits_are_independent(self):
         import io

@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "info/media/info_media_provider.h"
+#include "ovygram/plugin_list_visibility.h"
 
 #include "apiwrap.h"
 #include "info/media/info_media_widget.h"
@@ -72,6 +73,18 @@ Provider::Provider(not_null<AbstractController*> controller)
 			}
 		}
 	}, _lifetime);
+
+#ifdef OVYGRAM_ENABLED
+	Ovygram::ListVisibility::Changes() | rpl::on_next([=](Ovygram::ListVisibility::Scope scope) {
+		if (scope.list != Ovygram::ListVisibility::List::Media || !_viewerLifetime
+			|| scope.account != _peer->session().uniqueId()
+			|| (scope.chat != _peer->id.value && (!_migrated || scope.chat != _migrated->id.value))) {
+			return;
+		}
+		refreshViewer();
+	}, _lifetime);
+#endif // OVYGRAM_ENABLED
+
 }
 
 Type Provider::type() {
@@ -263,10 +276,16 @@ void Provider::checkPreload(
 void Provider::refreshViewer() {
 	_viewerLifetime.destroy();
 	const auto idForViewer = sliceKey(_universalAroundId).universalId;
+#ifdef OVYGRAM_ENABLED
+	const auto allowance = Ovygram::ListVisibility::MediaAllowance(_peer)
+		+ (_migrated ? Ovygram::ListVisibility::MediaAllowance(_migrated) : 0);
+#else
+	constexpr auto allowance = 0;
+#endif // OVYGRAM_ENABLED
 	_controller->mediaSource(
 		idForViewer,
-		_idsLimit,
-		_idsLimit
+		_idsLimit + allowance,
+		_idsLimit + allowance
 	) | rpl::on_next([=](SparseIdsMergedSlice &&slice) {
 		if (!slice.fullCount()) {
 			// Don't display anything while full count is unknown.
@@ -293,7 +312,14 @@ std::vector<ListSection> Provider::fillSections(
 	auto section = ListSection(_type, sectionDelegate());
 	auto count = _slice.size();
 	for (auto i = count; i != 0;) {
-		auto universalId = GetUniversalId(_slice[--i]);
+		const auto universalId = GetUniversalId(_slice[--i]);
+#ifdef OVYGRAM_ENABLED
+		const auto id = computeFullId(universalId);
+		const auto peer = (id.peer == _peer->id) ? _peer.get() : _migrated;
+		if (peer && Ovygram::ListVisibility::Hidden(Ovygram::ListVisibility::List::Media, peer, id.msg.bare)) {
+			continue;
+		}
+#endif // OVYGRAM_ENABLED
 		if (auto layout = getLayout(universalId, delegate)) {
 			if (!section.addItem(layout)) {
 				section.finishSection();

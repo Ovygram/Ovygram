@@ -6,6 +6,11 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "boxes/send_files_box.h"
+#ifdef OVYGRAM_ENABLED
+#include "ovygram/plugin_elements.h"
+#include <QtCore/QJsonArray>
+#include <QtCore/QFileInfo>
+#endif
 
 #include "lang/lang_keys.h"
 #include "storage/localimageloader.h"
@@ -927,6 +932,52 @@ void SendFilesBox::enqueueNextPrepare() {
 void SendFilesBox::prepare() {
 	initSendWay();
 	setupCaption();
+#ifdef OVYGRAM_ENABLED
+	Ovygram::RegisterEditor(_caption.data(), u"album"_q, [this] { return _toPeer.get(); }, [this] {
+		auto files = QJsonArray();
+		applyBlockChanges();
+		for (const auto &file : _list.files) {
+			files.append(QJsonObject{
+				{ u"name"_q, file.displayName.isEmpty() ? QFileInfo(file.path).fileName() : file.displayName },
+				{ u"bytes"_q, QString::number(file.size) },
+				{ u"caption"_q, file.caption.text }, { u"spoiler"_q, file.spoiler },
+			});
+		}
+		return QJsonObject{ { u"files"_q, files }, { u"preparing"_q, bool(_preparing) } };
+	}, [this](const QJsonObject &command) {
+		if (_preparing || !_list.filesToProcess.empty() || _confirmed) return false;
+		const auto op = command.value(u"op"_q).toString();
+		const auto count = int(_list.files.size());
+		if (op == u"attachments"_q) {
+			openDialogToAddFileToAlbum();
+			return true;
+		} else if (op == u"album_order"_q) {
+			const auto order = command.value(u"order"_q).toArray();
+			if (order.size() != count || !count) return false;
+			auto used = std::vector<bool>(count, false);
+			for (const auto value : order) {
+				const auto index = value.toInt(-1);
+				if (index < 0 || index >= count || used[index]) return false;
+				used[index] = true;
+			}
+			refreshAllAfterChanges(0, [&] {
+				auto files = std::vector<Ui::PreparedFile>();
+				files.reserve(count);
+				for (const auto value : order) files.push_back(std::move(_list.files[value.toInt()]));
+				_list.files = std::move(files);
+			});
+			return true;
+		} else if (op == u"album_caption"_q) {
+			const auto index = command.value(u"index"_q).toInt(-1);
+			const auto text = command.value(u"caption"_q).toString();
+			if (index < 0 || index >= count || SkipCaption(_list.files[index], _sendWay.current())
+				|| !validateLength(text)) return false;
+			refreshAllAfterChanges(index, [&] { _list.files[index].caption = { text, {} }; });
+			return true;
+		}
+		return false;
+	});
+#endif
 	setupSendWayControls();
 	preparePreview();
 	initPreview();

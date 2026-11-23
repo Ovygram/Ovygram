@@ -32,6 +32,7 @@ class Helpers:
 
     def stop(self, owner):
         removed = self.offers.pop(owner, None)
+        browser = self.offers.pop(owner + ":http", None)
         child = self.children.pop(owner, None)
         try:
             if child:
@@ -45,7 +46,7 @@ class Helpers:
                 finally:
                     directory.cleanup()
         finally:
-            if removed:
+            if removed or browser:
                 self.manager.notify({"id": uuid.uuid4().hex, "method": "proxy.refresh"})
 
     def poll(self):
@@ -133,16 +134,24 @@ class Helpers:
             return owner in self.children
         elif operation == "network_available":
             return self.manager.host.status()["network"]
-        elif operation == "offer":
+        elif operation in ("offer", "offer_http"):
             if owner not in self.children or not self.manager.host.status()["network"]:
                 raise ValueError("Сетевой компонент недоступен.")
             port, user, password = (params.get(key) for key in ("port", "user", "password"))
             if type(port) is not int or not 1024 <= port <= 65535 or not all(
                     isinstance(v, str) and v.isascii() and v.isprintable() and 1 <= len(v) <= 255
                     for v in (user, password)):
-                raise ValueError("Укажите локальный порт и данные SOCKS5.")
-            self.offers[owner] = dict(token=uuid.uuid4().hex, port=port, user=user, password=password,
-                                      plugin_id=self.manager.records[owner]["plugin_id"], owner=owner)
+                raise ValueError("Укажите локальный порт и учётные данные прокси.")
+            protocol = "http" if operation == "offer_http" else "socks5"
+            supported = ("pages", "mini_apps") if protocol == "http" else ("default", "api", "files")
+            scopes = params.get("routes", list(supported))
+            if (not isinstance(scopes, list) or not 0 < len(scopes) <= len(supported)
+                    or any(scope not in supported for scope in scopes) or len(set(scopes)) != len(scopes)):
+                raise ValueError("Недопустимые области маршрутизации для выбранного протокола.")
+            key = owner + ":http" if protocol == "http" else owner
+            self.offers[key] = dict(token=uuid.uuid4().hex, port=port, user=user, password=password,
+                                    protocol=protocol, routes=scopes,
+                                    plugin_id=self.manager.records[owner]["plugin_id"], owner=owner)
             self.manager.notify({"id": uuid.uuid4().hex, "method": "proxy.refresh"})
         else:
             raise ValueError("Неизвестная операция компонента.")

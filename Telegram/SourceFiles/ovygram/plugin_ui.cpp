@@ -1,4 +1,6 @@
 #include "ovygram/plugin_ui.h"
+#include "window/notifications_manager.h"
+#include <QtWidgets/QBoxLayout>
 #include "ovygram/protected_ui.h"
 
 #include "ovygram/chat_bars.h"
@@ -7,10 +9,13 @@
 #include "ovygram/message_decorations.h"
 #include "ovygram/plugin_elements.h"
 #include "ovygram/plugin_menus.h"
+#include "ovygram/plugin_actions.h"
 #include "ovygram/plugin_panel_buttons.h"
 #include "ovygram/plugin_native.h"
 #include "ovygram/plugin_paint.h"
 #include "ovygram/plugin_section.h"
+#include "ovygram/plugin_search.h"
+#include "ovygram/plugin_list_visibility.h"
 #include "ovygram/plugin_widgets.h"
 
 #include "base/algorithm.h"
@@ -332,6 +337,7 @@ struct PluginUi::Object {
 	QString installationId;
 	QString objectId;
 	QPointer<Ui::BoxContent> box;
+	QPointer<Ui::RpWidget> inserted;
 	std::unique_ptr<Ui::SeparatePanel> panel;
 	base::unique_qptr<Ui::RpWidget> bar;
 	base::unique_qptr<Ui::RpWidget> overlay;
@@ -351,14 +357,21 @@ PluginUi::PluginUi(EventSender send)
 	Elements::SetEventSender(_send);
 	Widgets::SetEventSender(_send);
 	Menus::SetEventSender(_send);
+	Actions::SetEventSender(_send);
 	PanelButtons::SetEventSender(_send);
+	Search::SetEventSender(_send);
 	Native::SetEventSender(_send);
 	// A canvas over a widget that contains a protected surface would cover
 	// it: such overlays stay hidden while the surface exists. A dialog of a
 	// plugin is a layer above everything, so it is closed.
 	ProtectedSurfacesChanged() | rpl::on_next([=] {
+		PanelButtons::UpdateProtectedSurfaces();
 		auto boxes = std::vector<QPointer<Ui::BoxContent>>();
 		for (const auto &[id, object] : _objects) {
+			if (const auto row = object->inserted.data()) {
+				row->setVisible(!ProtectedFromPlugins(row->parentWidget())
+					&& !CouldCoverProtected(row, u"geometry"_q));
+			}
 			if (const auto overlay = object->overlay.get()) {
 				overlay->setVisible(
 					!ProtectedFromPlugins(overlay->parentWidget()));
@@ -388,7 +401,9 @@ PluginUi::~PluginUi() {
 		Elements::SetEventSender(nullptr);
 		Widgets::SetEventSender(nullptr);
 		Menus::SetEventSender(nullptr);
+		Actions::SetEventSender(nullptr);
 		PanelButtons::SetEventSender(nullptr);
+		Search::SetEventSender(nullptr);
 		Native::SetEventSender(nullptr);
 	}
 	// Surfaces report their destruction to destroyed(), which erases from
@@ -396,6 +411,7 @@ PluginUi::~PluginUi() {
 	auto objects = base::take(_objects);
 	for (const auto &[id, object] : objects) {
 		object->silent = true;
+		delete object->inserted.data();
 		if (object->section) {
 			_sectionClosed.fire_copy(id);
 		}
@@ -418,6 +434,12 @@ PluginUi::~PluginUi() {
 
 void PluginUi::handle(const QJsonObject &command) {
 	const auto method = command.value(u"method"_q).toString();
+	if (method == u"ui.close"_q || method == u"ui.update"_q) {
+		const auto i = _objects.find(command.value(u"object_id"_q).toString());
+		if (i != end(_objects) && i->second->installationId != command.value(u"installation_id"_q).toString()) {
+			throw std::runtime_error("Surface belongs to another installation.");
+		}
+	}
 	if (method == u"ui.show"_q) {
 		show(command);
 	} else if (method == u"ui.update"_q) {
@@ -429,11 +451,23 @@ void PluginUi::handle(const QJsonObject &command) {
 		Elements::RemovePlugin(command.value(u"installation_id"_q).toString());
 		Widgets::RemovePlugin(command.value(u"installation_id"_q).toString());
 		Decorations::RemovePlugin(command.value(u"installation_id"_q).toString());
+		Search::RemovePlugin(command.value(u"installation_id"_q).toString());
+		ListVisibility::RemovePlugin(command.value(u"installation_id"_q).toString());
 		ChatListFilter::RemovePlugin(command.value(u"installation_id"_q).toString());
 		MessageDecorations::RemovePlugin(command.value(u"installation_id"_q).toString());
+		Actions::RemovePlugin(command.value(u"installation_id"_q).toString());
 		Menus::RemovePlugin(command.value(u"installation_id"_q).toString());
 		PanelButtons::RemovePlugin(command.value(u"installation_id"_q).toString());
+		Window::Notifications::RemovePluginNotificationRules(command.value(u"installation_id"_q).toString());
 		Native::RemovePlugin(command.value(u"installation_id"_q).toString());
+	} else if (method.startsWith(u"ui.list_visibility."_q)) {
+		ListVisibility::Handle(command);
+	} else if (method.startsWith(u"ui.search."_q)) {
+		Search::Handle(command);
+	} else if (method == u"ui.action.remove"_q) {
+		Actions::Remove(command.value(u"installation_id"_q).toString(), command.value(u"rule_id"_q).toString());
+	} else if (method == u"ui.notification.add"_q || method == u"ui.notification.remove"_q) {
+		Window::Notifications::SetPluginNotificationRule(command);
 	} else if (method.startsWith(u"ui.menu."_q)) {
 		Menus::Handle(command);
 	} else if (method.startsWith(u"ui.panel."_q)) {
@@ -541,6 +575,47 @@ void PluginUi::show(const QJsonObject &command) {
 		}, panel->lifetime());
 		_objects.emplace(objectId, std::move(owned));
 		panel->showAndActivate();
+	} else if (kind == u"insert"_q) {
+		const auto target = Widgets::Resolve(command.value(u"target"_q));
+		const auto position = command.value(u"position"_q).toString();
+		const auto inside = (position == u"inside"_q);
+		if (Core::App().passcodeLocked() || !target || (!inside && position != u"before"_q && position != u"after"_q)) {
+			throw std::runtime_error("Invalid insertion target or position.");
+		}
+		const auto parent = inside ? target : target->parentWidget();
+		const auto layout = dynamic_cast<Ui::VerticalLayout*>(parent);
+		const auto box = parent ? qobject_cast<QBoxLayout*>(parent->layout()) : nullptr;
+		if ((!layout && !box) || ProtectedFromPlugins(parent)
+			|| CouldCoverProtected(parent, u"geometry"_q) || InstallationUiActive()) {
+			throw std::runtime_error("Target does not accept insertion.");
+		}
+		const auto ownerRows = std::count_if(_objects.begin(), _objects.end(), [&](const auto &entry) {
+			return entry.second->inserted && entry.second->installationId == object->installationId;
+		});
+		if (ownerRows >= 128) throw std::runtime_error("Too many mounted rows for this installation.");
+		const auto count = layout ? layout->count() : box->count();
+		auto index = inside ? count : 0;
+		if (!inside) {
+			if (layout) {
+				while (index < count && layout->widgetAt(index).get() != target) ++index;
+			} else {
+				index = box->indexOf(target);
+			}
+			if (index < 0 || index == count) throw std::runtime_error("Target is not a layout row.");
+			if (position == u"after"_q) ++index;
+		}
+		auto content = build(*object, parent, tree, 0);
+		const auto row = content.data();
+		row->setProperty("_ovygram_inserted", true);
+		if (layout) {
+			layout->insert(index, std::move(content));
+		} else {
+			box->insertWidget(index, content.release());
+		}
+		object->inserted = row;
+		connect(row, &QObject::destroyed, this, [=] { destroyed(objectId); });
+		_objects.emplace(objectId, std::move(owned));
+		row->show();
 	} else if (kind == u"overlay"_q) {
 		const auto target = Widgets::Resolve(command.value(u"target"_q));
 		if (!target) {
@@ -707,7 +782,7 @@ object_ptr<Ui::RpWidget> PluginUi::build(
 	// A dialog belongs to the window, not to us, and can outlive us.
 	const auto guard = QPointer<PluginUi>(this);
 	const auto sender = [=](const QString &kind, QJsonValue value) {
-		if (!guard || _updating) {
+		if (!guard || _updating || InstallationUiActive() || Core::App().passcodeLocked()) {
 			// Changes made by ui.update aren't reported back, so a plugin
 			// reacting to them can't loop on its own updates.
 			return;
@@ -818,6 +893,8 @@ object_ptr<Ui::RpWidget> PluginUi::build(
 	if (id.isEmpty() || object.nodes.contains(id)) {
 		throw std::runtime_error("Invalid or repeated node ID.");
 	}
+	if (node.contains(u"enabled"_q)) result->setEnabled(node.value(u"enabled"_q).toBool());
+	if (node.contains(u"tooltip"_q)) result->setToolTip(node.value(u"tooltip"_q).toString());
 	object.nodes.emplace(id, result.data());
 	return result;
 }
@@ -848,6 +925,8 @@ void PluginUi::update(const QJsonObject &command) {
 			*value->second = text;
 		}
 	}
+	if (props.contains(u"enabled"_q)) widget->setEnabled(props.value(u"enabled"_q).toBool());
+	if (props.contains(u"tooltip"_q)) widget->setToolTip(props.value(u"tooltip"_q).toString());
 	if (props.contains(u"value"_q)) {
 		if (const auto box = dynamic_cast<Ui::Checkbox*>(widget)) {
 			box->setChecked(
@@ -886,10 +965,12 @@ void PluginUi::close(const QString &objectId, bool notify) {
 		send(*object, QString(), u"closed"_q);
 	}
 	// Deleted after erase(): their destroyed() handler looks up _objects.
+	auto inserted = object->inserted;
 	auto bar = std::move(object->bar);
 	auto overlay = std::move(object->overlay);
 	auto section = std::move(object->section);
 	_objects.erase(i);
+	delete inserted.data();
 	overlay = nullptr;
 	if (section) {
 		// Leaves the window history and the screen.

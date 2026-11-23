@@ -25,6 +25,7 @@ struct Decoration {
 	QString accountId;
 	QString chatId;
 	MsgId messageId = 0;
+	int footerHeight = 0;
 	QColor background;
 	std::vector<PaintOp> ops;
 };
@@ -45,6 +46,7 @@ void Repaint(const Decoration &decoration) {
 			PeerId(decoration.chatId.toULongLong()),
 			decoration.messageId);
 		if (item) {
+			if (decoration.footerHeight) session->data().requestItemResize(item);
 			session->data().requestItemRepaint(item);
 		}
 	}
@@ -52,7 +54,22 @@ void Repaint(const Decoration &decoration) {
 
 } // namespace
 
-void PaintMessage(QPainter &p, not_null<HistoryItem*> item, QRect bubble) {
+int MessageFooterHeight(not_null<HistoryItem*> item) {
+	const auto &rules = Decorations();
+	if (rules.empty()) return 0;
+	const auto peer = item->history()->peer.get();
+	const auto accountId = QString::number(peer->session().uniqueId());
+	const auto chatId = QString::number(peer->id.value);
+	auto height = 0;
+	for (const auto &[id, decoration] : rules) {
+		if (decoration.accountId == accountId && decoration.messageId == item->id && decoration.chatId == chatId) {
+			height += decoration.footerHeight;
+		}
+	}
+	return height;
+}
+
+void PaintMessage(QPainter &p, not_null<HistoryItem*> item, QRect bubble, int footerTop) {
 	const auto &decorations = Decorations();
 	if (decorations.empty()) {
 		return;
@@ -60,6 +77,7 @@ void PaintMessage(QPainter &p, not_null<HistoryItem*> item, QRect bubble) {
 	const auto accountId = QString::number(item->history()->session().uniqueId());
 	const auto chatId = QString::number(item->history()->peer->id.value);
 	auto painted = false;
+	auto nextFooter = footerTop;
 	for (const auto &[id, decoration] : decorations) {
 		if (decoration.messageId != item->id
 			|| decoration.chatId != chatId
@@ -71,12 +89,20 @@ void PaintMessage(QPainter &p, not_null<HistoryItem*> item, QRect bubble) {
 			p.setRenderHint(QPainter::Antialiasing);
 			painted = true;
 		}
+		auto area = bubble;
+		if (decoration.footerHeight) {
+			area = QRect(area.x(), nextFooter, area.width(), decoration.footerHeight);
+			nextFooter += decoration.footerHeight;
+		}
+		p.save();
+		if (decoration.footerHeight) p.setClipRect(area, Qt::IntersectClip);
 		if (decoration.background.isValid()) {
 			p.setPen(Qt::NoPen);
 			p.setBrush(decoration.background);
-			p.drawRoundedRect(bubble, 8, 8);
+			p.drawRoundedRect(area, 8, 8);
 		}
-		PaintOps(p, decoration.ops, bubble);
+		PaintOps(p, decoration.ops, area);
+		p.restore();
 	}
 	if (painted) {
 		p.restore();
@@ -92,18 +118,31 @@ void Handle(const QJsonObject &command) {
 		throw std::runtime_error("A decoration needs an ID.");
 	}
 	auto &decorations = Decorations();
+	const auto owner = command.value(u"installation_id"_q).toString();
+	const auto existing = decorations.find(id);
+	if (owner.isEmpty() || (existing != end(decorations) && existing->second.installationId != owner)) {
+		throw std::runtime_error("Decoration owner mismatch.");
+	}
 	if (method == u"ui.message_decoration.set"_q) {
 		auto decoration = Decoration{
 			.installationId = command.value(u"installation_id"_q).toString(),
 			.accountId = command.value(u"account_id"_q).toString(),
 			.chatId = command.value(u"chat_id"_q).toString(),
 			.messageId = MsgId(command.value(u"message_id"_q).toInteger()),
+			.footerHeight = command.value(u"footer_height"_q).toInt(),
 			.ops = ParsePaintOps(command.value(u"commands"_q).toArray()),
 		};
 		if (decoration.accountId.isEmpty()
 			|| decoration.chatId.isEmpty()
 			|| !decoration.messageId) {
 			throw std::runtime_error("A message decoration needs a message.");
+		}
+		if (decoration.footerHeight < 0 || decoration.footerHeight > 256
+			|| (decoration.footerHeight && decoration.chatId == u"*"_q)) {
+			throw std::runtime_error("A footer requires one target and height 1..256.");
+		}
+		if (decoration.footerHeight && existing == end(decorations) && decorations.size() >= 4096) {
+			throw std::runtime_error("Too many decorations.");
 		}
 		const auto background = command.value(u"background"_q);
 		if (!background.isNull() && !background.isUndefined()) {

@@ -297,6 +297,9 @@ void Controller::createWebview(const Webview::StorageId &storageId) {
 			.opaqueBg = st::windowBg->c,
 			.storageId = storageId,
 			.safe = true,
+#ifdef OVYGRAM_WEBVIEW_ROUTES
+			.proxyScope = Webview::ProxyScope::Page,
+#endif
 		});
 	const auto raw = _webview.get();
 

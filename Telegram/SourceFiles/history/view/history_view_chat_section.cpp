@@ -5,6 +5,7 @@ the official desktop application for the Telegram messaging service.
 For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
+#include "api/api_plugins.h"
 #include "history/view/history_view_chat_section.h"
 
 #include "history/admin_log/history_admin_log_section.h"
@@ -1847,6 +1848,13 @@ void ChatWidget::setupComposeControls() {
 		}
 	}, lifetime());
 
+#ifdef OVYGRAM_ENABLED
+	_composeControls->setPluginSelectedMessages([this] {
+		auto result = MessageIdsList();
+		if (_inner) for (const auto &item : _inner->getSelectedItems()) result.push_back(item.msgId);
+		return result;
+	});
+#endif
 	_composeControls->setPasteToastParent(_scroll.get());
 	_composeControls->setMimeDataHook([=](
 			not_null<const QMimeData*> data,
@@ -5338,6 +5346,11 @@ bool ChatWidget::listIsLessInOrder(
 }
 
 void ChatWidget::listSelectionChanged(SelectedItems &&items) {
+	if (const auto client = Core::App().pluginClient(); client && client->observes(Api::PluginEventBit::Selection)) {
+		auto ids = MessageIdsList();
+		for (const auto &item : items) ids.push_back(item.msgId);
+		Api::PluginSelectionChanged(*_history, this, ids);
+	}
 	HistoryView::TopBarWidget::SelectedState state;
 	state.count = items.size();
 	for (const auto &item : items) {

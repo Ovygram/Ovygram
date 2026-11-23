@@ -146,6 +146,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #ifdef OVYGRAM_ENABLED
 #include "ovygram/plugin_commands.h"
 #include "ovygram/plugin_elements.h"
+#include <QtCore/QJsonArray>
 #include "ovygram/plugin_panel_buttons.h"
 #endif // OVYGRAM_ENABLED
 
@@ -2893,6 +2894,34 @@ void ComposeControls::init() {
 #ifdef OVYGRAM_ENABLED
 	Ovygram::PanelButtons::RegisterHost(_wrap.get(), u"compose"_q, [this] {
 		updateControlsGeometry(_wrap->size());
+	});
+	Ovygram::RegisterEditor(_field.get(), u"message"_q, [this] {
+		return _history ? _history->peer.get() : nullptr;
+	}, [this] {
+		auto selected = QJsonArray();
+		if (_pluginSelectedMessages) for (const auto &id : _pluginSelectedMessages()) {
+			selected.append(QJsonObject{ { u"chat_id"_q, QString::number(id.peer.value) },
+				{ u"id"_q, id.msg.bare } });
+		}
+		return QJsonObject{ { u"topic_id"_q, _topicRootId.bare },
+			{ u"monoforum_peer"_q, QString::number(_monoforumPeerId.value) },
+			{ u"reply_id"_q, draftReplyingToMessage().messageId.msg.bare },
+			{ u"edit_id"_q, _header->editMsgId().msg.bare }, { u"selected"_q, selected } };
+	}, [this](const QJsonObject &command) {
+		const auto op = command.value(u"op"_q).toString();
+		if (op == u"attachments"_q && _attachToggle && _attachToggle->isVisible()) {
+			_attachRequests.fire({}); return true;
+		}
+		if (op == u"clear_reply"_q) { cancelReplyMessage(); return true; }
+		const auto item = session().data().message(_history->peer, MsgId(command.value(u"message_id"_q).toInteger()));
+		if (item && _topicRootId && item->id != _topicRootId
+			&& item->topicRootId() != _topicRootId) return false;
+		if (!item) return false;
+		if (op == u"reply"_q) { replyToMessage({ .messageId = item->fullId() }); return true; }
+		if (op == u"edit"_q && item->allowsEdit(base::unixtime::now())) {
+			editMessage(item->fullId(), {}); return true;
+		}
+		return false;
 	});
 	Ovygram::RegisterElements({
 		{ "compose.attach", _attachToggle },

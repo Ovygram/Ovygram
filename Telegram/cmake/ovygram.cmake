@@ -37,6 +37,8 @@ target_sources(Telegram PRIVATE
     SourceFiles/ovygram/plugin_updates.cpp
     SourceFiles/ovygram/plugin_updates.h
     SourceFiles/ovygram/plugin_trust_badge.h
+    SourceFiles/ovygram/plugin_actions.cpp
+    SourceFiles/ovygram/plugin_actions.h
     SourceFiles/ovygram/plugin_menus.cpp
     SourceFiles/ovygram/plugin_menus.h
     SourceFiles/ovygram/plugin_panel_buttons.cpp
@@ -46,7 +48,13 @@ target_sources(Telegram PRIVATE
     SourceFiles/ovygram/plugin_paint.cpp
     SourceFiles/ovygram/plugin_paint.h
     SourceFiles/ovygram/plugin_section.cpp
+    SourceFiles/ovygram/plugin_list_visibility.cpp
+    SourceFiles/ovygram/plugin_list_visibility.h
+    SourceFiles/ovygram/plugin_search.cpp
+    SourceFiles/ovygram/plugin_search.h
     SourceFiles/ovygram/plugin_section.h
+    SourceFiles/ovygram/plugin_media.cpp
+    SourceFiles/ovygram/plugin_media.h
     SourceFiles/ovygram/plugin_ui.cpp
     SourceFiles/ovygram/plugin_widgets.cpp
     SourceFiles/ovygram/plugin_widgets.h

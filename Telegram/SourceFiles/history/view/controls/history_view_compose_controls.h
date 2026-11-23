@@ -256,6 +256,9 @@ public:
 		Ui::InputField::MimeAction action)>;
 	void setMimeDataHook(MimeDataHook hook);
 	void setPasteToastParent(not_null<QWidget*> parent);
+#ifdef OVYGRAM_ENABLED
+	void setPluginSelectedMessages(Fn<MessageIdsList()> get) { _pluginSelectedMessages = std::move(get); }
+#endif
 	bool confirmMediaEdit(Ui::PreparedList &list);
 
 	bool pushTabbedSelectorToThirdSection(
@@ -576,6 +579,9 @@ private:
 	Ui::IconButton *_commentsShown = nullptr;
 	rpl::variable<bool> _commentsShownHidden;
 	Ui::RpWidget *_commentsShownNewDot = nullptr;
+	#ifdef OVYGRAM_ENABLED
+	Fn<MessageIdsList()> _pluginSelectedMessages;
+#endif
 	Ui::IconButton *_attachToggle = nullptr;
 	Ui::AbstractButton *_starsReaction = nullptr;
 	std::vector<std::unique_ptr<Ui::ReactionFlyAnimation>> _starSendEffects;

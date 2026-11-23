@@ -5,7 +5,12 @@ the official desktop application for the Telegram messaging service.
 For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
+#include "api/api_plugins.h"
 #include "history/history_widget.h"
+#ifdef OVYGRAM_ENABLED
+#include "ovygram/plugin_elements.h"
+#include <QtCore/QJsonArray>
+#endif
 
 #include "api/api_compose_with_ai.h"
 #include "api/api_editing.h"
@@ -380,6 +385,28 @@ HistoryWidget::HistoryWidget(
 		return _list && _list->itemTop(view) >= 0;
 	}))
 , _topShadow(this) {
+#ifdef OVYGRAM_ENABLED
+	Ovygram::RegisterEditor(_field.data(), u"message"_q, [this] { return _peer; }, [this] {
+		auto selected = QJsonArray();
+		for (const auto &id : getSelectedItems()) {
+			selected.append(QJsonObject{ { u"chat_id"_q, QString::number(id.peer.value) },
+				{ u"id"_q, id.msg.bare } });
+		}
+		return QJsonObject{ { u"reply_id"_q, _replyTo.messageId.msg.bare },
+			{ u"edit_id"_q, _editMsgId.bare }, { u"selected"_q, selected } };
+	}, [this](const QJsonObject &command) {
+		const auto op = command.value(u"op"_q).toString();
+		if (op == u"attachments"_q) { chooseAttach(); return true; }
+		if (op == u"clear_reply"_q) { cancelReply(); return true; }
+		const auto item = session().data().message(_peer, MsgId(command.value(u"message_id"_q).toInteger()));
+		if (!item) return false;
+		if (op == u"reply"_q) { replyToMessage(item); return true; }
+		if (op == u"edit"_q && item->allowsEdit(base::unixtime::now())) {
+			editMessage(item, {}); return true;
+		}
+		return false;
+	});
+#endif
 	setAcceptDrops(true);
 	setVisualTabOrder(true);
 
@@ -11288,6 +11315,12 @@ void HistoryWidget::updateTopBarSelection(bool keepFocus) {
 	}
 
 	auto selectedState = _list->getSelectionState();
+	if (_history) {
+		const auto client = Core::App().pluginClient();
+		if (client && client->observes(Api::PluginEventBit::Selection)) {
+			Api::PluginSelectionChanged(*_history, this, getSelectedItems());
+		}
+	}
 	_nonEmptySelection = (selectedState.count > 0)
 		|| selectedState.textSelected;
 	_topBar->showSelected(selectedState);

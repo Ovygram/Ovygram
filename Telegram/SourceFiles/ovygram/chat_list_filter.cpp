@@ -85,6 +85,11 @@ void Handle(const QJsonObject &command) {
 		throw std::runtime_error("A chat list rule needs an ID.");
 	}
 	auto &rules = Rules();
+	const auto owner = command.value(u"installation_id"_q).toString();
+	const auto previous = rules.find(ruleId);
+	if (owner.isEmpty() || (previous != rules.end() && previous->second.installationId != owner)) {
+		throw std::runtime_error("Invalid chat list rule owner.");
+	}
 	if (method == u"ui.chat_list.hide"_q) {
 		auto rule = Rule{
 			.installationId = command.value(u"installation_id"_q).toString(),

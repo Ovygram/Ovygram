@@ -9,7 +9,7 @@ __release__ = False
 __author__ = "Ovygram"
 __description__ = "Ctrl+Shift+I показывает дерево виджетов окна и подсвечивает верхнюю панель чата."
 __platform__ = "desktop"
-__desktop_sdk__ = 2
+__desktop_sdk__ = 4
 __requirements__ = []
 
 
@@ -28,7 +28,7 @@ def lines(node, depth=0, limit=200, out=None):
     if len(out) >= limit or not node.get("visible"):
         return out
     label = node["cls"]
-    for key in ("element", "accessible", "name"):
+    for key in ("element", "accessible", "name", "positions"):
         if node.get(key):
             label += f"  [{key}: {node[key]}]"
     out.append("  " * depth + label)
@@ -46,10 +46,11 @@ class WidgetInspectorPlugin(BasePlugin):
         self.run_async(self.show_tree())
 
     async def show_tree(self):
+        target = await ui.widget_at_cursor()
         tree = await ui.widget_tree(depth=12)
         if tree is None:
             return
-        text = "\n".join(lines(tree))
+        text = ("Под курсором\n" + "\n".join(lines(target)) + "\n\n" if target else "") + "\n".join(lines(tree))
         top_bar = find(tree, "HistoryView::TopBarWidget")
 
         def show():

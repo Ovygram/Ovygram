@@ -603,6 +603,7 @@ public:
 		MsgId topicRootId;
 		PeerId monoforumPeerId;
 		bool showDrawButton = false;
+		bool forceInternalViewer = false;
 	};
 	void openPhoto(
 		not_null<PhotoData*> photo,

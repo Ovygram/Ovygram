@@ -1,0 +1,45 @@
+from base_plugin import BasePlugin
+from desktop import search, ui
+
+__id__ = "search_links"
+__name__ = "Поиск сообщений с двумя ссылками"
+__version__ = "1.0.0"
+__release__ = False
+__author__ = "Ovygram"
+__description__ = "Фильтр штатной выдачи сообщений для активного окна и чата."
+__platform__ = "desktop"
+__desktop_sdk__ = 4
+__requirements__ = []
+
+
+class SearchLinksPlugin(BasePlugin):
+    def on_plugin_load(self):
+        self.active = {}
+        ui.add_panel_button("search.actions", "2↗", self.toggle,
+                            tooltip="Только сообщения с двумя ссылками")
+
+    def toggle(self, panel):
+        key = (panel.account_id, panel.chat.id, panel.handle)
+        if key in self.active:
+            self.close_filter(key)
+            return
+        rule = search.add_filter(panel.handle, panel.account_id, lambda row: row.links >= 2,
+                                 chat=panel.chat, media="url")
+        content = ui.Row(ui.Button("Две ссылки ×", lambda: self.close_filter(key)),
+                         ui.Button("Искать дальше", rule.more))
+        bar = ui.Insert(panel.handle, content, on_close=lambda: self.closed(key, rule))
+        self.active[key] = (rule, bar)
+        bar.show()
+
+    def close_filter(self, key):
+        pair = self.active.pop(key, None)
+        if pair:
+            rule, bar = pair
+            rule.remove()
+            bar.close()
+
+    def closed(self, key, rule):
+        current = self.active.get(key)
+        if current and current[0] is rule:
+            del self.active[key]
+            rule.remove()

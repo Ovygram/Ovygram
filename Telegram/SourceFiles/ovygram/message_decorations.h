@@ -10,7 +10,8 @@ namespace Ovygram {
 
 // Called when HistoryView::Message::draw() finishes. Paints plugin
 // decorations of this message over its bubble.
-void PaintMessage(QPainter &p, not_null<HistoryItem*> item, QRect bubble);
+[[nodiscard]] int MessageFooterHeight(not_null<HistoryItem*> item);
+void PaintMessage(QPainter &p, not_null<HistoryItem*> item, QRect bubble, int footerTop);
 
 namespace MessageDecorations {
 

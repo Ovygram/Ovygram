@@ -5,6 +5,7 @@ the official desktop application for the Telegram messaging service.
 For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
+#include "api/api_plugins.h"
 #include "data/data_download_manager.h"
 
 #include "data/data_session.h"
@@ -274,6 +275,7 @@ void DownloadManager::addLoading(DownloadObject object) {
 	});
 	_loading.emplace(item);
 	_loadingDocuments.emplace(object.document);
+	Api::PluginDownloadEvent(item, false, size);
 	_loadingProgress = DownloadProgress{
 		.ready = _loadingProgress.current().ready,
 		.total = _loadingProgress.current().total + size,
@@ -309,6 +311,7 @@ void DownloadManager::addLoadingExternal(
 		.externalCancel = std::move(cancel),
 		.total = total,
 	});
+	Api::PluginDownloadEvent(item, false, total);
 	_loading.emplace(item);
 	_loadingProgress = DownloadProgress{
 		.ready = _loadingProgress.current().ready,
@@ -497,6 +500,7 @@ void DownloadManager::addLoaded(
 		.object = std::make_unique<DownloadObject>(object),
 	});
 	_loaded.emplace(item);
+	Api::PluginDownloadEvent(item, true, size);
 	_loadedAdded.fire(&data.downloaded.back());
 
 	writePostponed(&item->history()->session());

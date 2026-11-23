@@ -2243,6 +2243,9 @@ bool Panel::createWebview(const Webview::ThemeParams &params) {
 			.shellMessageToken = _externalShell
 				? _externalShellToken
 				: QString(),
+#ifdef OVYGRAM_WEBVIEW_ROUTES
+			.proxyScope = Webview::ProxyScope::MiniApp,
+#endif
 		});
 	const auto raw = &_webview->window;
 

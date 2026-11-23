@@ -73,7 +73,8 @@ void GetOpenPath(
 	const QString &caption,
 	const QString &filter,
 	Fn<void(OpenResult &&result)> callback,
-	Fn<void()> failed = Fn<void()>());
+	Fn<void()> failed = Fn<void()>(),
+	Fn<bool()> beforeOpen = Fn<bool()>());
 void GetOpenPaths(
 	QPointer<QWidget> parent,
 	const QString &caption,

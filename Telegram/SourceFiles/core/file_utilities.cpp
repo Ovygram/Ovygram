@@ -271,8 +271,15 @@ void GetOpenPath(
 		const QString &caption,
 		const QString &filter,
 		Fn<void(OpenResult &&result)> callback,
-		Fn<void()> failed) {
+		Fn<void()> failed,
+		Fn<bool()> beforeOpen) {
 	InvokeQueued(QCoreApplication::instance(), [=] {
+		if (beforeOpen && !beforeOpen()) {
+			if (failed) {
+				failed();
+			}
+			return;
+		}
 		auto files = QStringList();
 		auto remoteContent = QByteArray();
 		Ui::PreventDelayedActivation();

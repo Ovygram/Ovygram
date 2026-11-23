@@ -108,7 +108,8 @@ Manager::QueuedNotification::QueuedNotification(NotificationFields &&fields)
 , item((fields.forwardedCount < 2) ? fields.item.get() : nullptr)
 , forwardedCount(fields.forwardedCount)
 , fromScheduled(reaction.empty() && (fields.item->out() || peer->isSelf())
-	&& fields.item->isFromScheduled()) {
+	&& fields.item->isFromScheduled())
+, ordinaryMessage(!fields.reactionFrom && fields.pollVoteOption.isEmpty() && !fields.forwardedCount) {
 }
 
 QPixmap Manager::hiddenUserpicPlaceholder() const {
@@ -259,6 +260,7 @@ void Manager::showNextFromQueue() {
 			queued.reaction,
 			queued.forwardedCount,
 			queued.fromScheduled,
+			queued.ordinaryMessage,
 			startPosition,
 			startShift,
 			shiftDirection));
@@ -674,6 +676,7 @@ Notification::Notification(
 	const Data::ReactionId &reaction,
 	int forwardedCount,
 	bool fromScheduled,
+	bool ordinaryMessage,
 	QPoint startPosition,
 	int shift,
 	Direction shiftDirection)
@@ -691,6 +694,7 @@ Notification::Notification(
 , _item(item)
 , _forwardedCount(forwardedCount)
 , _fromScheduled(fromScheduled)
+, _ordinaryMessage(ordinaryMessage)
 , _close(this, st::notifyClose)
 , _reply(this, tr::lng_notification_reply(), st::defaultBoxButton) {
 	_reply->setTextTransform(Ui::RoundButtonTextTransform::ToUpper);
@@ -972,7 +976,12 @@ void Notification::updateNotifyDisplay() {
 				st::notifyItemTop + st::semiboldFont->height,
 				itemWidth,
 				2 * st::dialogsTextFont->height);
-			const auto text = !_reaction.empty()
+			const auto replacement = (_item && _ordinaryMessage)
+				? manager()->pluginPreview(_item, options)
+				: std::nullopt;
+			const auto text = replacement
+				? TextWithEntities{ *replacement }
+				: !_reaction.empty()
 				? (!_author.isEmpty()
 					? Ui::Text::Colorized(_author).append(' ')
 					: TextWithEntities()

@@ -108,6 +108,52 @@ class RuntimeTests(unittest.TestCase):
         return self.runtime.native_hook({"point": name, "account_id": "42", "request_id": 100,
             "data": base64.b64encode(tl.encode(request)).decode("ascii"), **extra})
 
+    def test_reaction_reversion_and_read_markers(self):
+        from desktop._runtime import POINT_BITS
+        from ovygram_hosts import MASK_BITS
+        received = []
+        self.runtime.register(self.plugins[self.a], "reaction_changed", received.append)
+        self.runtime.register(self.plugins[self.a], "messages_read", received.append)
+        self.assertEqual(sum(POINT_BITS.values()), MASK_BITS)
+        peer = tl.peerChannel(channel_id=19)
+        for count in (1, 2, 1):
+            event = tl.updateMessageReactions(peer=peer, msg_id=75, reactions=tl.messageReactions(
+                results=[tl.reactionCount(reaction=tl.reactionEmoji(emoticon="🔥"), count=count)]))
+            self.runtime.native_event({"point": "raw_update", "account_id": "42",
+                "data": base64.b64encode(tl.encode(event)).decode()})
+        event = tl.updateReadChannelOutbox(channel_id=19, max_id=80)
+        self.runtime.native_event({"point": "raw_update", "account_id": "42",
+            "data": base64.b64encode(tl.encode(event)).decode()})
+        self.assertEqual([e.update.reactions.results[0].count for e in received[:3]], [1, 2, 1])
+        self.assertEqual(received[-1].chat_id, 19 | (2 << 48))
+        self.assertEqual(received[-1].update.max_id, 80)
+        self.assertEqual(received[0].message_ids, (75,))
+
+    def test_local_download_payload_and_notification_rules(self):
+        from desktop import notifications
+        received = []
+        self.runtime.register(self.plugins[self.a], "download_finished", received.append)
+        self.runtime.native_event({"point": "download_finished", "account_id": "42",
+            "chat_id": "17", "message_ids": [81], "details": {"size": 137}})
+        self.assertEqual(received[0].details["size"], 137)
+        self.assertEqual(received[0].chat_id, 17)
+        commands = []
+        self.manager.sender = commands.append
+        with patch.object(self.runtime, "submit_ui") as submit:
+            def register():
+                rule = notifications.add_rule(contains="spoiler", replacement="скрыто", group_seconds=30)
+                rule.remove()
+            self.runtime.call(self.plugins[self.a], register)
+            self.assertEqual([c.args[1] for c in submit.call_args_list],
+                             ["ui.notification.add", "ui.notification.remove"])
+        self.manager.loading = "pending"
+        try:
+            self.manager.host_exited("test crash")
+        finally:
+            self.manager.loading = None
+        self.assertEqual({c["installation_id"] for c in commands if c["method"] == "ui.close_plugin"},
+                         {self.a, self.b, "pending"})
+
     def test_hook_priority_order_final_and_transactional_default(self):
         seen = []
 

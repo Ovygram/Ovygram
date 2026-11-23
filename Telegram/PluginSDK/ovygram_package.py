@@ -19,7 +19,7 @@ from pathlib import PurePosixPath
 
 from ovygram_validation import preflight_source, unique_json_object, valid_requirement, valid_text
 
-SDK_VERSION = 3
+SDK_VERSION = 4
 MAX_PACKAGE = 32 * 1024 * 1024
 MAX_UNPACKED = 64 * 1024 * 1024
 MAX_SOURCE = 1024 * 1024

@@ -197,7 +197,8 @@ public:
 	[[nodiscard]] bool hasFilteredResults() const;
 
 	void searchRequested(bool loading);
-	void applySearchState(SearchState state);
+	[[nodiscard]] QWidget *pluginSearchTarget() const;
+	void applySearchState(SearchState state, bool pluginMediaSearch = false);
 	[[nodiscard]] auto searchTagsChanges() const
 		-> rpl::producer<std::vector<Data::ReactionId>>;
 
@@ -766,6 +767,7 @@ private:
 	WidgetState _state = WidgetState::Default;
 
 	std::unique_ptr<ChatSearchIn> _searchIn;
+	bool _pluginMediaSearch = false;
 	rpl::event_stream<ChatSearchTab> _changeSearchTabRequests;
 	rpl::event_stream<ChatTypeFilter> _changeSearchFilterRequests;
 	rpl::event_stream<bool> _changeSearchFromArchiveRequests;

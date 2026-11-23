@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "info/profile/info_profile_members.h"
+#include "ovygram/plugin_list_visibility.h"
 
 #include <rpl/combine.h>
 #include "info/profile/info_profile_widget.h"
@@ -30,6 +31,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_channel.h"
 #include "data/data_chat.h"
 #include "data/data_user.h"
+#include "main/main_session.h"
 #include "styles/style_boxes.h"
 #include "styles/style_info.h"
 
@@ -56,6 +58,21 @@ Members::Members(
 	setupList();
 	setContent(_list.data());
 	_listController->setDelegate(static_cast<PeerListDelegate*>(this));
+#ifdef OVYGRAM_ENABLED
+	const auto applyFilter = [=] {
+		_list->setPresentationFilter([=](not_null<PeerListRow*> row) {
+			return row->special() || !Ovygram::ListVisibility::Hidden(
+				Ovygram::ListVisibility::List::Members, _peer, row->peer()->id.value);
+		});
+	};
+	applyFilter();
+	Ovygram::ListVisibility::Changes() | rpl::on_next([=](Ovygram::ListVisibility::Scope scope) {
+		if (scope.list == Ovygram::ListVisibility::List::Members
+			&& scope.account == _peer->session().uniqueId() && scope.chat == _peer->id.value) {
+			applyFilter();
+		}
+	}, lifetime());
+#endif // OVYGRAM_ENABLED
 
 	_controller->searchFieldController()->queryValue(
 	) | rpl::on_next([this](QString &&query) {

@@ -96,8 +96,8 @@ class Text(Node):
 class Button(Node):
     type = "button"
 
-    def __init__(self, text, on_click=None, width=None, stretch=None):
-        super().__init__(width, stretch, text=str(text))
+    def __init__(self, text, on_click=None, width=None, stretch=None, *, enabled=True, tooltip=""):
+        super().__init__(width, stretch, text=str(text), enabled=bool(enabled), tooltip=str(tooltip))
         if on_click is not None:
             self.handlers["click"] = on_click
 
@@ -345,6 +345,21 @@ def reset_colors():
     owner.manager.runtime.submit_ui(owner, "ui.palette", reset=True)
 
 
+class Insert(Surface):
+    """Mount a UI tree inside a layout or before/after a row from widget_tree()."""
+
+    kind = "insert"
+
+    def __init__(self, target, content, *, position="inside", on_close=None):
+        super().__init__(content, on_close=on_close)
+        _choice(position, ("inside", "before", "after"), "position")
+        self.target = _handle(target)
+        self.position = position
+
+    def _placement(self):
+        return {"target": self.target, "position": self.position}
+
+
 class Overlay(Surface):
     """A Canvas drawn over any widget from widget_tree(); it follows the
     widget's size. Without on_click on the canvas, clicks pass through."""
@@ -414,14 +429,48 @@ class WidgetRule:
             return
         if self.method == "ui.compose.watch":
             runtime.submit_ui(self.owner, "ui.compose.watch", rule_id=self.id, enabled=False)
+        elif self.method == "ui.notification.add":
+            runtime.submit_ui(self.owner, "ui.notification.remove", rule_id=self.id)
         elif self.method == "ui.menu.add":
             runtime.submit_ui(self.owner, "ui.menu.remove", rule_id=self.id)
+        elif self.method == "ui.list_visibility.add":
+            runtime.submit_ui(self.owner, "ui.list_visibility.remove", rule_id=self.id)
+        elif self.method == "ui.search.add":
+            runtime.submit_ui(self.owner, "ui.search.remove", rule_id=self.id)
         elif self.method == "ui.panel.add":
             runtime.submit_ui(self.owner, "ui.panel.remove", rule_id=self.id)
         elif self.method.startswith("ui.native."):
             runtime.submit_ui(self.owner, "ui.native.disconnect", rule_id=self.id)
         else:
             runtime.submit_ui(self.owner, "ui.widgets.unrule", rule_id=self.id)
+
+
+class Placement(WidgetRule):
+    """Keep one independent surface per live target matching the selector."""
+
+    def __init__(self, factory, position="inside", **selector):
+        if not callable(factory):
+            raise TypeError("factory должна создавать содержимое для указанного элемента.")
+        _choice(position, ("inside", "before", "after"), "position")
+        self._mounted = {}
+
+        def available(handle):
+            if self.removed or (handle in self._mounted and not self._mounted[handle].closed):
+                return
+            surface = Insert(handle, factory(handle), position=position,
+                             on_close=lambda: self._mounted.pop(handle, None))
+            self._mounted[handle] = surface
+            surface.show()
+
+        super().__init__(context(), "ui.widgets.rule", available,
+                         action="available", position=position, selector=_selector(selector))
+
+    def remove(self):
+        super().remove()
+        for surface in tuple(self._mounted.values()):
+            if not surface.closed:
+                surface.close()
+        self._mounted.clear()
 
 
 async def widget_tree(depth=8, root=None):
@@ -431,6 +480,11 @@ async def widget_tree(depth=8, root=None):
     owner = context()
     return await owner.manager.runtime.request(
         "widgets.tree", depth=int(depth), root=_handle(root) if root is not None else None)
+
+
+async def widget_at_cursor():
+    """Describe the visible widget under the pointer for the placement inspector."""
+    return await context().manager.runtime.request("widgets.at_cursor")
 
 
 async def get_property(widget, name):
@@ -477,6 +531,12 @@ def on_key(sequence, callback, replace=False, element=None):
                       replace=bool(replace), element=element or "")
 
 
+def _footer_height(value):
+    if type(value) is not int or not 0 <= value <= 256:
+        raise ValueError("footer_height: целое число от 0 до 256.")
+    return value
+
+
 class ChatDecoration:
     """Draw commands painted over a chat's row in the chat list.
 
@@ -487,11 +547,12 @@ class ChatDecoration:
     #aarrggbb background: an opaque one hides the row's text. Undone by
     remove() or when the plugin is unloaded."""
 
-    def __init__(self, owner, account_id, chat_id, commands, background):
+    def __init__(self, owner, account_id, chat_id, commands, background, footer_height=0):
         self.owner = owner
         self.id = _identity()
         self.account_id = account_id
         self.chat_id = chat_id
+        self.footer_height = _footer_height(footer_height)
         self.update(commands, background)
 
     def update(self, commands=(), background=None):
@@ -499,26 +560,29 @@ class ChatDecoration:
             raise ValueError("background задаётся строкой #rrggbb или #aarrggbb.")
         self.owner.manager.runtime.submit_ui(
             self.owner, "ui.decoration.set", decoration_id=self.id, account_id=self.account_id,
-            chat_id=self.chat_id, commands=list(commands), background=background)
+            chat_id=self.chat_id, commands=list(commands), background=background,
+            footer_height=self.footer_height)
 
     def remove(self):
         if self.owner.active:
             self.owner.manager.runtime.submit_ui(self.owner, "ui.decoration.remove", decoration_id=self.id)
 
 
-def decorate_chat(chat, commands=(), background=None, account=None):
+def decorate_chat(chat, commands=(), background=None, account=None, *, footer_height=0):
     """Decorates one chat's row, or every chat of an account when chat is
     "*" and account is given (an Account or account ID)."""
     if chat == "*":
+        if footer_height:
+            raise ValueError("Высота задаётся для конкретного чата.")
         account_id = getattr(account, "id", account)
         if not isinstance(account_id, str) or not account_id:
             raise ValueError('Для chat="*" укажи account.')
-        return ChatDecoration(context(), account_id, "*", commands, background)
+        return ChatDecoration(context(), account_id, "*", commands, background, footer_height)
     account_id = getattr(chat, "account_id", None)
     chat_id = getattr(chat, "id", None)
     if not account_id or chat_id is None:
         raise TypeError('decorate_chat принимает Chat из desktop.client или "*".')
-    return ChatDecoration(context(), str(account_id), str(chat_id), commands, background)
+    return ChatDecoration(context(), str(account_id), str(chat_id), commands, background, footer_height)
 
 
 def on_compose_change(callback):
@@ -528,6 +592,70 @@ def on_compose_change(callback):
     if not callable(callback):
         raise TypeError("callback должен быть функцией.")
     return WidgetRule(context(), "ui.compose.watch", callback, enabled=True)
+
+
+async def editor_snapshot(chat, *, kind="message"):
+    """Read the visible draft of chat, or its open attachment preview with kind='album'."""
+    _choice(kind, ("message", "album"), "kind")
+    return await context().manager.runtime.request(
+        "compose.snapshot", str(chat.account_id), chat_id=str(chat.id), kind=kind)
+
+
+async def _editor_action(snapshot, op, **params):
+    if not isinstance(snapshot, dict) or not all(
+            snapshot.get(key) for key in ("field", "account_id", "chat_id", "kind")):
+        raise ValueError("Нужен актуальный снимок редактора.")
+    return await context().manager.runtime.request(
+        "compose.apply", snapshot["account_id"], chat_id=snapshot["chat_id"],
+        kind=snapshot["kind"], expected=snapshot, op=op, **params)
+
+
+async def set_draft(snapshot, text, tags=()):
+    """Set the draft when its snapshot still matches. Tag ranges are in UTF-16 units."""
+    if not isinstance(text, str):
+        raise TypeError("Текст черновика должен быть строкой.")
+    return await _editor_action(snapshot, "text", text=text, tags=list(tags))
+
+
+async def suggest_draft(snapshot, text):
+    """Replace and select text at the current selection of a focused editor."""
+    if not isinstance(text, str):
+        raise TypeError("Текст подсказки должен быть строкой.")
+    return await _editor_action(snapshot, "suggestion", text=text)
+
+
+async def editor_reply(snapshot, message_id=None):
+    if message_id is None:
+        return await _editor_action(snapshot, "clear_reply")
+    if type(message_id) is not int or message_id <= 0:
+        raise ValueError("Некорректный ID сообщения.")
+    return await _editor_action(snapshot, "reply", message_id=message_id)
+
+
+async def editor_edit(snapshot, message_id):
+    if type(message_id) is not int or message_id <= 0:
+        raise ValueError("Некорректный ID сообщения.")
+    return await _editor_action(snapshot, "edit", message_id=message_id)
+
+
+async def choose_attachments(snapshot):
+    """Open the native file chooser for the snapshot's editor."""
+    return await _editor_action(snapshot, "attachments")
+
+
+async def reorder_attachments(snapshot, order):
+    order = list(order)
+    if (snapshot.get("kind") != "album" or not all(type(i) is int for i in order)
+            or sorted(order) != list(range(len(snapshot["files"])))):
+        raise ValueError("Нужна перестановка всех индексов альбома.")
+    return await _editor_action(snapshot, "album_order", order=order)
+
+
+async def set_attachment_caption(snapshot, index, caption):
+    if (snapshot.get("kind") != "album" or type(index) is not int
+            or not 0 <= index < len(snapshot["files"]) or not isinstance(caption, str)):
+        raise ValueError("Нужны индекс вложения и подпись.")
+    return await _editor_action(snapshot, "album_caption", index=index, caption=caption)
 
 
 async def compose_state():
@@ -552,12 +680,13 @@ class MessageDecoration:
     negative x or y count from the bubble's right or bottom edge.
     background tints the bubble. Undone by remove() or unload."""
 
-    def __init__(self, owner, message, commands, background):
+    def __init__(self, owner, message, commands, background, footer_height=0):
         self.owner = owner
         self.id = _identity()
         self.account_id = str(message.account_id)
         self.chat_id = str(message.chat_id)
         self.message_id = int(message.id)
+        self.footer_height = _footer_height(footer_height)
         self.update(commands, background)
 
     def update(self, commands=(), background=None):
@@ -566,7 +695,8 @@ class MessageDecoration:
         self.owner.manager.runtime.submit_ui(
             self.owner, "ui.message_decoration.set", decoration_id=self.id,
             account_id=self.account_id, chat_id=self.chat_id, message_id=self.message_id,
-            commands=list(commands), background=background)
+            commands=list(commands), background=background,
+            footer_height=self.footer_height)
 
     def remove(self):
         if self.owner.active:
@@ -574,14 +704,14 @@ class MessageDecoration:
                 self.owner, "ui.message_decoration.remove", decoration_id=self.id)
 
 
-def decorate_message(message, commands=(), background=None):
+def decorate_message(message, commands=(), background=None, *, footer_height=0):
     """Decorates a Message from desktop.client or an event.
 
     Painted over the bubble, so use a translucent #aarrggbb background: an
     opaque one hides the message text."""
     if not all(hasattr(message, key) for key in ("account_id", "chat_id", "id")):
         raise TypeError("decorate_message принимает Message из desktop.client.")
-    return MessageDecoration(context(), message, commands, background)
+    return MessageDecoration(context(), message, commands, background, footer_height)
 
 
 class HiddenChats:
@@ -705,10 +835,11 @@ class PanelContext:
     account_id: str
     chat: object
     panel: str
+    handle: str = ""
 
 
 def _panel_parameters(panel, text, tooltip, width, priority, enabled, visible, chat, kinds):
-    _choice(panel, ("chat.top_bar", "compose"), "panel")
+    _choice(panel, ("chat.top_bar", "compose", "search.actions"), "panel")
     if not isinstance(text, str) or not text.strip() or len(text.encode("utf-16-le")) > 64:
         raise ValueError("Текст кнопки: непустая строка до 32 единиц UTF-16.")
     if not isinstance(tooltip, str) or len(tooltip.encode("utf-16-le")) > 512:
@@ -770,7 +901,7 @@ class PanelButton(WidgetRule):
                 return
             if parameters["kinds"] and target.kind not in parameters["kinds"]:
                 return
-            return callback(PanelContext(account_id, target, self.panel))
+            return callback(PanelContext(account_id, target, self.panel, str(value.get("handle", ""))))
 
         super().__init__(context(), "ui.panel.add", clicked, **self._parameters)
 
