@@ -322,6 +322,7 @@ def main():
                         f'Telegram/CMakeFiles/Telegram.dir/{configuration}/SourceFiles/' + unit + '.cpp.obj'
                         for unit in (
                             'core/plugin_runtime_bridge', 'core/application', 'core/launcher',
+                            'core/file_utilities', 'passport/passport_panel_edit_scans',
                             'ovygram/chat_decorations', 'ovygram/chat_list_filter',
                             'ovygram/message_decorations', 'ovygram/plugin_elements',
                             'ovygram/plugin_paint', 'ovygram/plugin_ui', 'ovygram/plugin_widgets',
@@ -355,6 +356,8 @@ def main():
                     str(Path(__file__).with_name(script)),
                     args.action.removeprefix('prepare-'),
                     str(source / 'Telegram/build/prepare/prepare.py')]
+            if args.action == 'build' and plugin_mode:
+                commands['build'].extend(['--', '-k', '0'])
             if args.action == 'configure' and plugin_mode:
                 commands['configure'].extend(['-D', f'OVYGRAM_PYTHON_ROOT={root / "plugin-python"}'])
                 # Limit optimizer work in the C++ client on the two-core

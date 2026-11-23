@@ -271,6 +271,16 @@ void GetOpenPath(
 		const QString &caption,
 		const QString &filter,
 		Fn<void(OpenResult &&result)> callback,
+		Fn<void()> failed) {
+	GetOpenPathChecked(
+		parent, caption, filter, std::move(callback), std::move(failed), nullptr);
+}
+
+void GetOpenPathChecked(
+		QPointer<QWidget> parent,
+		const QString &caption,
+		const QString &filter,
+		Fn<void(OpenResult &&result)> callback,
 		Fn<void()> failed,
 		Fn<bool()> beforeOpen) {
 	InvokeQueued(QCoreApplication::instance(), [=] {

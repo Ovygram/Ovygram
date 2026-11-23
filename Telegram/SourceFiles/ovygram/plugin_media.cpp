@@ -125,7 +125,7 @@ void PluginMedia::pick(
 	const auto weak = base::make_weak(session.get());
 	const auto guard = QPointer<PluginMedia>(this);
 	PickerOpen = true;
-	FileDialog::GetOpenPath(Core::App().getFileDialogParent(),
+	FileDialog::GetOpenPathChecked(Core::App().getFileDialogParent(),
 		u"Передать копию файла плагину "_q + name + u" · "_q + installationId.left(8),
 		FileDialog::AllFilesFilter(),
 		[=](FileDialog::OpenResult &&result) {
