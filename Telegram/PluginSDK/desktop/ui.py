@@ -64,9 +64,33 @@ class Node:
 class Column(Node):
     type = "column"
 
-    def __init__(self, *children, width=None, stretch=None):
-        super().__init__(width, stretch)
+    def __init__(self, *children, width=None, stretch=None, gap=None, visible=None):
+        if gap is not None and (type(gap) is not int or not 0 <= gap <= 48):
+            raise ValueError("gap должен быть целым от 0 до 48.")
+        super().__init__(width, stretch, **({"gap": gap} if gap is not None else {}))
+        if visible is not None:
+            self.props["visible"] = bool(visible)
         self.children = tuple(_node(child) for child in children)
+
+
+class Card(Column):
+    """A padded group using the client's current palette."""
+    type = "card"
+
+
+class Progress(Node):
+    """A thin meter. Update its value in the range from zero to one."""
+    type = "progress"
+
+    def __init__(self, value=0.0):
+        if not 0 <= value <= 1:
+            raise ValueError("Значение шкалы должно быть от 0 до 1.")
+        super().__init__(value=float(value))
+
+
+class Divider(Node):
+    """A thin separator using the current theme."""
+    type = "divider"
 
 
 class Row(Node):
@@ -75,11 +99,11 @@ class Row(Node):
 
     type = "row"
 
-    def __init__(self, *children, align="center", spacing=8, width=None, stretch=None):
+    def __init__(self, *children, align="center", spacing=8, width=None, stretch=None, wrap=False):
         if type(spacing) is not int or not 0 <= spacing <= 200:
             raise ValueError("spacing должен быть целым от 0 до 200.")
         super().__init__(width, stretch, align=_choice(align, ("top", "center", "bottom"), "align"),
-                         spacing=spacing)
+                         spacing=spacing, **({"wrap": True} if wrap else {}))
         self.children = tuple(_node(child) for child in children)
 
 
@@ -88,16 +112,25 @@ class Text(Node):
 
     type = "text"
 
-    def __init__(self, text, align="left", width=None, stretch=None):
+    def __init__(self, text, align="left", width=None, stretch=None, *, tone="normal", bold=False):
         super().__init__(width, stretch, text=str(text),
-                         align=_choice(align, ("left", "center", "right"), "align"))
+                         align=_choice(align, ("left", "center", "right"), "align"),
+                         tone=_choice(tone, ("normal", "muted", "accent", "positive", "attention"), "tone"),
+                         bold=bool(bold))
 
 
 class Button(Node):
     type = "button"
 
-    def __init__(self, text, on_click=None, width=None, stretch=None, *, enabled=True, tooltip=""):
-        super().__init__(width, stretch, text=str(text), enabled=bool(enabled), tooltip=str(tooltip))
+    def __init__(self, text, on_click=None, width=None, stretch=None, *, enabled=True, tooltip="", variant="primary",
+                 visible=None, detail="", selected=False):
+        super().__init__(width, stretch, text=str(text), enabled=bool(enabled), tooltip=str(tooltip),
+                         variant=_choice(variant, ("primary", "secondary", "danger", "trash", "chip", "code",
+                                                   "link", "choice"), "variant"))
+        if visible is not None:
+            self.props["visible"] = bool(visible)
+        if variant == "choice":
+            self.props.update(detail=str(detail), selected=bool(selected))
         if on_click is not None:
             self.handlers["click"] = on_click
 
@@ -105,8 +138,10 @@ class Button(Node):
 class Input(Node):
     type = "input"
 
-    def __init__(self, text="", placeholder="", on_change=None, width=None, stretch=None):
+    def __init__(self, text="", placeholder="", on_change=None, width=None, stretch=None, *, search=False):
         super().__init__(width, stretch, text=str(text), placeholder=str(placeholder))
+        if search:
+            self.props["search"] = True
         if on_change is not None:
             self.handlers["change"] = on_change
 
@@ -233,8 +268,12 @@ class Window(Surface):
 
     kind = "window"
 
-    def __init__(self, content, title="", width=420, height=480, on_close=None):
+    def __init__(self, content, title="", width=420, height=480, on_close=None, *, max_content_width=None):
         super().__init__(content, title, width, height, on_close)
+        self.max_content_width = max_content_width
+
+    def _placement(self):
+        return {} if self.max_content_width is None else {"max_content_width": int(self.max_content_width)}
 
 
 class ChatBar(Surface):
@@ -270,8 +309,12 @@ class Section(Surface):
 
     kind = "section"
 
-    def __init__(self, content, title="", on_close=None):
+    def __init__(self, content, title="", on_close=None, *, max_content_width=None):
         super().__init__(content, title, on_close=on_close)
+        self.max_content_width = max_content_width
+
+    def _placement(self):
+        return {} if self.max_content_width is None else {"max_content_width": int(self.max_content_width)}
 
 
 # Built-in Telegram widgets a plugin can change. The names stay the same

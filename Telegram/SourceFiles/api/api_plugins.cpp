@@ -12,11 +12,8 @@
 #include "core/core_settings.h"
 #include "boxes/abstract_box.h"
 #include "ovygram/protected_ui.h"
+#include "ovygram/plugin_proxy_view.h"
 #include "ui/layers/generic_box.h"
-#include "ui/widgets/buttons.h"
-#include "ui/widgets/labels.h"
-#include "styles/style_layers.h"
-#include "styles/style_widgets.h"
 #include "core/plugin_runtime.h"
 #include "data/data_channel.h"
 #include "data/data_document.h"
@@ -186,6 +183,13 @@ PluginClient::PluginClient(not_null<Core::PluginRuntime*> runtime)
 			const auto route = u"default"_q;
 			if (_activeProxyTokens.erase(route)) {
 				_activeProxyLabels.erase(route);
+				try {
+					auto saved = dispatch({ { u"action"_q, u"proxy_routes"_q } }).toObject();
+					saved.remove(route);
+					dispatch({ { u"action"_q, u"save_proxy_routes"_q }, { u"routes"_q, saved } });
+				} catch (const std::exception &error) {
+					LOG(("Ovygram proxy selection: %1").arg(QString::fromUtf8(error.what())));
+				}
 				updateProxyIndicator();
 			}
 		}
@@ -450,73 +454,70 @@ QJsonArray PluginClient::proxyOffers() {
 			setProxyRoute(route, {});
 		}
 	}
+	const auto saved = dispatch({ { u"action"_q, u"proxy_routes"_q } }).toObject();
+	for (auto i = saved.begin(); i != saved.end(); ++i) {
+		const auto route = i.key();
+		if (_activeProxyTokens.contains(route)) continue;
+		const auto owner = i.value().toString();
+		for (const auto &value : offers) {
+			const auto offer = value.toObject();
+			if (offer.value(u"restore"_q).toBool()
+				&& offer.value(u"owner"_q).toString() == owner
+				&& offer.value(u"routes"_q).toArray().contains(route)) {
+				setProxyRoute(route, offer);
+				break;
+			}
+		}
+	}
 	return offers;
 }
 
-void PluginClient::showPluginProxies() {
-	Ui::show(Box([=](not_null<Ui::GenericBox*> box) {
+void PluginClient::showPluginProxies(Fn<void()> onClosed) {
+	Ui::show(Box([=, this](not_null<Ui::GenericBox*> box) {
 		Ovygram::ProtectSurface(box);
-		box->setTitle(rpl::single(u"Прокси плагинов"_q));
-		const auto label = [=](QString text) {
-			box->addRow(object_ptr<Ui::FlatLabel>(box, std::move(text), st::defaultFlatLabel));
-		};
-		try {
-			const auto offers = proxyOffers();
-			if (offers.isEmpty()) label(u"Нет доступных прокси плагинов."_q);
-			const auto titles = std::array{
-				std::pair(u"default"_q, u"Прокси клиента по умолчанию"_q),
-				std::pair(u"api"_q, u"Запросы Telegram"_q),
-				std::pair(u"files"_q, u"Загрузка и отправка файлов"_q),
-				std::pair(u"pages"_q, u"Встроенные веб-страницы"_q),
-				std::pair(u"mini_apps"_q, u"Mini Apps"_q),
-			};
-			for (const auto &[key, title] : titles) {
-				const auto route = key;
-				const auto selected = _activeProxyTokens.find(route);
-				const auto tokenNow = (selected == end(_activeProxyTokens)) ? QString() : selected->second;
-				auto listed = false;
-				for (const auto &value : offers) {
-					const auto offer = value.toObject();
-					if (!offer.value(u"routes"_q).toArray().contains(route)) continue;
-					if (!listed) {
-						label(title);
-						listed = true;
-					}
-					const auto token = offer.value(u"token"_q).toString();
-					const auto display = offer.value(u"label"_q).toString();
-					const auto name = (display.isEmpty() ? offer.value(u"plugin_id"_q).toString() : display)
-						+ u" · "_q + offer.value(u"owner"_q).toString().left(8);
-					const auto button = box->addRow(object_ptr<Ui::RoundButton>(box,
-						rpl::single(token == tokenNow ? name + u" (подключён)"_q : name),
-						st::defaultLightButton));
-					button->setClickedCallback([=] {
-						try {
-							for (const auto &entry : proxyOffers()) {
-								const auto current = entry.toObject();
-								if (current.value(u"token"_q).toString() != token) continue;
-								setProxyRoute(route, current);
-								box->closeBox();
-								return;
-							}
-							label(u"Предложение истекло. Откройте список снова."_q);
-						} catch (const std::exception &error) {
-							label(QString::fromUtf8(error.what()));
-						}
+		if (onClosed) {
+			connect(box.get(), &QObject::destroyed, this, [=, this] {
+				QTimer::singleShot(0, this, onClosed);
+			});
+		}
+		const auto window = Core::App().activePrimaryWindow();
+		const auto preferredWidth = style::ConvertScale(600);
+		const auto width = window
+			? std::min(preferredWidth, std::max(window->widget()->width() - style::ConvertScale(32), 1))
+			: preferredWidth;
+		Ovygram::SetupPluginProxyBox(box, width, [=, this] {
+			auto result = Ovygram::ProxyViewState();
+			result.offers = proxyOffers();
+			result.saved = dispatch({ { u"action"_q, u"proxy_routes"_q } }).toObject();
+			for (const auto &[route, token] : _activeProxyTokens) {
+				const auto offer = std::find_if(result.offers.begin(), result.offers.end(),
+					[&](const QJsonValue &value) {
+						return value.toObject().value(u"token"_q).toString() == token;
 					});
-				}
-				if (!tokenNow.isEmpty()) {
-					const auto clear = box->addRow(object_ptr<Ui::RoundButton>(box,
-						rpl::single(u"Восстановить настройки"_q), st::defaultLightButton));
-					clear->setClickedCallback([=] {
-						setProxyRoute(route, {});
-						box->closeBox();
-					});
+				if (offer != result.offers.end()) {
+					result.active.emplace(route, Ovygram::PluginProxyLabel((*offer).toObject()));
 				}
 			}
-		} catch (const std::exception &error) {
-			label(QString::fromUtf8(error.what()));
-		}
-		box->addButton(rpl::single(u"Закрыть"_q), [=] { box->closeBox(); });
+			return result;
+		}, [=, this](const QString &route, const QJsonObject &offer) {
+			auto saved = dispatch({ { u"action"_q, u"proxy_routes"_q } }).toObject();
+			if (route.isEmpty()) {
+				saved = QJsonObject();
+			} else if (offer.isEmpty()) {
+				saved.remove(route);
+			} else {
+				saved.insert(route, offer.value(u"owner"_q));
+			}
+			dispatch({ { u"action"_q, u"save_proxy_routes"_q }, { u"routes"_q, saved } });
+			if (route.isEmpty()) {
+				const auto active = _activeProxyTokens;
+				for (const auto &[key, token] : active) {
+					setProxyRoute(key, {});
+				}
+			} else {
+				setProxyRoute(route, offer);
+			}
+		});
 	}), Ui::LayerOption::KeepOther);
 }
 
@@ -582,14 +583,19 @@ void PluginClient::receive(const QByteArray &request) {
 		if (method.startsWith(u"helper."_q)) {
 			const auto owner = command.value(u"installation_id"_q).toString();
 			if (method == u"helper.open_proxy_settings"_q) {
-				if (!Core::App().activePrimaryWindow()
-					|| Core::App().passcodeLocked()
+				const auto window = Core::App().activePrimaryWindow();
+				if (!window || Core::App().passcodeLocked()
 					|| Ovygram::ProtectedSurfaceExists()
 					|| Ovygram::InstallationUiActive()) {
 					throw std::runtime_error("Proxy settings are unavailable during protected UI.");
 				}
-				showPluginProxies();
-				reply(id, true);
+				window->activate();
+				if (command.value(u"params"_q).toObject().value(u"wait_until_closed"_q).toBool()) {
+					showPluginProxies([=, this] { reply(id, true); });
+				} else {
+					showPluginProxies();
+					reply(id, true);
+				}
 			} else if (method == u"helper.proxy_active"_q) {
 				const auto offers = proxyOffers();
 				reply(id, std::any_of(offers.begin(), offers.end(), [&](const QJsonValue &value) {

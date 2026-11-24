@@ -6,6 +6,9 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "window/window_connecting_widget.h"
+#ifdef OVYGRAM_ENABLED
+#include "api/api_plugins.h"
+#endif // OVYGRAM_ENABLED
 
 #include "ui/widgets/buttons.h"
 #include "ui/effects/radial_animation.h"
@@ -23,6 +26,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "styles/style_window.h"
 
 #include <QtGui/QWindow>
+#include <QtGui/QPainterPath>
 
 namespace Window {
 namespace {
@@ -137,7 +141,7 @@ class ConnectionState::Widget::ProxyIcon final : public Ui::RpWidget {
 public:
 	ProxyIcon(QWidget *parent);
 
-	void setToggled(bool toggled);
+	void setToggled(bool toggled, bool proxy);
 	void setOpacity(float64 opacity);
 
 protected:
@@ -150,6 +154,7 @@ private:
 	QPixmap _cacheOn;
 	QPixmap _cacheOff;
 	bool _toggled = true;
+	bool _proxy = false;
 
 };
 
@@ -191,9 +196,10 @@ void ConnectionState::Widget::ProxyIcon::refreshCacheImages() {
 	_cacheOff = prepareCache(st::connectingProxyOff);
 }
 
-void ConnectionState::Widget::ProxyIcon::setToggled(bool toggled) {
-	if (_toggled != toggled) {
+void ConnectionState::Widget::ProxyIcon::setToggled(bool toggled, bool proxy) {
+	if (_toggled != toggled || _proxy != proxy) {
 		_toggled = toggled;
+		_proxy = proxy;
 		update();
 	}
 }
@@ -211,7 +217,27 @@ void ConnectionState::Widget::ProxyIcon::setOpacity(float64 opacity) {
 void ConnectionState::Widget::ProxyIcon::paintEvent(QPaintEvent *e) {
 	auto p = QPainter(this);
 	p.setOpacity(_opacity);
-	p.drawPixmap(0, 0, _toggled ? _cacheOn : _cacheOff);
+	if (!_proxy) {
+		p.drawPixmap(0, 0, _toggled ? _cacheOn : _cacheOff);
+		return;
+	}
+	PainterHighQualityEnabler hq(p);
+	p.fillRect(rect(), st::windowBg);
+	const auto center = QRectF(rect()).center();
+	const auto radius = std::min(width(), height()) * 0.43;
+	p.setPen(Qt::NoPen);
+	p.setBrush(st::windowBgActive);
+	p.drawEllipse(center, radius, radius);
+	auto mark = QPainterPath();
+	mark.moveTo(center + QPointF(-radius * .46, -radius * .31));
+	mark.lineTo(center + QPointF(0, radius * .43));
+	mark.lineTo(center + QPointF(radius * .46, -radius * .31));
+	auto pen = QPen(st::windowFgActive->c, std::max(radius * .20, 1.));
+	pen.setCapStyle(Qt::RoundCap);
+	pen.setJoinStyle(Qt::RoundJoin);
+	p.setPen(pen);
+	p.setBrush(Qt::NoBrush);
+	p.drawPath(mark);
 }
 
 bool ConnectionState::State::operator==(const State &other) const {
@@ -220,7 +246,8 @@ bool ConnectionState::State::operator==(const State &other) const {
 		&& (exposed == other.exposed)
 		&& (underCursor == other.underCursor)
 		&& (updateReady == other.updateReady)
-		&& (waitTillRetry == other.waitTillRetry);
+		&& (waitTillRetry == other.waitTillRetry)
+		&& (pluginProxy == other.pluginProxy);
 }
 
 ConnectionState::ConnectionState(
@@ -258,6 +285,12 @@ ConnectionState::ConnectionState(
 	) | rpl::on_next([=] {
 		refreshState();
 	}, _lifetime);
+#ifdef OVYGRAM_ENABLED
+	Api::PluginProxyIndicatorValue() | rpl::on_next([=](const QString &label) {
+		_pluginProxy = label;
+		refreshState();
+	}, _lifetime);
+#endif // OVYGRAM_ENABLED
 }
 
 void ConnectionState::createWidget() {
@@ -324,16 +357,16 @@ void ConnectionState::refreshState() {
 		if (state == MTP::ConnectingState
 			|| state == MTP::DisconnectedState
 			|| (state < 0 && state > -600)) {
-			return { State::Type::Connecting, proxy, exposed, under, ready };
+			return { State::Type::Connecting, proxy, exposed, under, ready, 0, _pluginProxy };
 		} else if (state < 0
 			&& state >= -kMinimalWaitingStateDuration
 			&& _state.type != State::Type::Waiting) {
-			return { State::Type::Connecting, proxy, exposed, under, ready };
+			return { State::Type::Connecting, proxy, exposed, under, ready, 0, _pluginProxy };
 		} else if (state < 0) {
 			const auto wait = ((-state) / 1000) + 1;
-			return { State::Type::Waiting, proxy, exposed, under, ready, wait };
+			return { State::Type::Waiting, proxy, exposed, under, ready, wait, _pluginProxy };
 		}
-		return { State::Type::Connected, proxy, exposed, under, ready };
+		return { State::Type::Connected, proxy, exposed, under, ready, 0, _pluginProxy };
 	}();
 	if (state.exposed && state.waitTillRetry > 0) {
 		_refreshTimer.callOnce(kRefreshTimeout);
@@ -446,11 +479,12 @@ rpl::producer<float64> ConnectionState::visibility() const {
 
 auto ConnectionState::computeLayout(const State &state) const -> Layout {
 	auto result = Layout();
-	result.proxyEnabled = state.useProxy;
+	result.proxyEnabled = state.useProxy || !state.pluginProxy.isEmpty();
+	result.pluginProxy = state.pluginProxy;
 	result.progressShown = (state.type != State::Type::Connected);
 	result.visible = state.exposed
 		&& !state.updateReady
-		&& (state.useProxy
+		&& (result.proxyEnabled
 			|| state.type == State::Type::Connecting
 			|| state.type == State::Type::Waiting);
 	switch (state.type) {
@@ -513,7 +547,15 @@ ConnectionState::Widget::Widget(
 	_proxyIcon = Ui::CreateChild<ProxyIcon>(this);
 	_progress = Ui::CreateChild<Progress>(this);
 
+	setLayout(layout);
 	addClickHandler([=] {
+#ifdef OVYGRAM_ENABLED
+		if (const auto plugins = Core::App().pluginClient();
+				plugins && !_currentLayout.pluginProxy.isEmpty()) {
+			plugins->showPluginProxies();
+			return;
+		}
+#endif // OVYGRAM_ENABLED
 		Ui::show(ProxiesBoxController::CreateOwningBox(account));
 	});
 
@@ -629,9 +671,10 @@ void ConnectionState::Widget::updateRetryGeometry() {
 
 void ConnectionState::Widget::setLayout(const Layout &layout) {
 	_currentLayout = layout;
-	_proxyIcon->setToggled(_currentLayout.proxyEnabled);
+	_proxyIcon->setToggled(_currentLayout.proxyEnabled, _currentLayout.pluginProxy.startsWith(u"PROXY ·"_q));
 	refreshRetryLink(_currentLayout.hasRetry);
-	setAccessibleName(_currentLayout.text);
+	setToolTip(_currentLayout.pluginProxy);
+	setAccessibleName(_currentLayout.pluginProxy.isEmpty() ? _currentLayout.text : _currentLayout.pluginProxy);
 }
 
 void ConnectionState::Widget::setProgressVisibility(bool visible) {

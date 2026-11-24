@@ -19,7 +19,10 @@
 
 | Элемент | Назначение |
 | --- | --- |
-| `Column(*children)` | Элементы друг под другом |
+| `Column(*children, gap=None)` | Элементы друг под другом с необязательным интервалом |
+| `Card(*children, gap=None)` | Группа с фоном и отступами в текущей теме клиента |
+| `Divider()` | Тонкий разделитель |
+| `Progress(value=0.0)` | Шкала со значением от 0 до 1 |
 | `Row(*children, align="center", spacing=8)` | Элементы в строку; `align` — `top`, `center`, `bottom` |
 | `Text(text, align="left")` | Текст; `align` — `left`, `center`, `right` |
 | `Button(text, on_click=None)` | Кнопка, `on_click()` |
@@ -28,6 +31,14 @@
 | `Image(path, height=0)` | Картинка из файла |
 | `Spacer(height)` | Отступ |
 | `Canvas(height, commands=(), on_click=None)` | Собственная отрисовка, `on_click(x, y)` |
+
+`Row(..., wrap=True)` переносит элементы на следующую строку при нехватке
+ширины. Это подходит для группы кнопок или меток.
+
+`Text` принимает `bold` и `tone` со значениями `normal`, `muted`, `accent`,
+`positive`. Для `Button` доступен `variant` со значениями `primary`, `secondary`,
+`danger`, `trash`, `chip`, `code`, `link`. `code` использует моноширинный шрифт,
+а `link` показывает строку настроек со стрелкой.
 
 У любого элемента внутри `Row` есть `width` (пиксели или `"fit"` — по
 содержимому) и `stretch` (доля свободного места, по умолчанию 1).
@@ -59,9 +70,9 @@ ui.Row(
 
 | Класс | Где показывается |
 | --- | --- |
-| `Dialog(content, title="", width=0)`, `show_dialog(...)` | Окно поверх Telegram |
-| `Window(content, title="", width=420, height=480)` | Отдельное окно, содержимое прокручивается |
-| `Section(content, title="")` | Страница в основной колонке вместо чата |
+| `Dialog(content, title="", width=0)`, `show_dialog(...)` | Модальное окно внутри Telegram с прокручиваемым телом |
+| `Window(content, title="", width=420, height=480, max_content_width=None)` | Отдельное окно с прокруткой и необязательным ограничением ширины содержимого |
+| `Section(content, title="", max_content_width=None)` | Страница в основной колонке вместо чата с необязательным ограничением ширины |
 | `ChatBar(chat, content)` | Полоса над сообщениями одного чата |
 | `Overlay(widget, canvas)` | Холст поверх любого виджета Telegram |
 
@@ -69,12 +80,18 @@ ui.Row(
 
 - `show()` — показать, возвращает саму поверхность;
 - `update(node, **props)` — изменить `text` у `Text`, `Button`, `Input`,
-  `value` у `Switch`, `commands` у `Canvas`;
+  `value` у `Switch` и `Progress`, `tone` у `Text`, `commands` у `Canvas`;
 - `draw(canvas, commands)` — перерисовать холст;
 - `close()` — закрыть. После закрытия `update()` бросает `ObjectDestroyed`.
 
 Изменения, сделанные через `update()`, не возвращаются в `on_change` и
 `on_toggle`, поэтому обработчик может менять своё же поле без зацикливания.
+У вложенных `Column`, `Card` и `Button` в `Column`, `Card` или `Row`
+параметр `visible` задаёт начальную видимость. Динамически меняйте её через
+`update(node, visible=...)`. Скрытые элементы не занимают место.
+Кнопка `Button(variant="choice")` представляет строку выбора. Справа
+показывается `detail`, а `selected=True` выделяет строку. Эти два свойства можно
+менять через `update()`. Поле `Input(search=True)` использует стиль поиска.
 
 ```python
 class CounterPlugin(BasePlugin):

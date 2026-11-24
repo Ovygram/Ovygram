@@ -55,6 +55,8 @@ target_sources(Telegram PRIVATE
     SourceFiles/ovygram/plugin_section.h
     SourceFiles/ovygram/plugin_media.cpp
     SourceFiles/ovygram/plugin_media.h
+    SourceFiles/ovygram/plugin_proxy_view.cpp
+    SourceFiles/ovygram/plugin_proxy_view.h
     SourceFiles/ovygram/plugin_ui.cpp
     SourceFiles/ovygram/plugin_widgets.cpp
     SourceFiles/ovygram/plugin_widgets.h

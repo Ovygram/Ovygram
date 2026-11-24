@@ -15,6 +15,8 @@ from ovygram_deps import python_command
 from ovygram_package import MAX_PACKAGE, archive_path
 from ovygram_sandbox import SandboxError, confine, release, wrap
 
+PROXY_ROUTES = ("default", "api", "files", "pages", "mini_apps")
+
 
 def _send_config(pipe, data):
     try:
@@ -183,6 +185,7 @@ class Helpers:
             key = owner + ":http" if protocol == "http" else owner
             self.offers[key] = dict(token=uuid.uuid4().hex, port=port, user=user, password=password,
                                     protocol=protocol, routes=scopes, label=label.strip(),
+                                    restore=params.get("restore") is True,
                                     plugin_id=self.manager.records[owner]["plugin_id"], owner=owner)
             self.manager.notify({"id": uuid.uuid4().hex, "method": "proxy.refresh"})
         else:

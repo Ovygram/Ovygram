@@ -31,7 +31,7 @@ from hook_utils import HookCancelled
 from ovygram_commands import Engine
 from ovygram_deps import Dependencies, normalize_all
 from ovygram_distribution import Distribution
-from ovygram_helpers import Helpers
+from ovygram_helpers import Helpers, PROXY_ROUTES
 from ovygram_hosts import HostError, LocalHost, PluginError, ProcessHost
 from ovygram_registry import TRUSTED, protected_author
 from ovygram_package import (MAX_PACKAGE, MAX_SOURCE, SDK_VERSION, archive_path, read_source,
@@ -178,6 +178,7 @@ class Manager:
         self.commands = Engine()
         self.distribution_state = {}
         self.pending_updates = {}
+        self.proxy_routes = {}
         self._startup_pending = True
         self.logger = logging.Logger("ovygram")
         self.log_handler = RotatingFileHandler(
@@ -391,6 +392,10 @@ class Manager:
             raise ValueError("Повреждён файл состояния плагинов.")
         self.distribution_state = state.get("distribution", {})
         self.pending_updates = state.get("pending_updates", {})
+        routes = state.get("proxy_routes", {})
+        if isinstance(routes, dict):
+            self.proxy_routes = {route: owner for route, owner in routes.items()
+                                 if route in PROXY_ROUTES and isinstance(owner, str) and owner in records}
         if not isinstance(self.pending_updates, dict) or any(
                 identity not in records or not isinstance(previous, dict)
                 or not {"plugin_id", "current", "previous", "enabled", "settings"} <= previous.keys()
@@ -457,7 +462,8 @@ class Manager:
 
     def save(self):
         text = json.dumps({"version": STATE_VERSION, "installations": self.records,
-                           "distribution": self.distribution_state, "pending_updates": self.pending_updates},
+                           "distribution": self.distribution_state, "pending_updates": self.pending_updates,
+                           "proxy_routes": self.proxy_routes},
                           ensure_ascii=False, allow_nan=False, indent=2)
         temporary = self.state.with_suffix(".tmp")
         with temporary.open("w", encoding="utf-8") as stream:
@@ -465,6 +471,21 @@ class Manager:
             stream.flush()
             os.fsync(stream.fileno())
         temporary.replace(self.state)
+
+    def save_proxy_routes(self, routes):
+        """Only the native proxy picker may record a user's route selection."""
+        if not isinstance(routes, dict) or any(route not in PROXY_ROUTES or
+                not isinstance(owner, str) or owner not in self.records for route, owner in routes.items()):
+            raise ValueError("Недопустимые назначения прокси.")
+        if routes == self.proxy_routes:
+            return True
+        previous, self.proxy_routes = self.proxy_routes, dict(routes)
+        try:
+            self.save()
+        except BaseException:
+            self.proxy_routes = previous
+            raise
+        return True
 
     def directory(self, version):
         token = version["directory"]
@@ -851,6 +872,8 @@ class Manager:
                 "plugin_id": record["plugin_id"], "settings": record["settings"],
                 "account_settings": record.get("account_settings", {})}, ensure_ascii=False), encoding="utf-8")
         self.disable(installation_id)
+        self.save_proxy_routes({route: owner for route, owner in self.proxy_routes.items()
+                                if owner != installation_id})
         self.change_record(installation_id, None)
         self.discard(record["current"])
         self.discard(record["previous"])
@@ -985,6 +1008,8 @@ class Manager:
             "poll": self.poll_distribution,
             "helper_command": self.helpers.command,
             "proxy_offers": lambda: list(self.helpers.offers.values()),
+            "proxy_routes": lambda: self.proxy_routes,
+            "save_proxy_routes": self.save_proxy_routes,
             "prepare_install": self.distribution.prepare,
             "prepared_install": self.distribution.prepared,
             "commit_install": self.distribution.commit,

@@ -41,7 +41,7 @@ class PluginClient final : public QObject {
 public:
 	explicit PluginClient(not_null<Core::PluginRuntime*> runtime);
 	~PluginClient();
-	void showPluginProxies();
+	void showPluginProxies(Fn<void()> onClosed = {});
 	[[nodiscard]] bool observes(PluginEventBit bit) const;
 	void postLocalEvent(PluginEventBit bit, QJsonObject event);
 

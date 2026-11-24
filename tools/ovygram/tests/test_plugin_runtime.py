@@ -22,6 +22,19 @@ class PluginRuntimeTests(unittest.TestCase):
         self.root = Path(temporary.name)
         self.profile = self.root / "profile"
 
+    def test_proxy_route_selections_survive_restart_and_are_removed_with_owner(self):
+        first = Manager(self.profile)
+        owner = first.install(str(EXAMPLE))
+        first.save_proxy_routes({"api": owner, "pages": owner})
+        with self.assertRaises(ValueError):
+            first.save_proxy_routes({"api": "another-installation"})
+        first.shutdown()
+        second = Manager(self.profile)
+        self.addCleanup(second.shutdown)
+        self.assertEqual(second.proxy_routes, {"api": owner, "pages": owner})
+        second.remove(owner)
+        self.assertEqual(second.proxy_routes, {})
+
     def test_missing_release_installs_as_false_in_every_local_format(self):
         source = (EXAMPLE.read_bytes().replace(b"\r\n", b"\n")
                   .replace(b"__release__ = False\n", b""))
