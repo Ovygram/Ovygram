@@ -5,6 +5,7 @@
 #include "ovygram/plugin_install_view.h"
 #include "ovygram/plugin_management_view.h"
 #include "ovygram/plugin_ui_tree.h"
+#include "ovygram/plugin_proxy_view.h"
 #include "plugin_list.h"
 #include "ui/effects/animations.h"
 #include "ui/emoji_config.h"
@@ -332,6 +333,9 @@ public:
 			const QString &python, const QString &dependencies) {
 		if (!plugin.isEmpty()) {
 			startPlugin(plugin, menu, setting, python, dependencies);
+		} else if (_scenario == u"proxies"_q) {
+			showProxies();
+			finishSoon();
 		} else if (_scenario.startsWith(u"install-"_q)) {
 			showInstaller(InstallInfo(_scenario));
 			finishSoon();
@@ -437,6 +441,33 @@ private:
 					box->setFocusCallback([weak = QPointer<Ui::RoundButton>(button)] {
 						if (weak) weak->setFocus();
 					});
+				});
+		}), Ui::LayerOption::KeepOther, anim::type::instant);
+	}
+
+	void showProxies() {
+		const auto state = std::make_shared<Ovygram::ProxyViewState>();
+		const auto routes = QJsonArray{u"default"_q, u"api"_q, u"files"_q, u"pages"_q, u"mini_apps"_q};
+		const auto offer = QJsonObject{ {u"label"_q, u"PROXY"_q}, {u"owner"_q, u"8e88c753"_q},
+			{u"token"_q, u"demo"_q}, {u"routes"_q, routes} };
+		state->offers.push_back(offer);
+		for (const auto &value : routes) {
+			state->saved.insert(value.toString(), u"8e88c753"_q);
+			state->active.emplace(value.toString(), Ovygram::PluginProxyLabel(offer));
+		}
+		_layers.showBox(Box([=, this](not_null<Ui::GenericBox*> box) {
+			Ovygram::SetupPluginProxyBox(box, std::min(style::ConvertScale(600), width() - style::ConvertScale(32)),
+				[=] { return *state; }, [=](const QString &route, const QJsonObject &selected) {
+					if (route.isEmpty()) {
+						state->saved = QJsonObject();
+						state->active.clear();
+					} else if (selected.isEmpty()) {
+						state->saved.remove(route);
+						state->active.erase(route);
+					} else {
+						state->saved.insert(route, u"8e88c753"_q);
+						state->active[route] = Ovygram::PluginProxyLabel(selected);
+					}
 				});
 		}), Ui::LayerOption::KeepOther, anim::type::instant);
 	}
@@ -658,7 +689,11 @@ void Preview::showPluginSurface(const QJsonObject &command) {
 			scroll->setGeometry(QRect(QPoint(), size));
 		}, inner->lifetime());
 		const auto rows = scroll->setOwnedWidget(object_ptr<Ui::VerticalLayout>(scroll));
-		rows->add(std::move(content), st::boxRowPadding);
+		if (const auto cap = command.value(u"max_content_width"_q).toInt(); cap > 0) {
+			content = Ovygram::PluginUiTree::CenterContent(rows, std::move(content),
+				style::ConvertScale(8), cap);
+		}
+		rows->add(std::move(content), st::boxRowPadding, style::al_justify);
 		scroll->widthValue() | rpl::on_next([=](int width) {
 			rows->resizeToWidth(width);
 		}, rows->lifetime());
@@ -673,11 +708,15 @@ void Preview::showPluginSurface(const QJsonObject &command) {
 		auto wrapper = std::make_shared<object_ptr<Ui::RpWidget>>(std::move(content));
 		_layers.showBox(Box([=, this](not_null<Ui::GenericBox*> box) {
 			box->setTitle(rpl::single(title));
-			const auto available = width() - style::ConvertScale(48);
+			const auto available = std::max(width() - style::ConvertScale(32), 1);
 			const auto defaultWidth = (kind == u"section"_q) ? st::settingsPluginsLayerWidth : st::boxWidth;
-			box->setWidth(std::min(available, requested ? std::clamp(requested, st::boxWidth, 1200) : defaultWidth));
+			box->setWidth(std::min(available, requested ? style::ConvertScale(std::clamp(requested, 320, 960)) : defaultWidth));
 			box->setMaxHeight(height() - style::ConvertScale(118));
-			box->addRow(std::move(*wrapper));
+			box->addTopButton(st::boxTitleClose, [=] { box->closeBox(); });
+			if (const auto cap = command.value(u"max_content_width"_q).toInt(); cap > 0) {
+				*wrapper = Ovygram::PluginUiTree::CenterContent(box, std::move(*wrapper), 0, cap);
+			}
+			box->addRow(std::move(*wrapper), style::al_justify);
 			box->addButton(rpl::single(u"Закрыть"_q), [=] { box->closeBox(); });
 			surface->box = box.get();
 			connect(box.get(), &QObject::destroyed, this, [=, this] {
@@ -711,7 +750,15 @@ void Preview::finishSoon() {
 }
 
 void Preview::verify() {
-	if (_scenario == u"list-after"_q) {
+	if (_scenario == u"proxies"_q) {
+		const auto reset = dynamic_cast<Ui::RoundButton*>(ByName(this, u"Сбросить маршрут: Запросы Telegram"_q));
+		Check(reset && !reset->isDisabled(), "The assigned route cannot be reset.");
+		Click(this, u"Сбросить маршрут: Запросы Telegram"_q);
+		Check(reset->isDisabled(), "Reset did not restore the default route.");
+		Click(this, u"Сбросить все"_q);
+		const auto defaultReset = dynamic_cast<Ui::RoundButton*>(ByName(this, u"Сбросить маршрут: Прокси по умолчанию"_q));
+		Check(defaultReset && defaultReset->isDisabled(), "Reset all did not clear the routes.");
+	} else if (_scenario == u"list-after"_q) {
 		const auto first = u"PROXY · Подписки (Windows)"_q;
 		const auto note = u"Черновик заметки"_q;
 		Check(ByName(_list, first), "A plugin is missing from the list.");
@@ -819,7 +866,7 @@ int main(int argc, char **argv) {
 	parser.setApplicationDescription(u"Open Ovygram UI with a temporary profile and sample data."_q);
 	parser.addHelpOption();
 	parser.addOptions({
-		{ u"scenario"_q, u"list-before, list-after, details, stopped, long, install-new, install-update, install-multiple, install-long."_q,
+		{ u"scenario"_q, u"list-before, list-after, details, stopped, long, install-new, install-update, install-multiple, install-long, proxies."_q,
 			u"name"_q, u"details"_q },
 		{ u"palette"_q, u"Apply a plain Telegram color palette."_q, u"file"_q },
 		{ u"scale"_q, u"Ovygram UI scale in percent."_q, u"percent"_q, u"100"_q },
@@ -839,7 +886,7 @@ int main(int argc, char **argv) {
 		const auto scenario = parser.value(u"scenario"_q);
 		const auto plugin = parser.value(u"plugin-file"_q);
 		Check(QStringList{ u"list-before"_q, u"list-after"_q, u"details"_q, u"stopped"_q, u"long"_q, u"install-new"_q, u"install-update"_q,
-			u"install-multiple"_q, u"install-long"_q }.contains(scenario), "Unknown preview scenario.");
+			u"install-multiple"_q, u"install-long"_q, u"proxies"_q }.contains(scenario), "Unknown preview scenario.");
 		Check(!(parser.isSet(u"menu"_q) && parser.isSet(u"setting"_q)), "Choose --menu or --setting.");
 		Check(!plugin.isEmpty() || !(parser.isSet(u"menu"_q) || parser.isSet(u"setting"_q)),
 			"Use --plugin with --menu or --setting.");
@@ -856,6 +903,7 @@ int main(int argc, char **argv) {
 		style::SetDevicePixelRatio(ratio);
 		const auto scale = parser.value(u"scale"_q).toInt();
 		Check(scale >= style::kScaleMin && scale <= style::MaxScaleForRatio(ratio), "UI scale is unsupported.");
+		style::SetScale(scale);
 		style::StartManager(scale);
 		ApplyPalette(parser.value(u"palette"_q));
 		Ui::Emoji::Init();

@@ -50,6 +50,7 @@ private:
 		bool underCursor = false;
 		bool updateReady = false;
 		int waitTillRetry = 0;
+		QString pluginProxy;
 
 		bool operator==(const State &other) const;
 
@@ -62,6 +63,7 @@ private:
 		int contentWidth = 0;
 		QString text;
 		int textWidth = 0;
+		QString pluginProxy;
 
 	};
 
@@ -84,6 +86,7 @@ private:
 	base::unique_qptr<Widget> _widget;
 	bool _forceHidden = false;
 	base::Timer _refreshTimer;
+	QString _pluginProxy;
 	State _state;
 	Layout _currentLayout;
 	crl::time _connectingStartedAt = 0;

@@ -3616,7 +3616,7 @@ void SessionController::openPhoto(
 	const auto origin = item
 		? Data::FileOrigin(item->fullId())
 		: Data::FileOrigin();
-	if (openPhotoExternal(photo, origin, item)) {
+	if (!message.forceInternalViewer && openPhotoExternal(photo, origin, item)) {
 		return;
 	}
 	_window->openInMediaView(Media::View::OpenRequest(
@@ -3652,7 +3652,8 @@ void SessionController::openDocument(
 	if (openSharedStory(item) || openFakeItemStory(message.id, stories)) {
 		return;
 	} else if (showInMediaView) {
-		if (OptionExternalMediaViewer.value()
+		if (!message.forceInternalViewer
+			&& OptionExternalMediaViewer.value()
 			&& !document->isTheme()
 			&& !HasSavingRestriction(item)) {
 			const auto filepath = document->filepath();

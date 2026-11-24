@@ -8,6 +8,8 @@
 #include <utility>
 
 class QWidget;
+class PeerData;
+namespace Ui { class InputField; }
 
 namespace Ovygram {
 
@@ -21,6 +23,12 @@ void RegisterElements(
 // Called after the owner set the visibility of its children and before it
 // lays them out, so hidden elements leave no gap.
 void ApplyElementRules(QWidget *owner);
+
+// Editor operations are scoped to a field, account and chat. The callbacks
+// belong to the field and are discarded as soon as it is destroyed.
+void RegisterEditor(Ui::InputField *field, QString kind,
+	std::function<PeerData*()> peer, std::function<QJsonObject()> snapshot,
+	std::function<bool(const QJsonObject&)> action);
 
 // Called by PluginUi.
 namespace Elements {

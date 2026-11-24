@@ -198,7 +198,10 @@ void Section::updateControlsGeometry() {
 	_scroll->setGeometry(0, top, width(), std::max(height() - top, 0));
 	_holder->resize(_scroll->width(), _holder->height());
 	if (const auto content = _content.data()) {
-		content->resizeToWidth(_scroll->width());
+		const auto margins = content->getMargins();
+		content->resizeToWidth(std::max(
+			_holder->width() - margins.left() - margins.right(),
+			0));
 	}
 }
 

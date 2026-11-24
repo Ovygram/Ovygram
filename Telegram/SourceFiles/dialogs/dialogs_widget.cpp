@@ -6,6 +6,10 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "dialogs/dialogs_widget.h"
+#include "data/data_media_types.h"
+#ifdef OVYGRAM_ENABLED
+#include "ovygram/plugin_panel_buttons.h"
+#endif // OVYGRAM_ENABLED
 
 #include "base/call_delayed.h"
 #include "base/qt/qt_key_modifiers.h"
@@ -523,8 +527,41 @@ Widget::Widget(
 		}
 	});
 
+	_search->setObjectName(u"search.field"_q);
+	_jumpToDate->setObjectName(u"search.calendar"_q);
+#ifdef OVYGRAM_ENABLED
+	Ovygram::PanelButtons::RegisterHost(_searchControls.data(), u"search.actions"_q, [=] {
+		updateControlsGeometry();
+	});
+#endif // OVYGRAM_ENABLED
 	setAcceptDrops(true);
 
+#ifdef OVYGRAM_ENABLED
+	const auto applies = [this](const Ovygram::Search::Scope &scope) {
+		if (scope.view != this) return false;
+		const auto current = pluginSearchScope();
+		return scope.account == current.account && scope.chat == current.chat;
+	};
+	Ovygram::Search::Changes() | rpl::on_next([=](const Ovygram::Search::Scope &scope) {
+		if (!applies(scope)) return;
+		clearSearchCache(true);
+		_pluginSearchDirty = true;
+		const auto hadMedia = _pluginMediaSearch;
+		const auto query = Ovygram::Search::Parameters(scope);
+		_pluginMediaSearch = searchInPeer()
+			&& (!query.media.isEmpty() || query.minDate || query.maxDate);
+		if (hadMedia != _pluginMediaSearch) {
+			_inner->applySearchState(_searchState, _pluginMediaSearch);
+		} else {
+			searchRequested(SearchRequestDelay::Instant);
+		}
+	}, lifetime());
+	Ovygram::Search::ContinueRequests() | rpl::on_next([=](const Ovygram::Search::Scope &scope) {
+		if (!applies(scope)) return;
+		_pluginSearchEmptyPages = 0;
+		searchMore();
+	}, lifetime());
+#endif
 	_inner->setLoadMoreFilteredCallback([=] {
 		const auto state = _inner->state();
 		if (state == WidgetState::Filtered
@@ -621,6 +658,7 @@ Widget::Widget(
 		setupMoreChatsBar();
 		setupDownloadBar();
 	}
+
 	setupSwipeBack();
 
 	if (session().settings().dialogsFiltersEnabled()
@@ -2976,6 +3014,37 @@ void Widget::loadMoreBlockedByDate() {
 	session().api().requestMoreBlockedByDateDialogs();
 }
 
+QWidget *Widget::pluginSearchTarget() const {
+	return _inner->pluginSearchTarget();
+}
+
+Ovygram::Search::Scope Widget::pluginSearchScope() {
+	const auto peer = searchInPeer();
+	return { this, QString::number(session().uniqueId()),
+		peer ? QString::number(peer->id.value) : QString() };
+}
+
+namespace {
+
+Ovygram::Search::Query PluginQuery(Widget *widget) {
+#ifdef OVYGRAM_ENABLED
+	return Ovygram::Search::Parameters(widget->pluginSearchScope());
+#else
+	return {};
+#endif
+}
+
+MTPMessagesFilter MediaSearchFilter(const QString &kind) {
+	if (kind == u"photo"_q) return MTP_inputMessagesFilterPhotos();
+	if (kind == u"video"_q) return MTP_inputMessagesFilterVideo();
+	if (kind == u"document"_q) return MTP_inputMessagesFilterDocument();
+	if (kind == u"url"_q) return MTP_inputMessagesFilterUrl();
+	if (kind == u"voice"_q) return MTP_inputMessagesFilterVoice();
+	return MTP_inputMessagesFilterEmpty();
+}
+
+} // namespace
+
 bool Widget::search(bool inCache, SearchRequestDelay delay) {
 	_processingSearch = true;
 	const auto guard = gsl::finally([&] {
@@ -3003,7 +3072,9 @@ bool Widget::search(bool inCache, SearchRequestDelay delay) {
 		.start = true,
 		.peer = (inPeer != nullptr),
 	};
-	if (trimmed.isEmpty() && !fromPeer && inTags.empty()) {
+	const auto pluginQuery = PluginQuery(this);
+	if (pluginQuery.conflict || (trimmed.isEmpty() && !fromPeer && inTags.empty()
+			&& !_pluginMediaSearch)) {
 		cancelSearchRequest();
 
 		// Otherwise inside first searchApplyEmpty we call searchMode(),
@@ -3028,7 +3099,9 @@ bool Widget::search(bool inCache, SearchRequestDelay delay) {
 		peerSearchReceived({});
 		return true;
 	} else if (inCache) {
-		const auto success = _singleMessageSearch.lookup(query, [=] {
+		const auto success = !pluginQuery.media.isEmpty()
+			|| pluginQuery.minDate || pluginQuery.maxDate
+			|| _singleMessageSearch.lookup(query, [=] {
 			searchRequested(delay);
 		});
 		if (!success) {
@@ -3051,13 +3124,14 @@ bool Widget::search(bool inCache, SearchRequestDelay delay) {
 			searchReceived(fromStartType, i->second, process, true);
 			result = true;
 		}
-	} else if (_searchQuery != query
+	} else if (_pluginSearchDirty || _searchQuery != query
 		|| _searchQueryFrom != fromPeer
 		|| _searchQueryTags != inTags
 		|| _searchQueryTab != tab
 		|| _searchQueryCommunity != community
 		|| _searchQueryFilter != filter
 		|| _searchQueryFromArchive != fromArchive) {
+		_pluginSearchDirty = false;
 		const auto process = currentSearchProcess();
 		_searchQuery = query;
 		_searchQueryFrom = fromPeer;
@@ -3106,9 +3180,9 @@ bool Widget::search(bool inCache, SearchRequestDelay delay) {
 								Data::ReactionToMTP
 							)),
 						MTP_int(topic ? topic->rootId() : 0),
-						MTP_inputMessagesFilterEmpty(),
-						MTP_int(0), // min_date
-						MTP_int(0), // max_date
+						MediaSearchFilter(pluginQuery.media),
+						MTP_int(pluginQuery.minDate), // min_date
+						MTP_int(pluginQuery.maxDate), // max_date
 						MTP_int(0), // offset_id
 						MTP_int(0), // add_offset
 						MTP_int(kSearchPerPage),
@@ -3288,6 +3362,10 @@ void Widget::searchTopics() {
 
 void Widget::searchMore() {
 	const auto process = currentSearchProcess();
+	if (process->pluginPending || _migratedProcess.pluginPending
+			|| _pluginSearchEmptyPages >= 6) return;
+	const auto pluginQuery = PluginQuery(this);
+	if (pluginQuery.conflict) return;
 	if (process->requestId
 		|| _historiesRequest
 		|| _searchTimer.isActive()) {
@@ -3331,9 +3409,9 @@ void Widget::searchMore() {
 								Data::ReactionToMTP
 							)),
 						MTP_int(topic ? topic->rootId() : 0),
-						MTP_inputMessagesFilterEmpty(),
-						MTP_int(0), // min_date
-						MTP_int(0), // max_date
+						MediaSearchFilter(pluginQuery.media),
+						MTP_int(pluginQuery.minDate), // min_date
+						MTP_int(pluginQuery.maxDate), // max_date
 						MTP_int(process->lastId),
 						MTP_int(0), // add_offset
 						MTP_int(kSearchPerPage),
@@ -3389,9 +3467,9 @@ void Widget::searchMore() {
 					MTPInputPeer(), // saved_peer_id
 					MTPVector<MTPReaction>(), // saved_reaction
 					MTPint(), // top_msg_id
-					MTP_inputMessagesFilterEmpty(),
-					MTP_int(0), // min_date
-					MTP_int(0), // max_date
+					MediaSearchFilter(pluginQuery.media),
+					MTP_int(pluginQuery.minDate), // min_date
+					MTP_int(pluginQuery.maxDate), // max_date
 					MTP_int(_migratedProcess.lastId),
 					MTP_int(0), // add_offset
 					MTP_int(kSearchPerPage),
@@ -3448,6 +3526,7 @@ void Widget::requestPublicPosts(bool fromStart) {
 }
 
 void Widget::requestMessages(bool fromStart) {
+	const auto pluginQuery = PluginQuery(this);
 	if (!_searchProcess.lastId || !_searchProcess.lastPeer) {
 		fromStart = true;
 	}
@@ -3481,9 +3560,9 @@ void Widget::requestMessages(bool fromStart) {
 			MTP_int(folderId),
 			(community ? community->inputChannel() : MTPInputChannel()),
 			MTP_string(_searchQuery),
-			MTP_inputMessagesFilterEmpty(),
-			MTP_int(0), // min_date
-			MTP_int(0), // max_date
+			MediaSearchFilter(pluginQuery.media),
+			MTP_int(pluginQuery.minDate), // min_date
+			MTP_int(pluginQuery.maxDate), // max_date
 			MTP_int(fromStart ? 0 : _searchProcess.nextRate),
 			(fromStart
 				? MTP_inputPeerEmpty()
@@ -3548,13 +3627,19 @@ void Widget::searchReceived(
 			return;
 		}
 	}
-	const auto inject = (type.start && !type.posts && !type.migrated)
-		? *_singleMessageSearch.lookup(_searchQuery)
+	const auto pluginQuery = PluginQuery(this);
+	const auto inject = (type.start && !type.posts && !type.migrated
+			&& pluginQuery.media.isEmpty() && !pluginQuery.minDate && !pluginQuery.maxDate)
+		? _singleMessageSearch.lookup(_searchQuery).value_or(nullptr)
 		: nullptr;
 	if (type.start) {
 		process->lastPeer = nullptr;
 		process->lastId = 0;
+		process->matched = 0;
 	}
+	const auto previousId = process->lastId;
+	const auto previousPeer = process->lastPeer;
+	const auto previousRate = process->nextRate;
 	const auto processList = [&](const MTPVector<MTPMessage> &messages) {
 		auto result = std::vector<not_null<HistoryItem*>>();
 		for (const auto &message : messages.v) {
@@ -3613,6 +3698,70 @@ void Widget::searchReceived(
 		process->full = true;
 		return std::vector<not_null<HistoryItem*>>();
 	});
+#ifdef OVYGRAM_ENABLED
+	const auto scope = pluginSearchScope();
+	if (Ovygram::Search::HasPredicate(scope) && (!_searchWithPostsPreview || !type.posts)) {
+		// The cursor and the server's exhaustion decision above always use raw rows.
+		// A repeated cursor must never trigger a second auto-fetch.
+		if (!type.start && previousId == process->lastId && previousPeer == process->lastPeer
+				&& previousRate == process->nextRate) process->full = true;
+		auto ids = std::vector<FullMsgId>();
+		auto rows = QJsonArray();
+		const auto add = [&](not_null<HistoryItem*> item) {
+			const auto &original = item->originalText();
+			auto links = 0;
+			for (const auto &entity : original.entities) {
+				if (entity.type() == EntityType::Url || entity.type() == EntityType::CustomUrl) ++links;
+			}
+			ids.push_back(item->fullId());
+			rows.push_back(QJsonObject{
+				{ u"id"_q, double(item->id.bare) },
+				{ u"chat_id"_q, QString::number(item->history()->peer->id.value) },
+				{ u"sender_id"_q, QString::number(item->from()->id.value) },
+				{ u"text"_q, original.text },
+				{ u"date"_q, double(item->date()) },
+				{ u"outgoing"_q, item->out() },
+				{ u"has_media"_q, bool(item->media()) },
+				{ u"links"_q, links },
+			});
+		};
+		const auto injectMatches = inject
+			&& (!searchInPeer() || inject->history()->peer.get() == searchInPeer());
+		if (injectMatches) add(inject);
+		for (const auto &item : messages) {
+			if (!injectMatches || item.get() != inject) add(item);
+		}
+		const auto generation = _searchGeneration;
+		const auto guard = QPointer<Widget>(this);
+		process->pluginPending = true;
+		Ovygram::Search::Filter(scope, rows, [=](std::vector<bool> visible) {
+			if (!guard || generation != _searchGeneration) return;
+			auto kept = std::vector<not_null<HistoryItem*>>();
+			for (auto i = size_t(0); i != ids.size(); ++i) {
+				if (visible[i]) {
+					if (const auto item = session().data().message(ids[i])) kept.push_back(item);
+				}
+			}
+			process->matched += int(kept.size());
+			_pluginSearchEmptyPages = kept.empty() ? _pluginSearchEmptyPages + 1 : 0;
+			_inner->searchReceived(std::move(kept), nullptr, type, process->matched);
+			if (!guard || generation != _searchGeneration) return;
+			process->pluginPending = false;
+			process->requestId = 0;
+			// Defer until the upstream histories request is released by its callback.
+			crl::on_main(this, [=] {
+				if (generation != _searchGeneration) return;
+				if (_pluginSearchEmptyPages) {
+					searchMore();
+				} else {
+					listScrollUpdated();
+				}
+			});
+			update();
+		});
+		return;
+	}
+#endif
 	_inner->searchReceived(messages, inject, type, fullCount);
 
 	process->requestId = 0;
@@ -4144,6 +4293,7 @@ bool Widget::applySearchState(SearchState state) {
 		updateLoadMoreChatsVisibility();
 	}
 	if (inChatChanged) {
+		updateControlsGeometry();
 		controller()->setSearchInChat(_searchState.inChat);
 		trackSearchInChatDestroyed();
 	}
@@ -4180,7 +4330,13 @@ bool Widget::applySearchState(SearchState state) {
 		&& !queryTakenBySuggestions) {
 		setSearchQuery(_searchState.query);
 	}
-	_inner->applySearchState(_searchState);
+	const auto pluginQuery = PluginQuery(this);
+	_pluginMediaSearch = !inChatChanged && !tabChanged && searchInPeer()
+		&& (!pluginQuery.media.isEmpty() || pluginQuery.minDate || pluginQuery.maxDate);
+	_inner->applySearchState(_searchState, _pluginMediaSearch);
+	if (inChatChanged || tabChanged) {
+		updateControlsGeometry();
+	}
 	updateCommunityOverlaysVisibility();
 
 	if (!_postponeProcessSearchFocusChange) {
@@ -4430,16 +4586,24 @@ void Widget::updateSearchFromVisibility(bool fast) {
 	if (_subsectionTopBar) {
 		_subsectionTopBar->searchEnableChooseFromUser(true, visible);
 	} else if (changed) {
-		auto additional = QMargins();
-		if (visible) {
-			additional.setRight(_chooseFromUser->width());
-		}
-		_search->setAdditionalMargins(additional);
+		updateSearchMargins();
 	}
+}
+
+void Widget::updateSearchMargins() {
+	const auto right = _pluginSearchWidth + (_chooseFromUser->toggled() ? _chooseFromUser->width() : 0);
+	if (_searchRightMargin == right) return;
+	_searchRightMargin = right;
+	_search->setAdditionalMargins(QMargins(0, 0, right, 0));
 }
 
 void Widget::updateControlsGeometry() {
 	if (width() < _narrowWidth) {
+#ifdef OVYGRAM_ENABLED
+		Ovygram::PanelButtons::Hide(_searchControls.data());
+#endif // OVYGRAM_ENABLED
+		_pluginSearchWidth = 0;
+		updateSearchMargins();
 		return;
 	}
 	auto filterAreaTop = 0;
@@ -4503,6 +4667,18 @@ void Widget::updateControlsGeometry() {
 	_cancelSearch->moveToLeft(right - _cancelSearch->width(), _search->y());
 	right -= _jumpToDate->width();
 	_jumpToDate->moveToLeft(right, _search->y());
+#ifdef OVYGRAM_ENABLED
+	const auto available = right - filterLeft - _chooseFromUser->width()
+		- _cancelSearch->width() - st::topBarHeight * 2;
+	const auto pluginWidth = Ovygram::PanelButtons::Prepare(
+		_searchControls.data(),
+		(narrowRatio == 0. && !_subsectionTopBar) ? searchInPeer() : nullptr,
+		available, filterAreaHeight);
+	right -= pluginWidth;
+	Ovygram::PanelButtons::Place(_searchControls.data(), right, 0, filterAreaHeight);
+	_pluginSearchWidth = pluginWidth;
+	updateSearchMargins();
+#endif // OVYGRAM_ENABLED
 	right -= _chooseFromUser->width();
 	_chooseFromUser->moveToLeft(right, _search->y());
 
@@ -4846,6 +5022,10 @@ void Widget::scrollToEntry(const RowDescriptor &entry) {
 
 void Widget::cancelSearchRequest() {
 	++_searchGeneration;
+	_pluginSearchEmptyPages = 0;
+	for (auto process : { &_searchProcess, &_migratedProcess, &_postsProcess }) {
+		process->pluginPending = false;
+	}
 	session().api().request(base::take(_searchProcess.requestId)).cancel();
 	session().api().request(base::take(_migratedProcess.requestId)).cancel();
 	session().api().request(base::take(_postsProcess.requestId)).cancel();

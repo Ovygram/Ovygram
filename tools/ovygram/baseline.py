@@ -322,14 +322,31 @@ def main():
                         f'Telegram/CMakeFiles/Telegram.dir/{configuration}/SourceFiles/' + unit + '.cpp.obj'
                         for unit in (
                             'core/plugin_runtime_bridge', 'core/application', 'core/launcher',
+                            'core/file_utilities', 'passport/passport_panel_edit_scans',
                             'ovygram/chat_decorations', 'ovygram/chat_list_filter',
                             'ovygram/message_decorations', 'ovygram/plugin_elements',
                             'ovygram/plugin_paint', 'ovygram/plugin_ui', 'ovygram/plugin_widgets',
+                            'ovygram/plugin_actions', 'ovygram/plugin_install',
+                            'ovygram/plugin_list_visibility', 'ovygram/plugin_media',
+                            'ovygram/plugin_panel_buttons', 'ovygram/plugin_search',
                             'settings/sections/settings_main', 'settings/sections/settings_plugins',
                             'api/api_plugins', 'api/api_updates', 'mtproto/mtp_instance',
+                            'mtproto/session', 'dialogs/dialogs_widget', 'dialogs/dialogs_inner_widget',
+                            'boxes/peer_list_box', 'boxes/send_files_box',
+                            'history/history_widget', 'history/view/controls/history_view_compose_controls',
+                            'history/view/history_view_chat_section', 'history/view/history_view_message',
+                            'info/media/info_media_provider', 'info/profile/info_profile_members',
+                            'window/notifications_manager', 'window/notifications_manager_default',
                             'window/window_session_controller',
                         )
-                    ),
+                    ), *(
+                        f'Telegram/CMakeFiles/{target}.dir/{configuration}/SourceFiles/{unit}.cpp.obj'
+                        for target, unit in (
+                            ('td_ui', 'dialogs/ui/chat_search_in'),
+                            ('td_ui', 'ui/chat/attach/attach_bot_webview'),
+                            ('td_iv', 'iv/iv_controller'),
+                        )
+                    ), '--', '-k', '0',
                 ],
             }
             if args.action.startswith('prepare-'):
@@ -339,6 +356,8 @@ def main():
                     str(Path(__file__).with_name(script)),
                     args.action.removeprefix('prepare-'),
                     str(source / 'Telegram/build/prepare/prepare.py')]
+            if args.action == 'build' and plugin_mode:
+                commands['build'].extend(['--', '-k', '0'])
             if args.action == 'configure' and plugin_mode:
                 commands['configure'].extend(['-D', f'OVYGRAM_PYTHON_ROOT={root / "plugin-python"}'])
                 # Limit optimizer work in the C++ client on the two-core

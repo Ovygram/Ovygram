@@ -119,6 +119,7 @@ private:
 		HistoryItem *item = nullptr;
 		int forwardedCount = 0;
 		bool fromScheduled = false;
+		bool ordinaryMessage = false;
 	};
 	std::deque<QueuedNotification> _queuedNotifications;
 
@@ -212,6 +213,7 @@ public:
 		const Data::ReactionId &reaction,
 		int forwardedCount,
 		bool fromScheduled,
+		bool ordinaryMessage,
 		QPoint startPosition,
 		int shift,
 		Direction shiftDirection);
@@ -299,6 +301,7 @@ private:
 	HistoryItem *_item = nullptr;
 	int _forwardedCount = 0;
 	bool _fromScheduled = false;
+	bool _ordinaryMessage = false;
 	object_ptr<Ui::IconButton> _close;
 	object_ptr<Ui::RoundButton> _reply;
 	object_ptr<Background> _background = { nullptr };

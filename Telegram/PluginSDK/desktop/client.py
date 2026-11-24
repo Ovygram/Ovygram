@@ -147,3 +147,18 @@ async def _fetch_message(chat, message_id, feed):
         result = await rpc(chat.account_id, tl.messages.getMessages(id=ids), _feed=feed)
     return next((message_from_tl(chat.account_id, item) for item in result.messages
                  if item.constructor_name in ("message", "messageService")), None)
+
+
+async def navigate(chat, destination="chat", *, item_id=0, window=None):
+    """Navigate in an open window of this account. A tree handle pins a window."""
+    from .ui import _handle
+    _chat(chat)
+    if destination not in ("chat", "message", "profile", "topic", "story", "stories", "media", "back"):
+        raise ValueError("Неизвестное назначение перехода.")
+    if type(item_id) is not int or not 0 <= item_id < 2**31:
+        raise ValueError("Некорректный ID.")
+    if destination in ("message", "topic", "story", "media") and not item_id:
+        raise ValueError("Для перехода нужен ID сообщения или темы.")
+    return await _request("navigate", chat.account_id, chat_id=str(chat.id),
+                          destination=destination, item_id=item_id,
+                          window=_handle(window) if window is not None else "")

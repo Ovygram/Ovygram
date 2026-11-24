@@ -26,6 +26,11 @@ public:
 		const Event &event,
 		int depth = 0);
 	void update(const QString &nodeId, const QJsonObject &props, bool relayoutParent = true);
+	[[nodiscard]] static object_ptr<Ui::RpWidget> CenterContent(
+		QWidget *parent,
+		object_ptr<Ui::RpWidget> content,
+		int padding,
+		int cap);
 	static void ResizeCanvas(not_null<Ui::RpWidget*> widget, QSize size);
 
 private:

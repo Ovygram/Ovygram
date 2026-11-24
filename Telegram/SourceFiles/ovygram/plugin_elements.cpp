@@ -1,5 +1,10 @@
 #include "ovygram/plugin_elements.h"
 #include "ovygram/plugin_install.h"
+#include "ovygram/plugin_widgets.h"
+#include "data/data_peer.h"
+#include "core/application.h"
+#include "main/main_session.h"
+#include <QtCore/QJsonArray>
 #include "ovygram/protected_ui.h"
 
 #include "ui/style/style_core.h"
@@ -45,7 +50,15 @@ protected:
 	bool eventFilter(QObject *watched, QEvent *e) override;
 };
 
+struct Editor {
+	QString kind;
+	std::function<PeerData*()> peer;
+	std::function<QJsonObject()> snapshot;
+	std::function<bool(const QJsonObject&)> action;
+};
+
 struct State {
+	std::map<Ui::InputField*, Editor> editors;
 	std::map<QString, QString> composeWatchers; // Rule ID -> plugin ID.
 	bool editing = false; // Applying a plugin's compose command.
 	std::vector<Element> elements;
@@ -272,6 +285,101 @@ void WatchField(not_null<Ui::InputField*> field) {
 	return result;
 }
 
+QJsonObject EditorState(Ui::InputField *field, const Editor &editor, PeerData *peer) {
+	auto result = editor.snapshot();
+	const auto &value = field->getTextWithTags();
+	auto tags = QJsonArray();
+	for (const auto &tag : value.tags) {
+		tags.append(QJsonObject{ { u"offset"_q, tag.offset }, { u"length"_q, tag.length },
+			{ u"id"_q, tag.id } });
+	}
+	result.insert(u"text"_q, value.text);
+	result.insert(u"tags"_q, tags);
+	result.insert(u"field"_q, Widgets::HandleFor(field));
+	result.insert(u"account_id"_q, QString::number(peer->session().uniqueId()));
+	result.insert(u"chat_id"_q, QString::number(peer->id.value));
+	result.insert(u"kind"_q, editor.kind);
+	result.insert(u"revision"_q, field->rawTextEdit()->document()->revision());
+	const auto cursor = field->textCursor();
+	result.insert(u"selection"_q, QJsonArray{ cursor.selectionStart(), cursor.selectionEnd() });
+	return result;
+}
+
+TextWithTags ParseDraft(const QJsonObject &command) {
+	if (!command.value(u"text"_q).isString() || !command.value(u"tags"_q).isArray()) {
+		throw std::runtime_error("Expected draft text and tags.");
+	}
+	auto result = TextWithTags{ command.value(u"text"_q).toString(), {} };
+	const auto tags = command.value(u"tags"_q).toArray();
+	if (result.text.size() > 65536 || tags.size() > 4096) throw std::runtime_error("Draft too large.");
+	auto end = 0;
+	for (const auto value : tags) {
+		const auto tag = value.toObject();
+		const auto start = tag.value(u"offset"_q).toInt(-1);
+		const auto length = tag.value(u"length"_q).toInt(-1);
+		const auto name = tag.value(u"id"_q).toString();
+		if (start < end || length <= 0 || start > result.text.size() - length
+			|| name.isEmpty() || name.size() > 4096
+			|| result.text[start].isLowSurrogate()
+			|| (start + length < result.text.size() && result.text[start + length].isLowSurrogate())) {
+			throw std::runtime_error("Invalid draft tag range.");
+		}
+		result.tags.push_back({start, length, name});
+		end = start + length;
+	}
+	return result;
+}
+
+QJsonValue EditorRequest(const QJsonObject &command) {
+	if (Core::App().passcodeLocked() || ProtectedSurfaceExists() || InstallationUiActive()) {
+		throw std::runtime_error("Editor access is suspended while a protected surface is open.");
+	}
+	const auto expected = command.value(u"expected"_q).toObject();
+	const auto fieldId = expected.value(u"field"_q);
+	const auto requested = fieldId.isUndefined() ? nullptr : Widgets::Resolve(fieldId);
+	const auto write = command.value(u"method"_q).toString() == u"compose.apply"_q;
+	if (write && (!requested || expected.isEmpty())) throw std::runtime_error("Editor has closed.");
+	for (const auto &[field, editor] : Get().editors) {
+		if ((requested && requested != field) || !field->isActiveWindow() || !field->isVisible()
+			|| editor.kind != command.value(u"kind"_q).toString()) continue;
+		const auto peer = editor.peer();
+		if (!peer || QString::number(peer->session().uniqueId()) != command.value(u"account_id"_q).toString()
+			|| QString::number(peer->id.value) != command.value(u"chat_id"_q).toString()) continue;
+		const auto observed = EditorState(field, editor, peer);
+		if (!write) return observed;
+		if (expected != observed) throw std::runtime_error("The draft or selection has changed.");
+		const auto op = command.value(u"op"_q).toString();
+		if (op == u"text"_q) {
+			if (field->rawTextEdit()->isReadOnly()) throw std::runtime_error("Read-only field.");
+			const auto text = ParseDraft(command);
+			const auto was = std::exchange(Get().editing, true);
+			const auto restore = gsl::finally([&] { Get().editing = was; });
+			field->setTextWithTags(text);
+		} else if (op == u"suggestion"_q) {
+			const auto edit = field->rawTextEdit();
+			const auto text = command.value(u"text"_q).toString();
+			if (edit->isReadOnly() || !edit->hasFocus() || text.size() > 65536
+				|| !command.value(u"text"_q).isString()) {
+				throw std::runtime_error("Suggestion unavailable.");
+			}
+			const auto was = std::exchange(Get().editing, true);
+			const auto restore = gsl::finally([&] { Get().editing = was; });
+			auto cursor = edit->textCursor();
+			const auto start = cursor.selectionStart();
+			cursor.insertText(text);
+			const auto end = cursor.position();
+			cursor.setPosition(start);
+			cursor.setPosition(end, QTextCursor::KeepAnchor);
+			edit->setTextCursor(cursor);
+		} else if (!editor.action(command)) {
+			throw std::runtime_error("Editor action unavailable.");
+		}
+		return true;
+	}
+	if (write) throw std::runtime_error("Editor is no longer active.");
+	return QJsonValue(QJsonValue::Null);
+}
+
 // Protected surfaces are drawn in the colors of the user's theme: a plugin
 // palette could hide a warning or recolor a trust badge.
 void SuspendColors(bool suspended) {
@@ -361,6 +469,12 @@ void RegisterElements(
 			}
 		}
 	}
+}
+
+void RegisterEditor(Ui::InputField *field, QString kind, std::function<PeerData*()> peer,
+		std::function<QJsonObject()> snapshot, std::function<bool(const QJsonObject&)> action) {
+	Get().editors.emplace(field, Editor{ std::move(kind), std::move(peer), std::move(snapshot), std::move(action) });
+	QObject::connect(field, &QObject::destroyed, [field] { Get().editors.erase(field); });
 }
 
 void ApplyElementRules(QWidget *owner) {
@@ -453,6 +567,7 @@ void Handle(const QJsonObject &command) {
 
 QJsonValue Request(const QJsonObject &command) {
 	const auto method = command.value(u"method"_q).toString();
+	if (method == u"compose.snapshot"_q || method == u"compose.apply"_q) return EditorRequest(command);
 	const auto field = dynamic_cast<Ui::InputField*>(
 		FindShown(u"compose.field"_q));
 	if (method == u"compose.get_text"_q) {

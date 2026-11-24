@@ -2,15 +2,19 @@
 #include "ovygram/plugin_install.h"
 
 #include "ovygram/plugin_elements.h"
+#include "core/application.h"
+#include "ui/wrap/vertical_layout.h"
 #include "ovygram/protected_ui.h"
 
 #include <QtCore/QJsonArray>
 #include <QtCore/QMetaProperty>
 #include <QtCore/QPointer>
 #include <QtGui/QKeyEvent>
+#include <QtGui/QCursor>
 #include <QtGui/QKeySequence>
 #include <QtGui/QMouseEvent>
 #include <QtWidgets/QApplication>
+#include <QtWidgets/QBoxLayout>
 #include <QtWidgets/QWidget>
 
 #include <algorithm>
@@ -45,7 +49,8 @@ struct Selector {
 struct Rule {
 	QString installationId;
 	Selector selector;
-	QString action; // "hide" or "click".
+	QString action; // "hide", "click" or "available".
+	QString position;
 	bool replace = false;
 	std::vector<QPointer<QWidget>> hidden; // Hidden by this rule, to restore.
 };
@@ -55,6 +60,7 @@ struct KeyRule {
 	QKeySequence sequence;
 	QString element; // Only while the focus is inside this element.
 	bool replace = false;
+	bool exclusive = false;
 };
 
 class Filter final : public QObject {
@@ -284,6 +290,7 @@ void Send(const QString &installationId, const QString &type, const QString &rul
 	auto result = std::vector<std::pair<QString, QString>>();
 	const auto pressed = QKeySequence(key->keyCombination());
 	for (const auto &[id, rule] : Get().keys) {
+		if (rule.exclusive && (Core::App().passcodeLocked() || ProtectedSurfaceExists())) continue;
 		if (rule.sequence.matches(pressed) == QKeySequence::ExactMatch
 			&& InsideElement(watched, rule.element)) {
 			replace = replace || rule.replace;
@@ -291,6 +298,43 @@ void Send(const QString &installationId, const QString &type, const QString &rul
 		}
 	}
 	return result;
+}
+
+QJsonArray Positions(QWidget *widget);
+
+// Resolve selectors after Qt has finished showing and laying out the widget.
+void ReportMountTargets(QWidget *widget) {
+	const auto weak = QPointer<QWidget>(widget);
+	QMetaObject::invokeMethod(widget, [weak] {
+		if (!weak || !weak->isVisible() || InstallationUiActive()
+			|| Core::App().passcodeLocked()) {
+			return;
+		}
+		const auto positions = Positions(weak);
+		if (positions.isEmpty()) return;
+		auto &state = Get();
+		auto matches = std::vector<std::pair<QString, QString>>();
+		for (const auto &[id, rule] : state.rules) {
+			if (rule.action != u"available"_q || !positions.contains(rule.position)
+				|| !Matches(weak, rule.selector)) {
+				continue;
+			}
+			// Never match a plugin's own descendants recursively.
+			auto owned = false;
+			for (auto w = weak.data(); w != nullptr; w = w->parentWidget()) {
+				if (w->property("_ovygram_inserted").toBool()) { owned = true; break; }
+			}
+			if (owned || !state.send) continue;
+			matches.emplace_back(rule.installationId, id);
+		}
+		for (const auto &[owner, id] : matches) {
+			if (!weak || !state.send || ProtectedFromPlugins(weak)) return;
+			state.send(QJsonObject{
+				{ u"installation_id"_q, owner }, { u"type"_q, u"widget_available"_q },
+				{ u"rule_id"_q, id }, { u"value"_q, HandleFor(weak) },
+			});
+		}
+	}, Qt::QueuedConnection);
 }
 
 bool Filter::eventFilter(QObject *watched, QEvent *e) {
@@ -312,6 +356,9 @@ bool Filter::eventFilter(QObject *watched, QEvent *e) {
 	}
 	if (type == QEvent::Show) {
 		if (const auto widget = qobject_cast<QWidget*>(watched)) {
+			if (std::any_of(state.rules.begin(), state.rules.end(), [](const auto &entry) {
+				return entry.second.action == u"available"_q;
+			})) ReportMountTargets(widget);
 			if (!state.rules.empty() && HiddenByRule(widget)) {
 				const auto weak = QPointer<QWidget>(widget);
 				QMetaObject::invokeMethod(this, [=] {
@@ -411,6 +458,31 @@ bool Filter::eventFilter(QObject *watched, QEvent *e) {
 	return result;
 }
 
+QJsonArray Positions(QWidget *widget) {
+	auto positions = QJsonArray();
+	if (!ProtectedFromPlugins(widget) && !CouldCoverProtected(widget, u"geometry"_q)) {
+		if (dynamic_cast<Ui::VerticalLayout*>(widget) || qobject_cast<QBoxLayout*>(widget->layout())) {
+			positions.push_back(u"inside"_q);
+		}
+		const auto owner = widget->parentWidget();
+		const auto box = owner ? qobject_cast<QBoxLayout*>(owner->layout()) : nullptr;
+		if (ProtectedFromPlugins(owner)) return positions;
+		const auto parent = dynamic_cast<Ui::VerticalLayout*>(owner);
+		if (parent) {
+			for (auto i = 0; i < parent->count(); ++i) {
+				if (parent->widgetAt(i).get() != widget) continue;
+				positions.push_back(u"before"_q);
+				positions.push_back(u"after"_q);
+				break;
+			}
+		} else if (box && box->indexOf(widget) >= 0) {
+			positions.push_back(u"before"_q);
+			positions.push_back(u"after"_q);
+		}
+	}
+	return positions;
+}
+
 QJsonObject Describe(QWidget *widget, int depth, int maxDepth, int &count) {
 	++count;
 	const auto geometry = widget->geometry();
@@ -423,6 +495,7 @@ QJsonObject Describe(QWidget *widget, int depth, int maxDepth, int &count) {
 		{ u"geometry"_q, QJsonArray{
 			geometry.x(), geometry.y(), geometry.width(), geometry.height() } },
 	};
+	result.insert(u"positions"_q, Positions(widget));
 	if (!widget->objectName().isEmpty()) {
 		result.insert(u"name"_q, widget->objectName());
 	}
@@ -484,15 +557,27 @@ void Handle(const QJsonObject &command) {
 	const auto installationId = command.value(u"installation_id"_q).toString();
 	const auto ruleId = command.value(u"rule_id"_q).toString();
 	auto &state = Get();
+	if (const auto i = state.rules.find(ruleId); i != state.rules.end() && i->second.installationId != installationId) {
+		throw std::runtime_error("Widget rule belongs to another installation.");
+	}
+	if (const auto i = state.keys.find(ruleId); i != state.keys.end() && i->second.installationId != installationId) {
+		throw std::runtime_error("Key rule belongs to another installation.");
+	}
 	if (method == u"ui.widgets.rule"_q) {
 		const auto action = command.value(u"action"_q).toString();
-		if (ruleId.isEmpty() || (action != u"hide"_q && action != u"click"_q)) {
+		if (ruleId.isEmpty() || (action != u"hide"_q && action != u"click"_q && action != u"available"_q)) {
 			throw std::runtime_error("Invalid widget rule.");
+		}
+		const auto position = command.value(u"position"_q).toString(u"inside"_q);
+		if (action == u"available"_q && position != u"inside"_q
+			&& position != u"before"_q && position != u"after"_q) {
+			throw std::runtime_error("Invalid widget placement position.");
 		}
 		auto rule = Rule{
 			.installationId = installationId,
 			.selector = ParseSelector(command.value(u"selector"_q).toObject()),
 			.action = action,
+			.position = position,
 			.replace = command.value(u"replace"_q).toBool(),
 		};
 		// A replaced rule may have hidden widgets the new one doesn't.
@@ -504,6 +589,12 @@ void Handle(const QJsonObject &command) {
 		EnsureFilter();
 		if (action == u"hide"_q) {
 			ApplyToAll();
+		} else if (action == u"available"_q) {
+			for (const auto widget : QApplication::allWidgets()) {
+				if (widget->isVisible() && Matches(widget, state.rules.at(ruleId).selector)) {
+					ReportMountTargets(widget);
+				}
+			}
 		}
 		Restore(std::move(previous));
 	} else if (method == u"ui.widgets.unrule"_q) {
@@ -521,11 +612,18 @@ void Handle(const QJsonObject &command) {
 		if (ruleId.isEmpty() || sequence.isEmpty() || sequence.count() != 1) {
 			throw std::runtime_error("Invalid key sequence, use e.g. Ctrl+Shift+K.");
 		}
+		const auto exclusive = command.value(u"exclusive"_q).toBool();
+		for (const auto &[other, binding] : state.keys) {
+			if (other != ruleId && (exclusive || binding.exclusive) && binding.sequence == sequence) {
+				throw std::runtime_error("Plugin shortcut already belongs to another action.");
+			}
+		}
 		state.keys[ruleId] = KeyRule{
 			.installationId = installationId,
 			.sequence = sequence,
 			.element = command.value(u"element"_q).toString(),
 			.replace = command.value(u"replace"_q).toBool(),
+			.exclusive = exclusive,
 		};
 		EnsureFilter();
 	} else if (method == u"ui.widgets.set"_q) {
@@ -574,6 +672,13 @@ QJsonValue Request(const QJsonObject &command) {
 			0,
 			std::clamp(command.value(u"depth"_q).toInt(8), 1, kMaximumDepth),
 			count);
+	} else if (method == u"widgets.at_cursor"_q) {
+		const auto target = QApplication::widgetAt(QCursor::pos());
+		if (!target || Core::App().passcodeLocked() || ProtectedFromPlugins(target)) {
+			return QJsonValue(QJsonValue::Null);
+		}
+		auto count = 0;
+		return Describe(target, 0, 0, count);
 	} else if (method == u"widgets.get"_q) {
 		const auto widget = Required(command.value(u"handle"_q));
 		const auto name = command.value(u"property"_q).toString().toLatin1();

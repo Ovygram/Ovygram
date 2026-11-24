@@ -1,4 +1,5 @@
 #include "ovygram/plugin_install.h"
+#include "ovygram/plugin_media.h"
 
 #include "core/application.h"
 #include "core/plugin_runtime.h"
@@ -97,21 +98,22 @@ private:
 			Clear(_rows);
 			if (state != u"ready"_q) {
 				AddPluginInstallLabel(_rows, info.value(u"error"_q).toString());
-				return;
+			} else {
+				_info = info;
+				AddPluginInstallChoices(_box.data(), _rows, _info, _installationId, _showDetails,
+					[this](QString id, bool separate, QJsonObject old) {
+						confirm(std::move(id), separate, std::move(old));
+					},
+					[this](Ui::RoundButton *cancel) {
+						_cancel = cancel;
+						_cancel->setFocus();
+					});
 			}
-			_info = info;
-			AddPluginInstallChoices(_box.data(), _rows, _info, _installationId, _showDetails,
-				[this](QString id, bool separate, QJsonObject old) {
-					confirm(std::move(id), separate, std::move(old));
-				},
-				[this](Ui::RoundButton *cancel) {
-					_cancel = cancel;
-					_cancel->setFocus();
-				});
 		} catch (const std::exception &error) {
 			_timer->stop();
 			AddPluginInstallLabel(_rows, QString::fromUtf8(error.what()));
 		}
+		_rows->resizeToWidth(_rows->widthNoMargins());
 	}
 
 	void confirm(QString id, bool separate, QJsonObject old) {
@@ -128,6 +130,7 @@ private:
 				"замену и установить файл отдельно."_q);
 			if (unavailable) AddPluginInstallLabel(_rows, u"Проверка недоступна. Невозможно уточнить, заблокирован ли этот файл. "
 				"Продолжайте только если доверяете источнику."_q);
+			_rows->resizeToWidth(_rows->widthNoMargins());
 			_warned = true;
 			_cancel = SetPluginInstallAction(_box.data(), u"Подтверждаю установку"_q,
 				[=, this] { confirm(id, separate, old); });
@@ -142,6 +145,7 @@ private:
 			_box->closeBox();
 		} catch (const std::exception &error) {
 			AddPluginInstallLabel(_rows, QString::fromUtf8(error.what()));
+			_rows->resizeToWidth(_rows->widthNoMargins());
 		}
 	}
 
@@ -160,7 +164,7 @@ private:
 } // namespace
 
 bool InstallationUiActive() {
-	return ActiveInstallers != 0;
+	return ActiveInstallers != 0 || PluginFilePickerActive();
 }
 
 void ShowPluginInstall(const QString &path, const QString &installationId, Fn<void()> done) {

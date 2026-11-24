@@ -10,6 +10,7 @@ namespace Ovygram {
 
 // Called from Dialogs::Ui::RowPainter::Paint() after a chat row is painted.
 // Draws plugin decorations of this chat over the row.
+[[nodiscard]] int ChatFooterHeight(PeerData *peer);
 void PaintChatRow(QPainter &p, PeerData *peer, QRect row, bool active);
 
 namespace Decorations {

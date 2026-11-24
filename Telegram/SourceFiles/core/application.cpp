@@ -931,13 +931,46 @@ void Application::setCurrentProxy(
 		const MTP::ProxyData &proxy,
 		MTP::ProxyData::Settings settings) {
 	auto &my = _private->settings.proxy();
-	const auto current = [&] {
-		return my.isEnabled() ? my.selected() : MTP::ProxyData();
-	};
-	const auto was = current();
+	const auto was = my.isEnabled() ? my.selected() : MTP::ProxyData();
+#ifdef OVYGRAM_ENABLED
+	const auto usingTemporary = my.temporaryProxy() && *my.temporaryProxy() == proxy;
+	if (usingTemporary && settings == MTP::ProxyData::Settings::Enabled) {
+		return;
+	}
+	my.setTemporaryProxy(std::nullopt);
+	if (!usingTemporary) {
+		my.setSelected(proxy);
+	}
+#else
 	my.setSelected(proxy);
+#endif
 	my.setSettings(settings);
-	const auto now = current();
+	finishProxyChange(was);
+}
+
+#ifdef OVYGRAM_ENABLED
+void Application::setPluginSessionProxy(bool files, std::optional<MTP::ProxyData> proxy) {
+	auto &settings = _private->settings.proxy();
+	if (settings.sessionProxy(files) == proxy) return;
+	settings.setSessionProxy(files, std::move(proxy));
+	const auto selected = settings.isEnabled() ? settings.selected() : MTP::ProxyData();
+	_proxyChanges.fire({ selected, selected });
+}
+
+void Application::setPluginProxy(std::optional<MTP::ProxyData> proxy) {
+	auto &my = _private->settings.proxy();
+	if (my.temporaryProxy() == proxy) {
+		return;
+	}
+	const auto was = my.isEnabled() ? my.selected() : MTP::ProxyData();
+	my.setTemporaryProxy(std::move(proxy));
+	finishProxyChange(was);
+}
+#endif
+
+void Application::finishProxyChange(const MTP::ProxyData &was) {
+	auto &my = _private->settings.proxy();
+	const auto now = my.isEnabled() ? my.selected() : MTP::ProxyData();
 	if (_badProxyConfiguration && *_badProxyConfiguration != now) {
 		_badProxyConfiguration.reset();
 		if (const auto box = base::take(_badProxyDisableBox)) {

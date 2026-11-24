@@ -10,6 +10,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "mtproto/mtproto_proxy_data.h"
 
 #include <array>
+#include <optional>
 
 namespace Core {
 
@@ -51,6 +52,14 @@ public:
 
 	[[nodiscard]] MTP::ProxyData selected() const;
 	void setSelected(MTP::ProxyData value);
+	[[nodiscard]] const std::optional<MTP::ProxyData> &temporaryProxy() const;
+	[[nodiscard]] const std::optional<MTP::ProxyData> &sessionProxy(bool files) const {
+		return _sessionProxies[files ? 1 : 0];
+	}
+	void setSessionProxy(bool files, std::optional<MTP::ProxyData> value) {
+		_sessionProxies[files ? 1 : 0] = std::move(value);
+	}
+	void setTemporaryProxy(std::optional<MTP::ProxyData> value);
 
 	[[nodiscard]] bool checkIpWarningShown() const;
 	void setCheckIpWarningShown(bool value);
@@ -81,6 +90,8 @@ private:
 	int _proxyRotationTimeout = kDefaultProxyRotationTimeout;
 	MTP::ProxyData::Settings _settings = MTP::ProxyData::Settings::System;
 	MTP::ProxyData _selected;
+	std::optional<MTP::ProxyData> _temporaryProxy;
+	std::array<std::optional<MTP::ProxyData>, 2> _sessionProxies;
 	std::vector<MTP::ProxyData> _list;
 	std::vector<int> _proxyRotationPreferredIndices;
 

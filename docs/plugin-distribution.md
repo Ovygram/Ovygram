@@ -25,7 +25,7 @@ The shared parser is `Telegram/PluginSDK/ovygram_package.py`. Distribution
 uses `.ovyplugin` and `.ovyzip`; local import also accepts `.py`, `.plugin`
 and `.zip`. Metadata is read without running the package. `__desktop_sdk__`
 is the minimum Desktop SDK required: an integer from 1 through the client's
-`SDK_VERSION` (currently 2). A higher value is incompatible and is refused.
+`SDK_VERSION` (currently 4). A higher value is incompatible and is refused.
 
 Local installation accepts an omitted `__release__` and stores `release=False`.
 An explicitly supplied value must still be the boolean literal `True` or

@@ -8,6 +8,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #pragma once
 
 #include "api/api_peer_search.h"
+#include "ovygram/plugin_search.h"
 #include "base/timer.h"
 #include "dialogs/dialogs_key.h"
 #include "window/section_widget.h"
@@ -136,6 +137,8 @@ public:
 	void scrollToEntry(const RowDescriptor &entry);
 
 	void searchMessages(SearchState state);
+	[[nodiscard]] Ovygram::Search::Scope pluginSearchScope();
+	[[nodiscard]] QWidget *pluginSearchTarget() const;
 
 	[[nodiscard]] RowDescriptor resolveChatNext(RowDescriptor from = {}) const;
 	[[nodiscard]] RowDescriptor resolveChatPrevious(RowDescriptor from = {}) const;
@@ -172,6 +175,8 @@ private:
 		int32 nextRate = 0;
 		mtpRequestId requestId = 0;
 		bool full = false;
+		bool pluginPending = false;
+		int matched = 0;
 	};
 
 	void chosenRow(const ChosenRow &row);
@@ -259,6 +264,7 @@ private:
 	void updateJumpToDateVisibility(bool fast = false);
 	void updateSearchFromVisibility(bool fast = false);
 	void updateControlsGeometry();
+	void updateSearchMargins();
 	void refreshTopBars();
 	void showSearchInTopBar(anim::type animated);
 	void checkUpdateStatus();
@@ -345,6 +351,8 @@ private:
 	} _mainMenu;
 	object_ptr<Ui::IconButton> _searchForNarrowLayout;
 	object_ptr<Ui::InputField> _search;
+	int _pluginSearchWidth = 0;
+	int _searchRightMargin = 0;
 	object_ptr<Ui::FadeWrapScaled<Ui::IconButton>> _chooseFromUser;
 	object_ptr<Ui::FadeWrapScaled<Ui::IconButton>> _jumpToDate;
 	object_ptr<Ui::CrossButton> _cancelSearch;
@@ -450,6 +458,9 @@ private:
 	SearchProcessState _migratedProcess;
 	SearchProcessState _postsProcess;
 	uint64 _searchGeneration = 0;
+	bool _pluginSearchDirty = false;
+	bool _pluginMediaSearch = false;
+	int _pluginSearchEmptyPages = 0;
 	int _historiesRequest = 0; // Not real mtpRequestId.
 
 	Api::PeerSearch _peerSearch;

@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "dialogs/ui/chat_search_in.h"
+#include "ui/wrap/vertical_layout.h"
 
 #include "lang/lang_keys.h"
 #include "ui/effects/ripple_animation.h"
@@ -265,6 +266,13 @@ void ChatSearchIn::Section::update() {
 
 ChatSearchIn::ChatSearchIn(QWidget *parent)
 : RpWidget(parent) {
+	_pluginFilters = Ui::CreateChild<Ui::VerticalLayout>(this);
+	_pluginFilters->setObjectName(u"search.filters"_q);
+	_pluginFilters->resizeToWidth(width());
+	_pluginFilters->show();
+	_pluginFilters->heightValue() | rpl::skip(1) | rpl::on_next([=] {
+		crl::on_main(this, [=] { resizeToWidth(width()); });
+	}, lifetime());
 	_in.clicks.events() | rpl::on_next([=] {
 		showMenu();
 	}, lifetime());
@@ -368,6 +376,10 @@ void ChatSearchIn::paintEvent(QPaintEvent *e) {
 		tr::lng_dlg_search_in(tr::now));
 }
 
+QWidget *ChatSearchIn::pluginSearchTarget() const {
+	return _pluginFilters;
+}
+
 int ChatSearchIn::resizeGetHeight(int newWidth) {
 	auto result = st::searchedBarHeight;
 	if (const auto raw = _in.outer.get()) {
@@ -384,7 +396,9 @@ int ChatSearchIn::resizeGetHeight(int newWidth) {
 		_from.shadow->setGeometry(0, result, newWidth, st::lineWidth);
 		result += st::lineWidth;
 	}
-	return result;
+	_pluginFilters->resizeToWidth(newWidth);
+	_pluginFilters->move(0, result);
+	return result + _pluginFilters->height();
 }
 
 void ChatSearchIn::updateSection(

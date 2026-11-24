@@ -1,6 +1,7 @@
 #pragma once
 
 #include "base/weak_ptr.h"
+#include "data/data_types.h"
 #include "mtproto/mtp_instance.h"
 
 #include <QtCore/QJsonArray>
@@ -11,7 +12,9 @@
 #include <optional>
 
 class PeerData;
+class History;
 class HistoryItem;
+class QWidget;
 
 namespace Core {
 class PluginRuntime;
@@ -23,14 +26,24 @@ class Session;
 
 namespace Ovygram {
 class PluginUi;
+class PluginMedia;
 } // namespace Ovygram
 
 namespace Api {
+
+// Correspond to desktop._runtime.POINT_BITS. Keep existing indices stable.
+enum class PluginEventBit : unsigned {
+	Reaction = 10, Read = 11, Topic = 12, Selection = 13,
+	DownloadStarted = 14, DownloadFinished = 15, Theme = 16,
+};
 
 class PluginClient final : public QObject {
 public:
 	explicit PluginClient(not_null<Core::PluginRuntime*> runtime);
 	~PluginClient();
+	void showPluginProxies(Fn<void()> onClosed = {});
+	[[nodiscard]] bool observes(PluginEventBit bit) const;
+	void postLocalEvent(PluginEventBit bit, QJsonObject event);
 
 	bool beforeRpc(
 		MTP::Instance *instance,
@@ -54,6 +67,11 @@ private:
 	};
 
 	void watchAccounts();
+	QJsonArray proxyOffers();
+	void setProxyRoute(const QString &route, const QJsonObject &offer);
+	void updateProxyIndicator();
+	std::map<QString, QString> _activeProxyTokens;
+	std::map<QString, QString> _activeProxyLabels;
 	void synchronize();
 	Main::Session *session(const QString &accountId) const;
 	Main::Session *session(MTP::Instance *instance) const;
@@ -75,6 +93,7 @@ private:
 
 	const not_null<Core::PluginRuntime*> _runtime;
 	std::unique_ptr<Ovygram::PluginUi> _ui;
+	std::unique_ptr<Ovygram::PluginMedia> _media;
 	std::map<QString, Pending> _pending;
 	std::map<QString, base::weak_ptr<Main::Session>> _sessions;
 	rpl::lifetime _accountLifetime;
@@ -82,6 +101,7 @@ private:
 
 };
 
+[[nodiscard]] rpl::producer<QString> PluginProxyIndicatorValue();
 bool PluginBeforeRpc(
 	MTP::Instance *instance,
 	mtpRequestId requestId,
@@ -94,5 +114,7 @@ void PluginObserveUpdates(Main::Session &session, const MTPUpdates &updates);
 void PluginObserveMessages(Main::Session &session, const MTPVector<MTPMessage> &messages);
 void PluginObserveSentMessage(Main::Session &session, not_null<HistoryItem*> item);
 void PluginChatChanged(Main::Session &session, PeerData *peer);
+void PluginSelectionChanged(History &history, QWidget *window, const MessageIdsList &ids);
+void PluginDownloadEvent(not_null<HistoryItem*> item, bool finished, qint64 size);
 
 } // namespace Api

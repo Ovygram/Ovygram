@@ -162,6 +162,7 @@ object_ptr<Ui::RpWidget> InnerWidget::setupContent(
 	}
 
 	auto result = object_ptr<Ui::VerticalLayout>(parent);
+	result->setObjectName(u"profile.content"_q);
 
 	if (!_savedMessages) {
 		if (const auto user = _peer->asUser()) {

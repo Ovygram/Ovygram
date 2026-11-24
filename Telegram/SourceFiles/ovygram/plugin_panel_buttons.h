@@ -12,6 +12,7 @@ namespace Ovygram::PanelButtons {
 // Only application code registers hosts. Plugins choose a documented panel,
 // never an arbitrary parent widget. All functions run on the Qt main thread.
 void RegisterHost(QWidget *owner, const QString &panel, std::function<void()> relayout);
+void UpdateProtectedSurfaces();
 void SetEventSender(std::function<void(QJsonObject)> send);
 void Handle(const QJsonObject &command);
 void RemovePlugin(const QString &installationId);

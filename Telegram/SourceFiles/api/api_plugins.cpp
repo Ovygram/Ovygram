@@ -1,11 +1,19 @@
 #include "api/api_plugins.h"
+#include "webview/webview_embed.h"
 #include "ovygram/plugin_install.h"
 #include "ovygram/plugin_updates.h"
 
 #include "api/api_text_entities.h"
+#include "window/themes/window_theme.h"
+#include "ui/style/style_core.h"
 #include "api/api_updates.h"
 #include "apiwrap.h"
 #include "core/application.h"
+#include "core/core_settings.h"
+#include "boxes/abstract_box.h"
+#include "ovygram/protected_ui.h"
+#include "ovygram/plugin_proxy_view.h"
+#include "ui/layers/generic_box.h"
 #include "core/plugin_runtime.h"
 #include "data/data_channel.h"
 #include "data/data_document.h"
@@ -13,6 +21,7 @@
 #include "data/data_peer.h"
 #include "data/data_photo.h"
 #include "data/data_session.h"
+#include "data/data_stories.h"
 #include "data/data_user.h"
 #include "dialogs/dialogs_key.h"
 #include "history/history.h"
@@ -24,8 +33,10 @@
 #include "ovygram/plugin_commands.h"
 #include "ovygram/plugin_elements.h"
 #include "ovygram/plugin_menus.h"
+#include "ovygram/plugin_actions.h"
 #include "ovygram/plugin_native.h"
 #include "ovygram/plugin_ui.h"
+#include "ovygram/plugin_media.h"
 #include "ovygram/plugin_widgets.h"
 #include "ui/image/image_location.h"
 #include "ui/toast/toast.h"
@@ -156,10 +167,33 @@ QJsonObject RpcError(const MTP::Error &error) {
 	};
 }
 
+auto PluginProxyIndicator = rpl::variable<QString>();
+
 } // namespace
 
+rpl::producer<QString> PluginProxyIndicatorValue() {
+	return PluginProxyIndicator.value();
+}
+
 PluginClient::PluginClient(not_null<Core::PluginRuntime*> runtime)
-: _runtime(runtime) {
+: _runtime(runtime)
+, _media(std::make_unique<Ovygram::PluginMedia>()) {
+	Core::App().proxyChanges() | rpl::on_next([=] {
+		if (!Core::App().settings().proxy().temporaryProxy()) {
+			const auto route = u"default"_q;
+			if (_activeProxyTokens.erase(route)) {
+				_activeProxyLabels.erase(route);
+				try {
+					auto saved = dispatch({ { u"action"_q, u"proxy_routes"_q } }).toObject();
+					saved.remove(route);
+					dispatch({ { u"action"_q, u"save_proxy_routes"_q }, { u"routes"_q, saved } });
+				} catch (const std::exception &error) {
+					LOG(("Ovygram proxy selection: %1").arg(QString::fromUtf8(error.what())));
+				}
+				updateProxyIndicator();
+			}
+		}
+	}, _lifetime);
 	Core::App().domain().accountsChanges(
 	) | rpl::on_next([=] { watchAccounts(); }, _lifetime);
 	Core::App().domain().activeSessionChanges(
@@ -172,6 +206,15 @@ PluginClient::PluginClient(not_null<Core::PluginRuntime*> runtime)
 		}
 	}, _lifetime);
 	watchAccounts();
+	style::PaletteChanged() | rpl::on_next([=] {
+		if (!observes(PluginEventBit::Theme)) return;
+		const auto active = Core::App().domain().started()
+			? Core::App().domain().active().maybeSession() : nullptr;
+		if (active) postLocalEvent(PluginEventBit::Theme, {
+			{ u"point"_q, u"theme_changed"_q }, { u"account_id"_q, AccountId(*active) },
+			{ u"details"_q, QJsonObject{ { u"night"_q, Window::Theme::IsNightMode() } } },
+		});
+	}, _lifetime);
 	Ovygram::Menus::SetDescriber([](
 			Main::Session &session,
 			PeerData *peer,
@@ -225,6 +268,7 @@ PluginClient::PluginClient(not_null<Core::PluginRuntime*> runtime)
 }
 
 PluginClient::~PluginClient() {
+	PluginProxyIndicator = QString();
 	Ovygram::SetPluginUpdateDismissCallback({});
 	Ovygram::SetPluginUpdateNotification({});
 	_runtime->setClient({});
@@ -346,6 +390,137 @@ void PluginClient::fail(
 	}
 }
 
+void PluginClient::setProxyRoute(const QString &route, const QJsonObject &offer) {
+	auto proxy = std::optional<MTP::ProxyData>();
+	if (!offer.isEmpty()) {
+		const auto web = (route == u"pages"_q || route == u"mini_apps"_q);
+		const auto port = offer.value(u"port"_q).toInt();
+		if (port < 1024 || port > 65535 || !offer.value(u"routes"_q).toArray().contains(route)
+			|| offer.value(u"protocol"_q).toString() != (web ? u"http"_q : u"socks5"_q)) {
+			throw std::runtime_error("Invalid local proxy offer.");
+		}
+		proxy.emplace();
+		proxy->type = web ? MTP::ProxyData::Type::Http : MTP::ProxyData::Type::Socks5;
+		proxy->host = u"127.0.0.1"_q;
+		proxy->port = port;
+		proxy->user = offer.value(u"user"_q).toString();
+		proxy->password = offer.value(u"password"_q).toString();
+		_activeProxyTokens[route] = offer.value(u"token"_q).toString();
+		const auto label = offer.value(u"label"_q).toString();
+		_activeProxyLabels[route] = label.isEmpty() ? u"Прокси плагина"_q : label;
+	} else {
+		_activeProxyTokens.erase(route);
+		_activeProxyLabels.erase(route);
+	}
+	if (route == u"default"_q) {
+		Core::App().setPluginProxy(proxy);
+	} else if (route == u"api"_q || route == u"files"_q) {
+		Core::App().setPluginSessionProxy(route == u"files"_q, proxy);
+	} else if (route == u"pages"_q || route == u"mini_apps"_q) {
+		const auto category = (route == u"pages"_q)
+			? Webview::ProxyScope::Page : Webview::ProxyScope::MiniApp;
+		auto local = Webview::LocalProxy();
+		if (proxy) {
+			local.port = proxy->port;
+			local.user = proxy->user.toStdString();
+			local.password = proxy->password.toStdString();
+		}
+		Webview::SetLocalProxy(category, std::move(local));
+	}
+	updateProxyIndicator();
+}
+
+void PluginClient::updateProxyIndicator() {
+	if (_activeProxyLabels.empty()) {
+		PluginProxyIndicator = QString();
+		return;
+	}
+	const auto &label = _activeProxyLabels.begin()->second;
+	const auto same = std::all_of(_activeProxyLabels.begin(), _activeProxyLabels.end(), [&](const auto &entry) {
+		return entry.second == label;
+	});
+	PluginProxyIndicator = same ? (label + u" · активен"_q) : u"Прокси плагинов активны"_q;
+}
+
+QJsonArray PluginClient::proxyOffers() {
+	const auto offers = dispatch({ { u"action"_q, u"proxy_offers"_q } }).toArray();
+	const auto active = _activeProxyTokens;
+	for (const auto &[route, token] : active) {
+		if (route == u"default"_q && !Core::App().settings().proxy().temporaryProxy()) {
+			setProxyRoute(route, {});
+		} else if (std::none_of(offers.begin(), offers.end(), [&](const QJsonValue &value) {
+			return value.toObject().value(u"token"_q).toString() == token;
+		})) {
+			setProxyRoute(route, {});
+		}
+	}
+	const auto saved = dispatch({ { u"action"_q, u"proxy_routes"_q } }).toObject();
+	for (auto i = saved.begin(); i != saved.end(); ++i) {
+		const auto route = i.key();
+		if (_activeProxyTokens.contains(route)) continue;
+		const auto owner = i.value().toString();
+		for (const auto &value : offers) {
+			const auto offer = value.toObject();
+			if (offer.value(u"restore"_q).toBool()
+				&& offer.value(u"owner"_q).toString() == owner
+				&& offer.value(u"routes"_q).toArray().contains(route)) {
+				setProxyRoute(route, offer);
+				break;
+			}
+		}
+	}
+	return offers;
+}
+
+void PluginClient::showPluginProxies(Fn<void()> onClosed) {
+	Ui::show(Box([=, this](not_null<Ui::GenericBox*> box) {
+		Ovygram::ProtectSurface(box);
+		if (onClosed) {
+			connect(box.get(), &QObject::destroyed, this, [=, this] {
+				QTimer::singleShot(0, this, onClosed);
+			});
+		}
+		const auto window = Core::App().activePrimaryWindow();
+		const auto preferredWidth = style::ConvertScale(600);
+		const auto width = window
+			? std::min(preferredWidth, std::max(window->widget()->width() - style::ConvertScale(32), 1))
+			: preferredWidth;
+		Ovygram::SetupPluginProxyBox(box, width, [=, this] {
+			auto result = Ovygram::ProxyViewState();
+			result.offers = proxyOffers();
+			result.saved = dispatch({ { u"action"_q, u"proxy_routes"_q } }).toObject();
+			for (const auto &[route, token] : _activeProxyTokens) {
+				const auto offer = std::find_if(result.offers.begin(), result.offers.end(),
+					[&](const QJsonValue &value) {
+						return value.toObject().value(u"token"_q).toString() == token;
+					});
+				if (offer != result.offers.end()) {
+					result.active.emplace(route, Ovygram::PluginProxyLabel((*offer).toObject()));
+				}
+			}
+			return result;
+		}, [=, this](const QString &route, const QJsonObject &offer) {
+			auto saved = dispatch({ { u"action"_q, u"proxy_routes"_q } }).toObject();
+			if (route.isEmpty()) {
+				saved = QJsonObject();
+			} else if (offer.isEmpty()) {
+				saved.remove(route);
+			} else {
+				saved.insert(route, offer.value(u"owner"_q));
+			}
+			dispatch({ { u"action"_q, u"save_proxy_routes"_q }, { u"routes"_q, saved } });
+			if (route.isEmpty()) {
+				const auto active = _activeProxyTokens;
+				for (const auto &[key, token] : active) {
+					setProxyRoute(key, {});
+				}
+			} else {
+				setProxyRoute(route, offer);
+			}
+		});
+	}), Ui::LayerOption::KeepOther);
+}
+
 void PluginClient::receive(const QByteArray &request) {
 	const auto command = QJsonDocument::fromJson(request).object();
 	const auto id = command.value(u"id"_q).toString();
@@ -355,10 +530,14 @@ void PluginClient::receive(const QByteArray &request) {
 		}
 		const auto method = command.value(u"method"_q).toString();
 		if (Ovygram::InstallationUiActive() && method != u"ui.close_plugin"_q
+			&& method != u"ui.action.remove"_q
 			&& (method.startsWith(u"ui."_q) || method.startsWith(u"native."_q)
 				|| method.startsWith(u"widgets."_q) || method.startsWith(u"compose."_q)
 				|| method == u"python_ui"_q)) {
 			throw std::runtime_error("Plugin UI access is suspended during installation.");
+		}
+		if (method == u"ui.close_plugin"_q) {
+			_media->remove(command.value(u"installation_id"_q).toString());
 		}
 		if (method.startsWith(u"ui."_q)) {
 			try {
@@ -375,6 +554,10 @@ void PluginClient::receive(const QByteArray &request) {
 					} },
 				});
 			}
+			return;
+		}
+		if (method == u"proxy.refresh"_q) {
+			proxyOffers();
 			return;
 		}
 		if (method == u"commands.refresh"_q) {
@@ -397,6 +580,43 @@ void PluginClient::receive(const QByteArray &request) {
 			}).toBool()) {
 			return;
 		}
+		if (method.startsWith(u"helper."_q)) {
+			const auto owner = command.value(u"installation_id"_q).toString();
+			if (method == u"helper.open_proxy_settings"_q) {
+				const auto window = Core::App().activePrimaryWindow();
+				if (!window || Core::App().passcodeLocked()
+					|| Ovygram::ProtectedSurfaceExists()
+					|| Ovygram::InstallationUiActive()) {
+					throw std::runtime_error("Proxy settings are unavailable during protected UI.");
+				}
+				window->activate();
+				if (command.value(u"params"_q).toObject().value(u"wait_until_closed"_q).toBool()) {
+					showPluginProxies([=, this] { reply(id, true); });
+				} else {
+					showPluginProxies();
+					reply(id, true);
+				}
+			} else if (method == u"helper.proxy_active"_q) {
+				const auto offers = proxyOffers();
+				reply(id, std::any_of(offers.begin(), offers.end(), [&](const QJsonValue &value) {
+					const auto offer = value.toObject();
+					const auto route = command.value(u"params"_q).toObject().value(u"route"_q).toString();
+					return offer.value(u"owner"_q).toString() == owner
+						&& std::any_of(_activeProxyTokens.begin(), _activeProxyTokens.end(), [&](const auto &entry) {
+							return (route.isEmpty() || route == entry.first)
+								&& offer.value(u"token"_q).toString() == entry.second;
+						});
+				}));
+			} else {
+				reply(id, dispatch({
+					{ u"action"_q, u"helper_command"_q },
+					{ u"installation_id"_q, owner },
+					{ u"operation"_q, method.mid(7) },
+					{ u"params"_q, command.value(u"params"_q).toObject() },
+				}));
+			}
+			return;
+		}
 		if (method.startsWith(u"compose."_q)) {
 			reply(id, Ovygram::Elements::Request(command));
 			return;
@@ -411,6 +631,14 @@ void PluginClient::receive(const QByteArray &request) {
 				{ u"action"_q, u"ui_execute"_q },
 				{ u"call_id"_q, command.value(u"call_id"_q) },
 			}));
+			return;
+		} else if (method == u"actions.configure"_q) {
+			reply(id, Ovygram::Actions::ConfigureOwned(command.value(u"installation_id"_q).toString(),
+				command.value(u"rule_id"_q).toString()));
+			return;
+		} else if (method == u"actions.register"_q) {
+			Ovygram::Actions::Register(command);
+			reply(id, true);
 			return;
 		} else if (method == u"accounts"_q) {
 			auto accounts = QJsonArray();
@@ -435,6 +663,27 @@ void PluginClient::receive(const QByteArray &request) {
 		const auto owner = session(accountId);
 		if (!owner || owner->account().loggingOut()) {
 			fail(id, u"ACCOUNT_CLOSED"_q, u"Аккаунт недоступен."_q);
+			return;
+		}
+		if (method == u"media.pick"_q) {
+			const auto installation = command.value(u"installation_id"_q).toString();
+			const auto name = dispatch({ { u"action"_q, u"installation_plugin_id"_q },
+				{ u"installation_id"_q, installation } }).toString();
+			if (name.isEmpty()) throw std::runtime_error("Unknown installation.");
+			const auto pending = [=] {
+				try {
+					return dispatch({ { u"action"_q, u"client_pending"_q }, { u"request_id"_q, id },
+						{ u"installation_id"_q, installation } }).toBool();
+				} catch (const std::exception &) {
+					return false;
+				}
+			};
+			_media->pick(owner, installation, name, pending,
+				[=](QJsonValue value) { reply(id, std::move(value)); },
+				[=](QString message) { fail(id, u"FILE_ERROR"_q, message); });
+			return;
+		} else if (method.startsWith(u"media."_q)) {
+			reply(id, _media->request(owner, command));
 			return;
 		}
 		if (method == u"rpc"_q) {
@@ -472,7 +721,59 @@ void PluginClient::receive(const QByteArray &request) {
 		if (!peer) {
 			throw std::runtime_error("Chat is not loaded.");
 		}
-		if (method == u"get_chat"_q) {
+		if (method == u"navigate"_q) {
+			if (Core::App().passcodeLocked() || Ovygram::ProtectedSurfaceExists() || Ovygram::InstallationUiActive()) {
+				throw std::runtime_error("Navigation is unavailable during protected UI.");
+			}
+			const auto windowId = command.value(u"window"_q);
+			const auto widget = Ovygram::Widgets::Resolve(windowId);
+			const auto &windows = Core::App().windowStack();
+			for (auto i = windows.rbegin(); i != windows.rend(); ++i) {
+				const auto controller = (*i)->sessionController();
+				if (!controller || &controller->session() != owner
+					|| (!windowId.toString().isEmpty()
+						&& (!widget || (*i)->widget()->window() != widget->window()))) {
+					continue;
+				}
+				const auto target = command.value(u"destination"_q).toString();
+				const auto itemId = command.value(u"item_id"_q).toInt();
+				if (target == u"chat"_q || (target == u"message"_q && itemId > 0)) {
+					controller->showPeerHistory(peer, Window::SectionShow::Way::Forward,
+						itemId ? MsgId(itemId) : ShowAtUnreadMsgId);
+				} else if (target == u"profile"_q) {
+					controller->showPeerInfo(peer);
+				} else if (target == u"topic"_q && itemId > 0) {
+					controller->showRepliesForMessage(owner->data().history(peer), MsgId(itemId));
+				} else if (target == u"story"_q && itemId > 0) {
+					controller->openPeerStory(peer, itemId, Data::StoriesContext{ Data::StoriesContextSingle() });
+				} else if (target == u"stories"_q) {
+					controller->openPeerStories(peer->id);
+				} else if (target == u"back"_q) {
+					controller->showBackFromStack();
+				} else if (target == u"media"_q && itemId > 0) {
+					const auto item = owner->data().message(peer, MsgId(itemId));
+					const auto media = item ? item->media() : nullptr;
+					if (!media) throw std::runtime_error("Message media is not loaded.");
+					const auto context = Window::SessionController::MessageContext{
+						.id = item->fullId(),
+						.topicRootId = item->topicRootId(),
+						.forceInternalViewer = true,
+					};
+					if (const auto photo = media->photo()) {
+						controller->openPhoto(photo, context);
+					} else if (const auto document = media->document()) {
+						controller->openDocument(document, true, context);
+					} else {
+						throw std::runtime_error("Message has no photo or document.");
+					}
+				} else {
+					throw std::runtime_error("Invalid navigation destination or ID.");
+				}
+				reply(id, true);
+				return;
+			}
+			throw std::runtime_error("No matching open account window.");
+		} else if (method == u"get_chat"_q) {
 			reply(id, Chat(*owner, peer));
 		} else if (method == u"get_message"_q) {
 			const auto item = owner->data().message(peer, MsgId(command.value(u"message_id"_q).toInteger()));
@@ -496,6 +797,21 @@ void PluginClient::rpc(const QJsonObject &command, not_null<Main::Session*> owne
 	const auto offset = MTP::details::SerializedRequest::kMessageBodyPosition;
 	request->resize(offset + data.size() / sizeof(mtpPrime));
 	memcpy(request->data() + offset, data.constData(), data.size());
+	const auto dc = command.value(u"dc_id"_q).toInt(-1);
+	if (dc < 0 || dc >= MTP::kDcShift) {
+		throw std::runtime_error("Invalid data center.");
+	}
+	const auto method = mtpTypeId((*request)[offset]);
+	const auto upload = (method == mtpc_upload_saveFilePart || method == mtpc_upload_saveBigFilePart);
+	const auto download = (method == mtpc_upload_getFile
+		|| method == mtpc_upload_getWebFile
+		|| method == mtpc_upload_getCdnFile
+		|| method == mtpc_upload_reuploadCdnFile
+		|| method == mtpc_upload_getCdnFileHashes
+		|| method == mtpc_upload_getFileHashes);
+	const auto routeDc = upload
+		? MTP::details::uploadDcId(dc, 0)
+		: download ? MTP::downloadDcId(dc, 0) : dc;
 	_pending.emplace(id, Pending{
 		base::make_weak(owner.get()),
 		AccountId(*owner),
@@ -579,12 +895,11 @@ void PluginClient::rpc(const QJsonObject &command, not_null<Main::Session*> owne
 		}
 		return true;
 	};
-	const auto dc = command.value(u"dc_id"_q).toInt();
 	owner->mtp().sendSerialized(
 		requestId,
 		std::move(request),
 		{ done, failed },
-		dc ? MTP::downloadDcId(dc, 0) : 0,
+		routeDc,
 		0,
 		0);
 	const auto timeout = std::clamp(command.value(u"timeout"_q).toInt(60), 1, 300);
@@ -891,16 +1206,35 @@ void PluginClient::observeSentMessage(
 
 void PluginClient::observeUpdate(Main::Session &session, const MTPUpdate &update) {
 	const auto mask = _runtime->hookMask();
-	if (!(mask & ((1U << 4) | (1U << 5) | (1U << 6)))) {
-		return;
-	}
+	if (!mask) return;
 	switch (update.type()) {
+	case mtpc_updateMessageReactions:
+		if (!observes(PluginEventBit::Reaction)) return;
+		break;
+	case mtpc_updateEditForumTopic:
+	case mtpc_updatePinnedForumTopic:
+	case mtpc_updatePinnedForumTopics:
+		if (!observes(PluginEventBit::Topic)) return;
+		break;
+	case mtpc_updateReadHistoryInbox:
+	case mtpc_updateReadHistoryOutbox:
+	case mtpc_updateReadChannelInbox:
+	case mtpc_updateReadChannelOutbox:
+	case mtpc_updateReadMessagesContents:
+	case mtpc_updateChannelReadMessagesContents:
+	case mtpc_updateReadChannelDiscussionInbox:
+	case mtpc_updateReadChannelDiscussionOutbox:
+	case mtpc_updateReadMonoForumInbox:
+	case mtpc_updateReadMonoForumOutbox:
+		if (!observes(PluginEventBit::Read)) return;
+		break;
 	case mtpc_updateNewMessage:
 	case mtpc_updateNewChannelMessage:
 	case mtpc_updateEditMessage:
 	case mtpc_updateEditChannelMessage:
 	case mtpc_updateDeleteMessages:
 	case mtpc_updateDeleteChannelMessages:
+		if (!(mask & ((1U << 4) | (1U << 5) | (1U << 6))) && !observes(PluginEventBit::Topic)) return;
 		break;
 	default:
 		return;
@@ -965,6 +1299,58 @@ void PluginObserveSentMessage(
 	if (const auto client = Core::App().pluginClient()) {
 		client->observeSentMessage(session, item);
 	}
+}
+
+bool PluginClient::observes(PluginEventBit bit) const {
+	return (_runtime->hookMask() & (1U << static_cast<unsigned>(bit))) != 0;
+}
+
+void PluginClient::postLocalEvent(PluginEventBit bit, QJsonObject event) {
+	// Don't enter the plugin host reentrantly during selection/layout or while
+	// DownloadManager still owns iterators into a mutating queue.
+	crl::on_main(this, [=] {
+		if (bit == PluginEventBit::Selection
+			&& (Core::App().passcodeLocked()
+				|| !Ovygram::Widgets::Resolve(event.value(u"details"_q).toObject().value(u"window"_q)))) {
+			return;
+		}
+		if (observes(bit) && session(event.value(u"account_id"_q).toString())) emitEvent(event);
+	});
+}
+
+void PluginSelectionChanged(History &history, QWidget *window, const MessageIdsList &ids) {
+	const auto client = Core::App().pluginClient();
+	if (!client || !client->observes(PluginEventBit::Selection) || Core::App().passcodeLocked()) return;
+	const auto handle = Ovygram::Widgets::HandleFor(window->window());
+	if (handle.isEmpty()) return;
+	auto rows = QJsonArray();
+	auto localIds = QJsonArray();
+	for (const auto &id : ids) {
+		rows.push_back(QJsonObject{
+			{ u"chat_id"_q, QString::number(id.peer.value) },
+			{ u"message_id"_q, id.msg.bare },
+		});
+		if (id.peer == history.peer->id) localIds.push_back(id.msg.bare);
+	}
+	client->postLocalEvent(PluginEventBit::Selection, {
+		{ u"point"_q, u"selection_changed"_q }, { u"account_id"_q, AccountId(history.session()) },
+		{ u"chat_id"_q, QString::number(history.peer->id.value) }, { u"message_ids"_q, localIds },
+		{ u"details"_q, QJsonObject{ { u"items"_q, rows },
+			{ u"window"_q, handle } } },
+	});
+}
+
+void PluginDownloadEvent(not_null<HistoryItem*> item, bool finished, qint64 size) {
+	const auto client = Core::App().pluginClient();
+	const auto bit = finished ? PluginEventBit::DownloadFinished : PluginEventBit::DownloadStarted;
+	if (!client || !client->observes(bit)) return;
+	client->postLocalEvent(bit, {
+		{ u"point"_q, finished ? u"download_finished"_q : u"download_started"_q },
+		{ u"account_id"_q, AccountId(item->history()->session()) },
+		{ u"chat_id"_q, QString::number(item->history()->peer->id.value) },
+		{ u"message_ids"_q, QJsonArray{ item->id.bare } },
+		{ u"details"_q, QJsonObject{ { u"size"_q, size } } },
+	});
 }
 
 void PluginChatChanged(Main::Session &session, PeerData *peer) {

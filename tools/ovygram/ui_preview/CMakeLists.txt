@@ -60,6 +60,7 @@ add_executable(ovygram-ui-preview
     ${src_loc}/ovygram/plugin_install_view.cpp
     ${src_loc}/ovygram/plugin_ui_tree.cpp
     ${src_loc}/ovygram/plugin_paint.cpp
+    ${src_loc}/ovygram/plugin_proxy_view.cpp
 )
 target_compile_features(ovygram-ui-preview PRIVATE cxx_std_20)
 target_compile_definitions(ovygram-ui-preview PRIVATE OVYGRAM_PREVIEW_PYTHON="${CMAKE_CURRENT_SOURCE_DIR}/plugin.py")
@@ -68,7 +69,7 @@ target_include_directories(ovygram-ui-preview PRIVATE ${src_loc})
 target_precompile_headers(ovygram-ui-preview PRIVATE ${src_loc}/ui/ui_pch.h)
 
 include(${submodules_loc}/lib_ui/cmake/generate_styles.cmake)
-generate_styles(ovygram-ui-preview ${src_loc} "ovygram/plugin_management.style"
+generate_styles(ovygram-ui-preview ${src_loc} "ovygram/plugin_management.style;ui/menu_icons.style"
     "${submodules_loc}/lib_ui/ui/colors.palette;${submodules_loc}/lib_ui/ui/basic.style;${submodules_loc}/lib_ui/ui/widgets/widgets.style;${submodules_loc}/lib_ui/ui/layers/layers.style")
 
 foreach(index RANGE 1 8)

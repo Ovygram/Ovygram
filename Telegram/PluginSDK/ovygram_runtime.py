@@ -31,6 +31,7 @@ from hook_utils import HookCancelled
 from ovygram_commands import Engine
 from ovygram_deps import Dependencies, normalize_all
 from ovygram_distribution import Distribution
+from ovygram_helpers import Helpers, PROXY_ROUTES
 from ovygram_hosts import HostError, LocalHost, PluginError, ProcessHost
 from ovygram_registry import TRUSTED, protected_author
 from ovygram_package import (MAX_PACKAGE, MAX_SOURCE, SDK_VERSION, archive_path, read_source,
@@ -180,6 +181,7 @@ class Manager:
         self.commands = Engine()
         self.distribution_state = {}
         self.pending_updates = {}
+        self.proxy_routes = {}
         self._startup_pending = True
         self.logger = logging.Logger("ovygram")
         self.log_handler = RotatingFileHandler(
@@ -191,6 +193,7 @@ class Manager:
         # The SDK lies in python/sdk, next to the bundled interpreter and pip.
         self.python_dir = Path(__file__).resolve().parent.parent
         self.host = host(self)
+        self.helpers = Helpers(self)
         self.dependencies = Dependencies(self.root, self.python_dir, activate=self.dependencies_path)
         self.records = self.read_state()
         self.distribution = Distribution(self, registry)
@@ -362,8 +365,15 @@ class Manager:
 
     def host_exited(self, reason):
         """The host process died or was stopped; on the main thread."""
-        for installation_id in self._loaded:
+        affected = set(self._loaded)
+        if self.loading is not None:
+            affected.add(self.loading)
+        for installation_id in sorted(affected):
             self.errors[installation_id] = reason
+            self.notify({"id": uuid.uuid4().hex, "method": "ui.close_plugin",
+                         "installation_id": installation_id})
+        for owner in list(self.helpers.children):
+            self.helpers.stop(owner)
         self._loaded.clear()
         self.commands.clear()
         self.hook_mask = 0
@@ -385,6 +395,10 @@ class Manager:
             raise ValueError("Повреждён файл состояния плагинов.")
         self.distribution_state = state.get("distribution", {})
         self.pending_updates = state.get("pending_updates", {})
+        routes = state.get("proxy_routes", {})
+        if isinstance(routes, dict):
+            self.proxy_routes = {route: owner for route, owner in routes.items()
+                                 if route in PROXY_ROUTES and isinstance(owner, str) and owner in records}
         if not isinstance(self.pending_updates, dict) or any(
                 identity not in records or not isinstance(previous, dict)
                 or not {"plugin_id", "current", "previous", "enabled", "settings"} <= previous.keys()
@@ -451,7 +465,8 @@ class Manager:
 
     def save(self):
         text = json.dumps({"version": STATE_VERSION, "installations": self.records,
-                           "distribution": self.distribution_state, "pending_updates": self.pending_updates},
+                           "distribution": self.distribution_state, "pending_updates": self.pending_updates,
+                           "proxy_routes": self.proxy_routes},
                           ensure_ascii=False, allow_nan=False, indent=2)
         temporary = self.state.with_suffix(".tmp")
         with temporary.open("w", encoding="utf-8") as stream:
@@ -459,6 +474,21 @@ class Manager:
             stream.flush()
             os.fsync(stream.fileno())
         temporary.replace(self.state)
+
+    def save_proxy_routes(self, routes):
+        """Only the native proxy picker may record a user's route selection."""
+        if not isinstance(routes, dict) or any(route not in PROXY_ROUTES or
+                not isinstance(owner, str) or owner not in self.records for route, owner in routes.items()):
+            raise ValueError("Недопустимые назначения прокси.")
+        if routes == self.proxy_routes:
+            return True
+        previous, self.proxy_routes = self.proxy_routes, dict(routes)
+        try:
+            self.save()
+        except BaseException:
+            self.proxy_routes = previous
+            raise
+        return True
 
     def directory(self, version):
         token = version["directory"]
@@ -609,6 +639,7 @@ class Manager:
                 self.host.call("unload", installation_id=installation_id)
         finally:
             self._loaded.pop(installation_id, None)
+            self.helpers.stop(installation_id)
             self.commands.remove(installation_id)
 
     def change_record(self, installation_id, record):
@@ -844,6 +875,8 @@ class Manager:
                 "plugin_id": record["plugin_id"], "settings": record["settings"],
                 "account_settings": record.get("account_settings", {})}, ensure_ascii=False), encoding="utf-8")
         self.disable(installation_id)
+        self.save_proxy_routes({route: owner for route, owner in self.proxy_routes.items()
+                                if owner != installation_id})
         self.change_record(installation_id, None)
         self.discard(record["current"])
         self.discard(record["previous"])
@@ -968,6 +1001,7 @@ class Manager:
         action = json.loads(request)
         name = action.pop("action")
         self.host.check()
+        self.helpers.poll()
         if name in ("snapshot", "poll", "client_event", "ui_event"):
             # A finished dependency installation starts its plugin here, on
             # the main thread and outside of any hook.
@@ -975,6 +1009,10 @@ class Manager:
             self.distribution.poll()
         allowed = {
             "poll": self.poll_distribution,
+            "helper_command": self.helpers.command,
+            "proxy_offers": lambda: list(self.helpers.offers.values()),
+            "proxy_routes": lambda: self.proxy_routes,
+            "save_proxy_routes": self.save_proxy_routes,
             "prepare_install": self.distribution.prepare,
             "prepared_install": self.distribution.prepared,
             "commit_install": self.distribution.commit,
@@ -989,6 +1027,7 @@ class Manager:
             "resume": self.resume, "settings": self.settings, "save_settings": self.save_settings,
             "settings_action": self.settings_action,
             "share_file": self.share_file,
+            "installation_plugin_id": lambda installation_id: self.records[installation_id]["plugin_id"],
             "client_reply": lambda request: self.forward("complete", None, request=request),
             "client_pending": lambda request_id, installation_id: bool(self.forward(
                 "is_pending", False, request_id=request_id, installation_id=installation_id)),
@@ -1034,7 +1073,11 @@ class Manager:
         self.closing = True
         self.distribution.close()
         # Unloads every plugin in the reverse order and stops their tasks.
-        self.host.close()
+        try:
+            self.host.close()
+        finally:
+            for owner in list(self.helpers.children):
+                self.helpers.stop(owner)
         self._loaded.clear()
         # The marker detects crashes: a clean exit removes it, also after a
         # failed unload. Recovery mode and --disable-plugins keep it, so the

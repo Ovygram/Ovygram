@@ -47,6 +47,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "platform/platform_specific.h"
 
 #include <QtGui/QWindow>
+#include <map>
+#include <stdexcept>
 #include <QtGui/QGuiApplication>
 #include <QtGui/QScreen>
 
@@ -57,6 +59,32 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 namespace Window {
 namespace Notifications {
 namespace {
+
+struct PluginRule {
+	QString owner;
+	QString contains;
+	QString replacement;
+	QString accountId;
+	QString chatId;
+	bool hide = false;
+	int groupSeconds = 0;
+	int priority = 0;
+	std::map<Manager::ContextId, crl::time> groups;
+};
+
+auto &PluginRules() {
+	static auto rules = std::map<std::pair<QString, QString>, PluginRule>();
+	return rules;
+}
+
+bool MatchesPreview(
+		const PluginRule &rule,
+		not_null<HistoryItem*> item,
+		const QString &preview) {
+	return (rule.accountId.isEmpty() || rule.accountId == QString::number(item->history()->session().uniqueId()))
+		&& (rule.chatId.isEmpty() || rule.chatId == QString::number(item->history()->peer->id.value))
+		&& (rule.contains.isEmpty() || preview.contains(rule.contains, Qt::CaseInsensitive));
+}
 
 // not more than one sound in 500ms from one peer - grouping
 constexpr auto kMinimalDelay = crl::time(100);
@@ -1670,6 +1698,89 @@ void Manager::notificationActionActivated(
 	}).send();
 }
 
+void SetPluginNotificationRule(const QJsonObject &command) {
+	const auto owner = command.value(u"installation_id"_q).toString();
+	const auto id = command.value(u"rule_id"_q).toString();
+	if (owner.isEmpty() || id.isEmpty()) throw std::runtime_error("Notification rule needs owner and id.");
+	const auto key = std::make_pair(owner, id);
+	auto &rules = PluginRules();
+	if (command.value(u"method"_q).toString() == u"ui.notification.remove"_q) {
+		rules.erase(key);
+		return;
+	}
+	auto rule = PluginRule{
+		.owner = owner,
+		.contains = command.value(u"contains"_q).toString(),
+		.replacement = command.value(u"replacement"_q).toString(),
+		.accountId = command.value(u"account_id"_q).toString(),
+		.chatId = command.value(u"chat_id"_q).toString(),
+		.hide = command.value(u"hide"_q).toBool(),
+		.groupSeconds = command.value(u"group_seconds"_q).toInt(),
+		.priority = command.value(u"priority"_q).toInt(),
+	};
+	if ((!rule.hide && rule.replacement.isEmpty() && !rule.groupSeconds)
+			|| rule.groupSeconds < 0 || rule.groupSeconds > 3600
+			|| rule.priority < -10000 || rule.priority > 10000
+			|| rule.contains.size() > 256 || rule.replacement.size() > 512
+			|| (!rule.chatId.isEmpty() && rule.accountId.isEmpty())) {
+		throw std::runtime_error("Invalid notification rule.");
+	}
+	if (!rules.contains(key) && (rules.size() >= 256
+			|| std::count_if(rules.begin(), rules.end(), [&](const auto &entry) {
+				return entry.first.first == owner;
+			}) >= 32)) {
+		throw std::runtime_error("Too many notification rules.");
+	}
+	rules.insert_or_assign(key, std::move(rule));
+}
+
+void RemovePluginNotificationRules(const QString &installationId) {
+	std::erase_if(PluginRules(), [&](const auto &entry) { return entry.first.first == installationId; });
+}
+
+std::optional<QString> Manager::pluginPreview(
+		not_null<HistoryItem*> item, const DisplayOptions &options) const {
+	if (PluginRules().empty() || options.hideMessageText || options.hideNameAndPhoto
+			|| options.spoilerLoginCode || Core::App().screenIsLocked()) {
+		return std::nullopt;
+	}
+	const auto preview = TextWithPermanentSpoiler(item->notificationText({}));
+	const PluginRule *selected = nullptr;
+	for (const auto &[key, rule] : PluginRules()) {
+		if (!rule.replacement.isEmpty() && MatchesPreview(rule, item, preview)
+				&& (!selected || rule.priority > selected->priority)) {
+			selected = &rule;
+		}
+	}
+	return selected ? std::optional<QString>(selected->replacement) : std::nullopt;
+}
+
+void Manager::showNotification(NotificationFields fields) {
+	if (!PluginRules().empty() && !fields.reactionFrom && fields.pollVoteOption.isEmpty() && !fields.forwardedCount) {
+		const auto options = getNotificationOptions(fields.item, Data::ItemNotificationType::Message);
+		if (!options.hideNameAndPhoto && !options.hideMessageText
+				&& !options.spoilerLoginCode && !Core::App().screenIsLocked()) {
+			const auto preview = TextWithPermanentSpoiler(fields.item->notificationText({}));
+			const auto context = ItemContextId(fields.item);
+			const auto now = crl::now();
+			std::vector<PluginRule*> grouping;
+			for (auto &[key, rule] : PluginRules()) {
+				if (!MatchesPreview(rule, fields.item, preview)) continue;
+				if (rule.hide) return;
+				if (!rule.groupSeconds) continue;
+				const auto previous = rule.groups.find(context);
+				if (previous != end(rule.groups) && now < previous->second) return;
+				grouping.push_back(&rule);
+			}
+			for (auto rule : grouping) {
+				std::erase_if(rule->groups, [&](const auto &entry) { return entry.second <= now; });
+				if (rule->groups.size() < 1024) rule->groups[context] = now + 1000 * rule->groupSeconds;
+			}
+		}
+	}
+	doShowNotification(std::move(fields));
+}
+
 void Manager::maybePlaySound(Fn<void()> playSound) {
 	if (_system->volumeSupported()) {
 		doMaybePlaySound(std::move(playSound));
@@ -1720,7 +1831,10 @@ void NativeManager::doShowNotification(NotificationFields &&fields) {
 		: options.hideNameAndPhoto
 		? QString()
 		: item->notificationHeader();
-	const auto text = pollVote
+	const auto override = (!reactionFrom && !pollVote && !fields.forwardedCount)
+		? pluginPreview(item, options)
+		: std::nullopt;
+	const auto text = override ? *override : pollVote
 		? TextWithPermanentSpoiler(ComposePollVoteNotification(
 			item,
 			fields.pollVoteOption,

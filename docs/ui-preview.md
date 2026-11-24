@@ -40,6 +40,7 @@ tools/ovygram/ui-preview --scenario install-update --check --screenshot /tmp/ins
 tools/ovygram/ui-preview --scenario install-multiple --check
 tools/ovygram/ui-preview --scenario install-long --check
 tools/ovygram/ui-preview --scenario long --check
+tools/ovygram/ui-preview --scenario proxies --check
 tools/ovygram/ui-preview --scenario install-update --theme light --scale 125 \
   --width 1000 --height 760 --click 'Подробности файла' --screenshot /tmp/file-details.png
 ```

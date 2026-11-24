@@ -13,6 +13,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "base/qthelp_url.h"
 #include "base/weak_ptr.h"
 #include "core/application.h"
+#ifdef OVYGRAM_ENABLED
+#include "api/api_plugins.h"
+#endif
 #include "core/core_settings.h"
 #include "core/local_url_handlers.h"
 #include "lang/lang_keys.h"
@@ -1510,6 +1513,7 @@ void ProxiesBox::refreshProxyRotation() {
 	}
 	const auto visible = (_proxySettings->current()
 			== ProxyData::Settings::Enabled)
+		&& !_settings.temporaryProxy()
 		&& _settings.selected()
 		&& (_settings.list().size() > 1);
 	_proxyRotation->toggle(visible, anim::type::normal);
@@ -1790,6 +1794,11 @@ void ProxiesBox::refreshButtons() {
 			tr::lng_proxy_add(),
 			[=] { addNewProxy(); });
 		addButton(tr::lng_close(), [=] { closeBox(); });
+#ifdef OVYGRAM_ENABLED
+		if (const auto plugins = Core::App().pluginClient()) {
+			addLeftButton(rpl::single(u"Прокси плагинов"_q), [=] { plugins->showPluginProxies(); });
+		}
+#endif
 	}
 }
 

@@ -13,3 +13,6 @@ Telegram/Resources/zxcvbn/*.txt text eol=lf
 
 # Raw float tables, such as the 3D diamond model data
 *.bin binary
+
+# Preserve hunk context spaces in the patch for the pinned WebView sources.
+Telegram/cmake/patches/lib_webview_local_proxy.patch text eol=lf -whitespace

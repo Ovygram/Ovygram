@@ -1,8 +1,11 @@
 """Cancellable file transfers using the client's authenticated RPC sessions."""
 
 import asyncio
+import base64
+from dataclasses import dataclass
 import hashlib
 import inspect
+import math
 import mimetypes
 import os
 from pathlib import Path
@@ -10,9 +13,9 @@ import secrets
 import uuid
 
 from . import tl
-from .client import _chat, get_chat, get_message, rpc
+from .client import _account, _chat, _request, get_chat, get_message, rpc
 from ._runtime import RpcError
-from .models import Attachment, Progress
+from .models import Attachment, Progress, safe_file_name
 
 
 PART_SIZE = 512 * 1024
@@ -25,7 +28,7 @@ async def _progress(callback, account_id, amount, total):
             await result
 
 
-async def send_file(chat, path, *, caption="", progress=None, silent=False):
+async def _upload(chat, path, progress):
     _chat(chat)
     path = Path(path).resolve(strict=True)
     size = path.stat().st_size
@@ -58,11 +61,154 @@ async def send_file(chat, path, *, caption="", progress=None, silent=False):
         await asyncio.to_thread(stream.close)
     uploaded = tl.inputFileBig(id=identity, parts=total, name=path.name) if big else tl.inputFile(
         id=identity, parts=total, name=path.name, md5_checksum=checksum.hexdigest())
-    media = tl.inputMediaUploadedDocument(file=uploaded,
-        mime_type=mimetypes.guess_type(path.name)[0] or "application/octet-stream",
-        attributes=[tl.documentAttributeFilename(file_name=path.name)])
+    return uploaded
+
+
+async def _send(chat, media, caption, silent):
     return await rpc(chat.account_id, tl.messages.sendMedia(
         peer=chat.input_peer, media=media, message=caption, random_id=secrets.randbits(63), silent=silent))
+
+
+async def send_file(chat, path, *, caption="", progress=None, silent=False):
+    file = await _upload(chat, path, progress)
+    media = tl.inputMediaUploadedDocument(file=file,
+        mime_type=mimetypes.guess_type(file.name)[0] or "application/octet-stream",
+        attributes=[tl.documentAttributeFilename(file_name=file.name)])
+    return await _send(chat, media, caption, silent)
+
+
+async def send_photo(chat, path, *, caption="", progress=None, silent=False):
+    file = await _upload(chat, path, progress)
+    return await _send(chat, tl.inputMediaUploadedPhoto(file=file), caption, silent)
+
+
+async def send_voice(chat, path, *, duration, waveform=None, progress=None, silent=False):
+    """Upload an already encoded Ogg/Opus voice message; duration is in seconds."""
+    if type(duration) is not int or not 0 < duration < 2**31:
+        raise ValueError("duration должен быть положительным целым числом секунд.")
+    if waveform is not None and not isinstance(waveform, bytes):
+        raise TypeError("waveform должен содержать упакованные байты Telegram.")
+    audio = tl.documentAttributeAudio(voice=True, duration=duration, waveform=waveform)
+    file = await _upload(chat, path, progress)
+    media = tl.inputMediaUploadedDocument(file=file, mime_type="audio/ogg", attributes=[audio])
+    return await _send(chat, media, "", silent)
+
+
+def _video_attribute(duration, width, height, round_message=False):
+    if (type(duration) not in (int, float) or not math.isfinite(duration) or duration <= 0
+            or any(type(n) is not int or not 0 < n < 2**31 for n in (width, height))):
+        raise ValueError("Для видео нужны положительные длительность и размеры.")
+    return tl.documentAttributeVideo(duration=duration, w=width, h=height, round_message=round_message)
+
+
+async def send_video_note(chat, path, *, duration, size, progress=None, silent=False):
+    """Send a prepared square MP4. size is the side of the frame in pixels."""
+    attribute = _video_attribute(duration, size, size, round_message=True)
+    file = await _upload(chat, path, progress)
+    media = tl.inputMediaUploadedDocument(file=file, mime_type="video/mp4", attributes=[attribute])
+    return await _send(chat, media, "", silent)
+
+
+@dataclass(frozen=True)
+class AlbumItem:
+    path: str | Path
+    kind: str = "photo"
+    caption: str = ""
+    duration: float = 0
+    width: int = 0
+    height: int = 0
+
+
+async def send_album(chat, items, *, progress=None, silent=False):
+    """Send 2–10 photos/videos as one group. Progress is per uploaded file."""
+    _chat(chat)
+    items = list(items)
+    if not 2 <= len(items) <= 10:
+        raise ValueError("Альбом должен содержать от 2 до 10 файлов.")
+    attributes = []
+    for item in items:
+        if not isinstance(item, AlbumItem) or item.kind not in ("photo", "video"):
+            raise ValueError("Элементы альбома должны быть AlbumItem типа photo или video.")
+        attributes.append(_video_attribute(item.duration, item.width, item.height)
+                          if item.kind == "video" else None)
+    group = []
+    for item, attribute in zip(items, attributes):
+        file = await _upload(chat, item.path, progress)
+        media = (tl.inputMediaUploadedPhoto(file=file) if attribute is None else
+                 tl.inputMediaUploadedDocument(file=file, mime_type="video/mp4", attributes=[attribute]))
+        result = await rpc(chat.account_id, tl.messages.uploadMedia(peer=chat.input_peer, media=media))
+        obj = result.photo if attribute is None else result.document
+        ref = dict(id=obj.id, access_hash=obj.access_hash, file_reference=obj.file_reference)
+        media_ref = (tl.inputMediaPhoto(id=tl.inputPhoto(**ref)) if attribute is None else
+                     tl.inputMediaDocument(id=tl.inputDocument(**ref)))
+        group.append(tl.inputSingleMedia(media=media_ref, message=item.caption, random_id=secrets.randbits(63)))
+    return await rpc(chat.account_id, tl.messages.sendMultiMedia(
+        peer=chat.input_peer, multi_media=group, silent=silent))
+
+
+async def pick_file(account):
+    """Ask the user to share a file and copy it into this installation's account data."""
+    from file_utils import get_plugin_data_dir
+
+    account_id = _account(account)
+    selected = await _request("media.pick", account_id)
+    if selected is None:
+        return None
+    partial = None
+    try:
+        directory = get_plugin_data_dir(account_id) / "imports"
+        directory.mkdir(exist_ok=True)
+        name = safe_file_name(selected["name"], "file")
+        target = directory / (uuid.uuid4().hex + "-" + name)
+        staging = target.with_suffix(target.suffix + ".part")
+        with staging.open("xb") as stream:
+            partial = staging
+            remaining = selected["size"]
+            while remaining:
+                payload = await _request("media.read", account_id, token=selected["token"])
+                chunk = base64.b64decode(payload, validate=True)
+                if not 0 < len(chunk) <= remaining:
+                    raise ValueError("Неполная копия выбранного файла.")
+                stream.write(chunk)
+                remaining -= len(chunk)
+        partial.replace(target)
+        return target
+    finally:
+        if partial is not None:
+            partial.unlink(missing_ok=True)
+        try:
+            await _request("media.release", account_id, token=selected["token"])
+        except (RpcError, RuntimeError):
+            # Logging out or unloading also revokes the native file handle.
+            pass
+
+
+async def downloads(account):
+    """Current entries in the native downloads list for this account."""
+    return await _request("media.downloads", _account(account))
+
+
+async def cancel_download(account, entry):
+    """Cancel only the selected active native transfer, including its start identity."""
+    return await _request("media.cancel_download", _account(account), chat_id=entry["chat_id"],
+                          message_id=entry["message_id"], started=entry["started"])
+
+
+async def playback(account, kind="song"):
+    if kind not in ("song", "voice"):
+        raise ValueError("kind должен быть song или voice.")
+    return await _request("media.playback", _account(account), kind=kind)
+
+
+async def control_playback(account, state, action, *, position_ms=None):
+    """Act on the exact track returned by playback(); a stale selection fails."""
+    if action not in ("play", "pause", "stop", "next", "previous", "seek"):
+        raise ValueError("Неизвестное действие плеера.")
+    if action == "seek" and (type(position_ms) is not int or position_ms < 0):
+        raise ValueError("Укажите позицию в миллисекундах.")
+    return await _request("media.control", _account(account), action=action, kind=state["kind"],
+                          chat_id=state["chat_id"], message_id=state["message_id"],
+                          document_id=state["document_id"], position_ms=position_ms)
 
 
 async def download_file(attachment, destination, *, progress=None):

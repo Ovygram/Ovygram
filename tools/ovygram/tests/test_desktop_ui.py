@@ -61,6 +61,30 @@ class DesktopUiTests(unittest.TestCase):
             result.append(self.commands.get_nowait())
         return result
 
+    def test_search_page_predicate_runs_outside_event_dispatch(self):
+        from desktop import search
+        import asyncio
+
+        async def keep(row):
+            await asyncio.sleep(0)
+            self.assertEqual(row.account_id, "17")
+            return row.links >= 2
+
+        rule = self.as_plugin(self.a, lambda: search.add_filter("71", "17", keep, media="url"))
+        command = self.commands_list()[-1]
+        self.assertEqual((command["target"], command["media"]), ("71", "url"))
+        row = {"id": 12, "chat_id": "91", "sender_id": "4", "text": "links",
+               "date": 123, "outgoing": False, "has_media": False}
+        for page, counts in enumerate(((1, 0), (0, 1), (3, 0))):
+            self.event(installation_id=self.a, rule_id=rule.id, type="search_page",
+                       value={"token": str(page), "rows": [dict(row, links=n) for n in counts]})
+            reply = self.commands.get(timeout=2)
+            self.assertEqual(reply["token"], str(page))
+            self.assertEqual(reply["hidden"], [i for i, n in enumerate(counts) if n < 2])
+        rule.more()
+        rule.remove()
+        self.assertEqual([cmd["method"] for cmd in self.commands_list()], ["ui.search.more", "ui.search.remove"])
+
     def test_dialog_tree_is_sent_and_callbacks_run(self):
         clicks, changes = [], []
         button = ui.Button("Нажми", on_click=lambda: clicks.append(True))
@@ -184,6 +208,41 @@ class DesktopUiTests(unittest.TestCase):
         self.assertNotIn(plugin_id, self.manager.errors)
         self.manager.disable(plugin_id)
         self.assertTrue(window.closed)
+
+    def test_placement_tracks_windows_and_releases_each_surface(self):
+        from desktop import supports
+        self.assertTrue(supports("ui.Placement"))
+        self.assertFalse(supports("ui._handle"))
+        self.assertFalse(supports("ui.context"))
+        rule = self.as_plugin(self.a, lambda: ui.Placement(
+            lambda handle: ui.Button(handle), name="settings.main"))
+        self.commands_list()
+        for owner, handle in ((self.a, "1"), (self.b, "2"), (self.a, "1"), (self.a, "3")):
+            self.event(installation_id=owner, type="widget_available", rule_id=rule.id, value=handle)
+        shown = self.commands_list()
+        self.assertEqual([(item["target"], item["position"]) for item in shown],
+                         [("1", "inside"), ("3", "inside")])
+        self.as_plugin(self.a, rule.remove)
+        self.assertEqual({item["object_id"] for item in self.commands_list() if item["method"] == "ui.close"},
+                         {item["object_id"] for item in shown})
+
+    def test_list_visibility_rules_use_chat_scope_and_remove_by_rule(self):
+        from desktop import lists
+        from desktop.models import chat_from_native
+
+        chat = chat_from_native(self.native_chat())
+        first = self.as_plugin(self.a, lambda: lists.hide_members(chat, [8, 8, 4]))
+        second = self.as_plugin(self.b, lambda: lists.hide_shared_media(chat, [95]))
+        sent = self.commands_list()
+        self.assertEqual([(item["list"], item["ids"]) for item in sent],
+                         [("members", ["4", "8"]), ("media", ["95"])])
+        self.assertEqual([(item["account_id"], item["chat_id"]) for item in sent],
+                         [("42", "777"), ("42", "777")])
+        self.as_plugin(self.a, first.remove)
+        self.assertEqual(self.commands_list()[-1]["rule_id"], first.id)
+        self.assertFalse(second.removed)
+        with self.assertRaises(ValueError):
+            self.as_plugin(self.a, lambda: lists.hide_members(chat, [True]))
 
     def native_chat(self, account="42", chat_id=777, name="Друзья"):
         return {"account_id": account, "id": str(chat_id), "name": name, "kind": "chat",
@@ -685,6 +744,53 @@ class DesktopUiTests(unittest.TestCase):
                          ("ui.message_decoration.set", "777", 9))
         self.as_plugin(self.a, mark.remove)
         self.assertEqual(self.commands_list()[-1]["method"], "ui.message_decoration.remove")
+
+    def test_editor_commands_include_the_exact_account_chat_and_snapshot(self):
+        from desktop.models import chat_from_native
+
+        owner = self.owners[self.a]
+        chat = chat_from_native(self.native_chat("43", 777))
+        future = self.runtime.schedule(owner, ui.editor_snapshot(chat, kind="album"))
+        request = self.wait_for("compose.snapshot")[0]
+        self.assertEqual((request["account_id"], request["chat_id"], request["kind"]),
+                         ("43", "777", "album"))
+        snapshot = {"field": "17", "account_id": "43", "chat_id": "777",
+                    "kind": "album", "revision": 3, "text": "🙂",
+                    "selection": [2, 2], "files": [{"name": "a"}, {"name": "b"}]}
+        self.runtime.complete({"id": request["id"], "result": snapshot})
+        observed = future.result(timeout=2)
+        operations = (
+            (ui.reorder_attachments(observed, [1, 0]), "album_order", {"order": [1, 0]}),
+            (ui.set_attachment_caption(observed, 1, "caption"), "album_caption",
+             {"index": 1, "caption": "caption"}),
+            (ui.choose_attachments(observed), "attachments", {}),
+            (ui.set_draft(observed, "🙂", [{"offset": 0, "length": 2, "id": "**"}]),
+             "text", {"tags": [{"offset": 0, "length": 2, "id": "**"}]}),
+            (ui.suggest_draft(observed, "suggestion"), "suggestion", {"text": "suggestion"}),
+        )
+        for coroutine, operation, parameters in operations:
+            future = self.runtime.schedule(owner, coroutine)
+            request = self.wait_for("compose.apply")[0]
+            self.assertEqual(request["installation_id"], self.a)
+            self.assertEqual(request["expected"], snapshot)
+            self.assertEqual(request["op"], operation)
+            for key, value in parameters.items():
+                self.assertEqual(request[key], value)
+            self.runtime.complete({"id": request["id"], "result": True})
+            self.assertTrue(future.result(timeout=2))
+
+    def test_chat_and_message_footers_send_explicit_height(self):
+        from desktop.models import chat_from_native
+
+        chat = chat_from_native(self.native_chat("42", 777))
+        message = Message("42", 9, 777, "text", 0, False)
+        self.as_plugin(self.a, lambda: ui.decorate_chat(chat, footer_height=24))
+        self.as_plugin(self.a, lambda: ui.decorate_message(message, footer_height=16))
+        self.assertEqual([command["footer_height"] for command in self.commands_list()], [24, 16])
+        with self.assertRaises(ValueError):
+            self.as_plugin(self.a, lambda: ui.decorate_chat("*", account="42", footer_height=24))
+        with self.assertRaises(ValueError):
+            self.as_plugin(self.a, lambda: ui.decorate_message(message, footer_height=257))
 
     def test_highlight_example(self):
         plugin_id = self.manager.install(str(ROOT / "tools/ovygram/examples/highlight.ovyplugin"))

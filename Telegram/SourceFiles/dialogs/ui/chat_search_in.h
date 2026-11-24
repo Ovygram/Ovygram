@@ -11,6 +11,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/rp_widget.h"
 
 namespace Ui {
+class VerticalLayout;
 class PlainShadow;
 class DynamicImage;
 class IconButton;
@@ -38,6 +39,7 @@ class ChatSearchIn final : public Ui::RpWidget {
 public:
 	explicit ChatSearchIn(QWidget *parent);
 	~ChatSearchIn();
+	[[nodiscard]] QWidget *pluginSearchTarget() const;
 
 	struct PossibleTab {
 		ChatSearchTab tab = {};
@@ -78,6 +80,7 @@ private:
 		std::shared_ptr<Ui::DynamicImage> image,
 		TextWithEntities text);
 
+	Ui::VerticalLayout *_pluginFilters = nullptr;
 	Section _in;
 	Section _from;
 	rpl::variable<ChatSearchTab> _active;

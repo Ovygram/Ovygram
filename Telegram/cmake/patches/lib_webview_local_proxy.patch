@@ -1,0 +1,517 @@
+diff --git a/webview/platform/linux/webview_linux_interface.xml b/webview/platform/linux/webview_linux_interface.xml
+index 701a21b..c22f2b9 100644
+--- a/webview/platform/linux/webview_linux_interface.xml
++++ b/webview/platform/linux/webview_linux_interface.xml
+@@ -48,6 +48,9 @@
+ 			<arg type='b' name='allowThirdPartyCookies' direction='in'/>
+ 			<arg type='s' name='restrictedOrigin' direction='in'/>
+ 			<arg type='s' name='restrictedContentSecurityPolicy' direction='in'/>
++			<arg type='i' name='proxyPort' direction='in'/>
++			<arg type='s' name='proxyUser' direction='in'/>
++			<arg type='s' name='proxyPassword' direction='in'/>
+ 		</method>
+ 		<method name='Reload'/>
+ 		<method name='Resolve'>
+diff --git a/webview/platform/linux/webview_linux_webkitgtk.cpp b/webview/platform/linux/webview_linux_webkitgtk.cpp
+index 6c6ec22..9c3ceef 100644
+--- a/webview/platform/linux/webview_linux_webkitgtk.cpp
++++ b/webview/platform/linux/webview_linux_webkitgtk.cpp
+@@ -645,6 +645,7 @@ private:
+ 	std::string _dataRequestRedirectHost;
+ 	std::string _restrictedOrigin;
+ 	std::string _restrictedContentSecurityPolicy;
++	LocalProxy _localProxy;
+ 	std::uint16_t _dataPort = 0;
+ 	std::string _dataPassword;
+ 	std::string _shellMessageToken;
+@@ -752,6 +753,7 @@ bool Instance::create(Config config) {
+ #endif // !DESKTOP_APP_WEBVIEW_WAYLAND_COMPOSITOR
+ 	}
+ 
++	_localProxy = std::move(config.localProxy);
+ 	_restrictedOrigin = std::move(config.restrictedOrigin);
+ 	_restrictedContentSecurityPolicy = std::move(
+ 		config.restrictedContentSecurityPolicy);
+@@ -816,6 +818,7 @@ bool Instance::create(Config config) {
+ 			allowThirdPartyCookies,
+ 			restrictedOrigin,
+ 			restrictedContentSecurityPolicy,
++			_localProxy.port, _localProxy.user, _localProxy.password,
+ 			[&](GObjectCpp::Object source_object, Gio::AsyncResult res) {
+ 				success = _helper.call_create_finish(res, nullptr);
+ 				loop.quit();
+@@ -983,6 +986,21 @@ bool Instance::create(Config config) {
+ 			&& !webkit_web_view_get_default_content_security_policy) {
+ 		return false;
+ 	}
++	const auto applyProxy = [&](auto setter, auto target) {
++		if (!_localProxy.port) return true;
++		if (!setter || !webkit_network_proxy_settings_new || !webkit_network_proxy_settings_free
++			|| !webkit_authentication_request_is_for_proxy || !webkit_settings_set_enable_webrtc) {
++			return false;
++		}
++		const auto url = "http://127.0.0.1:" + std::to_string(_localProxy.port);
++		// The WebKit helper serves Telegram's synthetic data URLs on loopback.
++		const gchar *local[] = { "127.0.0.1", "localhost", "::1", nullptr };
++		const auto settings = webkit_network_proxy_settings_new(url.c_str(), local);
++		if (!settings) return false;
++		setter(target, WEBKIT_NETWORK_PROXY_MODE_CUSTOM, settings);
++		webkit_network_proxy_settings_free(settings);
++		return true;
++	};
+ 	if (webkit_network_session_new) {
+ 		const auto session = restricted
+ 			? webkit_network_session_new_ephemeral()
+@@ -992,6 +1010,10 @@ bool Instance::create(Config config) {
+ 		if (!session) {
+ 			return false;
+ 		}
++		if (!applyProxy(webkit_network_session_set_proxy_settings, session)) {
++			g_object_unref(session);
++			return false;
++		}
+ 		if (restricted || config.allowThirdPartyCookies) {
+ 			const auto manager = webkit_network_session_get_cookie_manager(
+ 				session);
+@@ -1034,6 +1056,10 @@ bool Instance::create(Config config) {
+ 		if (!data) {
+ 			return false;
+ 		}
++		if (!applyProxy(webkit_website_data_manager_set_network_proxy_settings, data)) {
++			g_object_unref(data);
++			return false;
++		}
+ 		if (restricted || config.allowThirdPartyCookies) {
+ 			const auto manager = webkit_website_data_manager_get_cookie_manager(
+ 				data);
+@@ -1295,6 +1321,7 @@ bool Instance::create(Config config) {
+ 	const GdkRGBA rgba{ 0.f, 0.f, 0.f, 0.f, };
+ 	webkit_web_view_set_background_color(_webview, &rgba);
+ 	const auto settings = webkit_web_view_get_settings(_webview);
++	if (_localProxy.port) webkit_settings_set_enable_webrtc(settings, false);
+ 	if (_debug) {
+ 		webkit_settings_set_enable_developer_extras(settings, true);
+ 	}
+@@ -1851,6 +1878,18 @@ bool Instance::scriptDialog(WebKitScriptDialog *dialog) {
+ }
+ 
+ bool Instance::authenticate(WebKitAuthenticationRequest *request) {
++	if (_localProxy.port && webkit_authentication_request_is_for_proxy(request)) {
++		const auto host = webkit_authentication_request_get_host(request);
++		if (!host || strcmp(host, "127.0.0.1") || webkit_authentication_request_get_port(request) != _localProxy.port) {
++			webkit_authentication_request_cancel(request);
++			return true;
++		}
++		const auto credential = webkit_credential_new(_localProxy.user.c_str(), _localProxy.password.c_str(),
++			WEBKIT_CREDENTIAL_PERSISTENCE_FOR_SESSION);
++		webkit_authentication_request_authenticate(request, credential);
++		webkit_credential_free(credential);
++		return true;
++	}
+ 	if (!_restrictedOrigin.empty()) {
+ 		webkit_authentication_request_cancel(request);
+ 		return true;
+@@ -3003,7 +3042,10 @@ void Instance::registerHelperMethodHandlers() {
+ 			int initialHeight,
+ 			bool allowThirdPartyCookies,
+ 			const std::string &restrictedOrigin,
+-			const std::string &restrictedContentSecurityPolicy) {
++			const std::string &restrictedContentSecurityPolicy,
++			int proxyPort,
++			const std::string &proxyUser,
++			const std::string &proxyPassword) {
+ 		if (!create({
+ 			.opaqueBg = QColor(r, g, b, a),
+ 			.userDataPath = path,
+@@ -3021,6 +3063,7 @@ void Instance::registerHelperMethodHandlers() {
+ 			.restrictedOrigin = restrictedOrigin,
+ 			.restrictedContentSecurityPolicy
+ 				= restrictedContentSecurityPolicy,
++			.localProxy = { proxyPort, proxyUser, proxyPassword },
+ 		})) {
+ 			return false;
+ 		}
+diff --git a/webview/platform/linux/webview_linux_webkitgtk_library.cpp b/webview/platform/linux/webview_linux_webkitgtk_library.cpp
+index 69e0e1d..2be4432 100644
+--- a/webview/platform/linux/webview_linux_webkitgtk_library.cpp
++++ b/webview/platform/linux/webview_linux_webkitgtk_library.cpp
+@@ -154,6 +154,11 @@ ResolveResult Resolve(Platform platform) {
+ 	if (!result) {
+ 		return ResolveResult::NoLibrary;
+ 	}
++	LOAD_LIBRARY_SYMBOL(lib, webkit_network_proxy_settings_new);
++	LOAD_LIBRARY_SYMBOL(lib, webkit_network_proxy_settings_free);
++	LOAD_LIBRARY_SYMBOL(lib, webkit_network_session_set_proxy_settings);
++	LOAD_LIBRARY_SYMBOL(lib, webkit_website_data_manager_set_network_proxy_settings);
++	LOAD_LIBRARY_SYMBOL(lib, webkit_authentication_request_is_for_proxy);
+ 	LOAD_LIBRARY_SYMBOL(lib, gtk_window_resize);
+ 	LOAD_LIBRARY_SYMBOL(lib, gtk_widget_show_all);
+ 	LOAD_LIBRARY_SYMBOL(lib, gdk_window_get_width);
+diff --git a/webview/platform/linux/webview_linux_webkitgtk_library.h b/webview/platform/linux/webview_linux_webkitgtk_library.h
+index aeadc6a..33eed8a 100644
+--- a/webview/platform/linux/webview_linux_webkitgtk_library.h
++++ b/webview/platform/linux/webview_linux_webkitgtk_library.h
+@@ -128,6 +128,12 @@ typedef struct _WebKitScriptDialog WebKitScriptDialog;
+ typedef struct _WebKitWebsiteDataManager WebKitWebsiteDataManager;
+ typedef struct _WebKitWebContext WebKitWebContext;
+ typedef struct _WebKitNetworkSession WebKitNetworkSession;
++typedef struct _WebKitNetworkProxySettings WebKitNetworkProxySettings;
++enum WebKitNetworkProxyMode {
++	WEBKIT_NETWORK_PROXY_MODE_DEFAULT,
++	WEBKIT_NETWORK_PROXY_MODE_NO_PROXY,
++	WEBKIT_NETWORK_PROXY_MODE_CUSTOM,
++};
+ typedef struct _WebKitCookieManager WebKitCookieManager;
+ typedef struct _WebKitDownload WebKitDownload;
+ typedef struct _WebKitAuthenticationRequest WebKitAuthenticationRequest;
+@@ -619,6 +625,13 @@ inline WebKitWebContext *(*webkit_web_context_new_with_website_data_manager)(
+ inline void (*webkit_web_context_set_sandbox_enabled)(
+ 	WebKitWebContext *context,
+ 	gboolean enabled);
++inline WebKitNetworkProxySettings *(*webkit_network_proxy_settings_new)(const gchar *, const gchar * const *);
++inline void (*webkit_network_proxy_settings_free)(WebKitNetworkProxySettings *);
++inline void (*webkit_network_session_set_proxy_settings)(
++	WebKitNetworkSession *, WebKitNetworkProxyMode, WebKitNetworkProxySettings *);
++inline void (*webkit_website_data_manager_set_network_proxy_settings)(
++	WebKitWebsiteDataManager *, WebKitNetworkProxyMode, WebKitNetworkProxySettings *);
++inline gboolean (*webkit_authentication_request_is_for_proxy)(WebKitAuthenticationRequest *);
+ inline WebKitNetworkSession *(*webkit_network_session_new)(
+ 	const char* data_directory,
+ 	const char* cache_directory);
+diff --git a/webview/platform/win/webview_win.cpp b/webview/platform/win/webview_win.cpp
+index 089e0a6..6a3cfe4 100644
+--- a/webview/platform/win/webview_win.cpp
++++ b/webview/platform/win/webview_win.cpp
+@@ -73,7 +73,7 @@ bool SeparateStorageIdSupported() {
+ std::unique_ptr<Interface> CreateInstance(Config config) {
+ 	if (SystemTooOld()) {
+ 		return nullptr;
+-	} else if (config.mode == WindowMode::Hidden) {
++	} else if (config.mode == WindowMode::Hidden || config.localProxy.port) {
+ 		return EdgeChromium::CreateInstance(std::move(config));
+ 	} else if (auto result = EdgeChromium::CreateInstance(config)) {
+ 		return result;
+diff --git a/webview/platform/win/webview_windows_edge_chromium.cpp b/webview/platform/win/webview_windows_edge_chromium.cpp
+index 75c51cb..f16f607 100644
+--- a/webview/platform/win/webview_windows_edge_chromium.cpp
++++ b/webview/platform/win/webview_windows_edge_chromium.cpp
+@@ -367,6 +367,7 @@ private:
+ 
+ 	QColor _opaqueBg;
+ 	std::string _restrictedOrigin;
++	LocalProxy _localProxy;
+ 	bool _debug = false;
+ 	bool _destroying = false;
+ 	bool _permissionAsking = false;
+@@ -391,6 +392,7 @@ Handler::Handler(
+ , _readyHandler(std::move(readyHandler))
+ , _opaqueBg(config.opaqueBg)
+ , _restrictedOrigin(std::move(config.restrictedOrigin))
++, _localProxy(std::move(config.localProxy))
+ , _debug(config.debug) {
+ 	saveThis(this);
+ 	setOpaqueBg(_opaqueBg);
+@@ -485,22 +487,22 @@ HRESULT STDMETHODCALLTYPE Handler::Invoke(
+ 	const auto downloads = _webview.try_as<ICoreWebView2_4>();
+ 	const auto downloadsBlocked = downloads
+ 		&& (downloads->add_DownloadStarting(this, &token) == S_OK);
+-	if (!_restrictedOrigin.empty()) {
+-		if (!downloadsBlocked) {
+-			return E_NOINTERFACE;
+-		}
++	if (_localProxy.port || !_restrictedOrigin.empty()) {
+ 		const auto authentication = _webview.try_as<ICoreWebView2_10>();
+-		const auto certificates = _webview.try_as<ICoreWebView2_5>();
+-		if (!authentication || !certificates) {
++		if (!authentication) {
+ 			return E_NOINTERFACE;
+ 		}
+-		auto result = authentication->add_BasicAuthenticationRequested(
+-			this,
+-			&token);
+-		if (result != S_OK) {
++		const auto result = authentication->add_BasicAuthenticationRequested(this, &token);
++		if (FAILED(result)) {
+ 			return result;
+ 		}
+-		result = certificates->add_ClientCertificateRequested(this, &token);
++	}
++	if (!_restrictedOrigin.empty()) {
++		const auto certificates = _webview.try_as<ICoreWebView2_5>();
++		if (!downloadsBlocked || !certificates) {
++			return E_NOINTERFACE;
++		}
++		auto result = certificates->add_ClientCertificateRequested(this, &token);
+ 		if (result != S_OK) {
+ 			return result;
+ 		}
+@@ -911,6 +913,21 @@ HRESULT STDMETHODCALLTYPE Handler::Invoke(
+ HRESULT STDMETHODCALLTYPE Handler::Invoke(
+ 		ICoreWebView2 *sender,
+ 		ICoreWebView2BasicAuthenticationRequestedEventArgs *args) {
++	if (_localProxy.port) {
++		auto uri = base::CoTaskMemString();
++		if (args->get_Uri(uri.put()) != S_OK || !uri) return E_FAIL;
++		const auto url = QUrl(QString::fromStdString(FromWide(uri)), QUrl::StrictMode);
++		// WebView2 supplies the challenger URI for HTTP proxy authentication.
++		// An unrelated HTTP 401 must never receive the component's password.
++		if (url.isValid() && url.scheme() == u"http"_q
++			&& url.host() == u"127.0.0.1"_q && url.port() == _localProxy.port
++			&& url.userInfo().isEmpty()) {
++			auto response = winrt::com_ptr<ICoreWebView2BasicAuthenticationResponse>();
++			if (FAILED(args->get_Response(response.put())) || !response) return E_FAIL;
++			if (FAILED(response->put_UserName(ToWide(_localProxy.user).c_str()))) return E_FAIL;
++			return response->put_Password(ToWide(_localProxy.password).c_str());
++		}
++	}
+ 	if (!_restrictedOrigin.empty()) {
+ 		args->put_Cancel(TRUE);
+ 	}
+@@ -1168,20 +1185,25 @@ void Instance::start(Config &&config) {
+ 		winrt::take_ownership_from_abi);
+ 	// Avoid Windows account lockouts: crbug.com/541310282.
+ 	// File choosers in panels under 400x300: WebView2Feedback issue 5797.
+-	options->put_AdditionalBrowserArguments(config.restrictedOrigin.empty()
++	auto arguments = std::wstring(config.restrictedOrigin.empty()
+ 		? L"--disable-features=ElasticOverscroll,AutofillAiWalletPrivatePasses,"
+ 			L"FileChooserMinWindowSize"
+ 		: L"--disable-features=ElasticOverscroll,AutofillAiWalletPrivatePasses,"
+ 			L"FileChooserMinWindowSize,msSmartScreenProtection "
+ 			L"--force-webrtc-ip-handling-policy=disable_non_proxied_udp "
+ 			L"--mute-audio");
++	if (config.localProxy.port) {
++		arguments += L" --proxy-server=http://127.0.0.1:" + std::to_wstring(config.localProxy.port)
++			+ L" --disable-quic --force-webrtc-ip-handling-policy=disable_non_proxied_udp";
++	}
++	if (FAILED(options->put_AdditionalBrowserArguments(arguments.c_str()))) return;
+ 	if (_hidden && !config.restrictedOrigin.empty()) {
+ 		_keepActiveTimer.callEach(kKeepActiveInterval);
+ 	}
+ 
+ 	const auto wpath = ToWide(config.userDataPath);
+ 	auto pin = winrt::file_handle();
+-	if (!config.restrictedOrigin.empty() && !wpath.empty()) {
++	if ((!config.restrictedOrigin.empty() || config.localProxy.port) && !wpath.empty()) {
+ 		if (CreateEngineFolder(wpath)) {
+ 			pin = PinDirectory(wpath);
+ 		}
+diff --git a/webview/webview_embed.cpp b/webview/webview_embed.cpp
+index a141f24..77cf89d 100644
+--- a/webview/webview_embed.cpp
++++ b/webview/webview_embed.cpp
+@@ -24,6 +24,8 @@
+ #include <QtWidgets/QWidget>
+ 
+ #include <charconv>
++#include <array>
++#include <rpl/variable.h>
+ 
+ namespace Webview {
+ namespace {
+@@ -122,11 +124,36 @@ const char kOptionWebviewDebugEnabled[] = "webview-debug-enabled";
+ 
+ const char kOptionWebviewLegacyEdge[] = "webview-legacy-edge";
+ 
++namespace {
++auto &LocalProxySetting(ProxyScope scope) {
++	static std::array<rpl::variable<LocalProxy>, 3> settings;
++	return settings.at(static_cast<size_t>(scope));
++}
++} // namespace
++
++void SetLocalProxy(ProxyScope scope, LocalProxy proxy) {
++	Expects(scope != ProxyScope::Unspecified);
++	Expects(!proxy.port || (proxy.port >= 1024 && proxy.port <= 65535
++		&& !proxy.user.empty() && !proxy.password.empty()));
++	LocalProxySetting(scope) = std::move(proxy);
++}
++
+ Window::Window(QWidget *parent, WindowConfig config) {
+-	if (createWebView(parent, config)
++	auto &setting = LocalProxySetting(config.proxyScope);
++	const auto selected = setting.current();
++	if (createWebView(parent, config, selected)
+ 		&& config.mode != WindowMode::Hidden) {
+ 		setDialogHandler(nullptr);
+ 	}
++	if (config.proxyScope != ProxyScope::Unspecified) {
++		// Environment creation can spin a nested event loop. value() replays
++		// the current route so a change during creation is handled too.
++		setting.value() | rpl::on_next([=](const LocalProxy &now) {
++			if (now != selected) {
++				_webview.reset();
++			}
++		}, _lifetime);
++	}
+ }
+ 
+ Window::~Window() {
+@@ -140,7 +167,7 @@ bool Window::valid() const {
+ 	return (_webview != nullptr);
+ }
+ 
+-bool Window::createWebView(QWidget *parent, const WindowConfig &config) {
++bool Window::createWebView(QWidget *parent, const WindowConfig &config, const LocalProxy &proxy) {
+ 	Expects(!_webview);
+ 	const auto restricted = !config.restrictedOrigin.isEmpty();
+ 	const auto restrictedContent = restricted
+@@ -150,7 +177,7 @@ bool Window::createWebView(QWidget *parent, const WindowConfig &config) {
+ 		return false;
+ 	}
+ 	auto userDataPath = config.storageId.path;
+-	if (restricted) {
++	if (restricted || proxy.port) {
+ 		_temporaryStorage = std::make_unique<QTemporaryDir>();
+ 		if (!_temporaryStorage->isValid()) {
+ 			_temporaryStorage = nullptr;
+@@ -187,6 +214,7 @@ bool Window::createWebView(QWidget *parent, const WindowConfig &config) {
+ 		.restrictedOrigin = config.restrictedOrigin.toStdString(),
+ 		.restrictedContentSecurityPolicy
+ 			= restrictedContent.policy.toStdString(),
++		.localProxy = proxy,
+ 	});
+ 	if (_webview && restricted) {
+ 		_webview->initAllFrames(restrictedContent.script.toStdString());
+@@ -256,61 +284,61 @@ function() {
+ }
+ 
+ void Window::navigate(const QString &url) {
+-	Expects(_webview != nullptr);
++	if (!_webview) return;
+ 
+ 	_webview->navigate(url.toStdString());
+ }
+ 
+ void Window::navigateToData(const QString &id) {
+-	Expects(_webview != nullptr);
++	if (!_webview) return;
+ 
+ 	_webview->navigateToData(id.toStdString());
+ }
+ 
+ void Window::loadHtml(const QString &html, const QString &baseUrl) {
+-	Expects(_webview != nullptr);
++	if (!_webview) return;
+ 
+ 	_webview->loadHtml(html.toStdString(), baseUrl.toStdString());
+ }
+ 
+ void Window::reload() {
+-	Expects(_webview != nullptr);
++	if (!_webview) return;
+ 
+ 	_webview->reload();
+ }
+ 
+ void Window::init(const QByteArray &js) {
+-	Expects(_webview != nullptr);
++	if (!_webview) return;
+ 
+ 	_webview->init(js.toStdString());
+ }
+ 
+ void Window::eval(const QByteArray &js) {
+-	Expects(_webview != nullptr);
++	if (!_webview) return;
+ 
+ 	_webview->eval(js.toStdString());
+ }
+ 
+ void Window::focus() {
+-	Expects(_webview != nullptr);
++	if (!_webview) return;
+ 
+ 	_webview->focus();
+ }
+ 
+ void Window::setFullscreen(bool fullscreen) {
+-	Expects(_webview != nullptr);
++	if (!_webview) return;
+ 
+ 	_webview->setFullscreen(fullscreen);
+ }
+ 
+ void Window::setInputBlocked(bool blocked) {
+-	Expects(_webview != nullptr);
++	if (!_webview) return;
+ 
+ 	_webview->setInputBlocked(blocked);
+ }
+ 
+ void Window::setVisible(bool visible) {
+-	Expects(_webview != nullptr);
++	if (!_webview) return;
+ 
+ 	_webview->setVisible(visible);
+ }
+@@ -329,14 +357,14 @@ void Window::setInteractionHandler(Fn<void()> handler) {
+ }
+ 
+ void Window::refreshNavigationHistoryState() {
+-	Expects(_webview != nullptr);
++	if (!_webview) return;
+ 
+ 	_webview->refreshNavigationHistoryState();
+ }
+ 
+ auto Window::navigationHistoryState() const
+ -> rpl::producer<NavigationHistoryState>{
+-	Expects(_webview != nullptr);
++	if (!_webview) return rpl::never<NavigationHistoryState>();
+ 
+ 	return [data = _webview->navigationHistoryState()](
+ 			auto consumer) mutable {
+diff --git a/webview/webview_embed.h b/webview/webview_embed.h
+index d179b2f..ec25d5b 100644
+--- a/webview/webview_embed.h
++++ b/webview/webview_embed.h
+@@ -51,8 +51,11 @@ struct WindowConfig {
+ 	QSize initialSize;
+ 	QString shellMessageToken;
+ 	QString restrictedOrigin;
++	ProxyScope proxyScope = ProxyScope::Unspecified;
+ };
+ 
++void SetLocalProxy(ProxyScope scope, LocalProxy proxy);
++
+ class Window final {
+ public:
+ 	explicit Window(
+@@ -108,7 +111,7 @@ public:
+ 	}
+ 
+ private:
+-	bool createWebView(QWidget *parent, const WindowConfig &config);
++	bool createWebView(QWidget *parent, const WindowConfig &config, const LocalProxy &proxy);
+ 	[[nodiscard]] Fn<void(Message)> messageHandler() const;
+ 	[[nodiscard]] Fn<bool(std::string,bool)> navigationPolicyHandler() const;
+ 	[[nodiscard]] Fn<void()> navigationStartHandler() const;
+diff --git a/webview/webview_interface.h b/webview/webview_interface.h
+index 3b33dcf..dea842b 100644
+--- a/webview/webview_interface.h
++++ b/webview/webview_interface.h
+@@ -164,6 +164,16 @@ struct Message {
+ 	std::string sourceUrl;
+ };
+ 
++enum class ProxyScope { Unspecified, Page, MiniApp };
++
++struct LocalProxy {
++	int port = 0; // Only authenticated HTTP at 127.0.0.1.
++	std::string user;
++	std::string password;
++
++	friend bool operator==(const LocalProxy &, const LocalProxy &) = default;
++};
++
+ struct Config {
+ 	QWidget *parent = nullptr;
+ 	QColor opaqueBg;
+@@ -191,6 +201,7 @@ struct Config {
+ 	std::string shellMessageToken;
+ 	std::string restrictedOrigin;
+ 	std::string restrictedContentSecurityPolicy;
++	LocalProxy localProxy;
+ };
+ 
+ struct Available {

@@ -498,6 +498,9 @@ Webview::WindowConfig EmbedOverlay::makeWindowConfig() const {
 		.initialSize = UsesExternalWindow(_mode)
 			? externalInitialSize()
 			: QSize(),
+#ifdef OVYGRAM_WEBVIEW_ROUTES
+		.proxyScope = Webview::ProxyScope::Page,
+#endif
 	};
 }
 

@@ -27,7 +27,24 @@ OUTGOING = frozenset({
     "messages.forwardMessages", "messages.sendInlineBotResult"})
 POINT_BITS = {name: 1 << index for index, name in enumerate((
     "before_send", "before_rpc", "after_rpc", "before_updates", "new_message",
-    "edited_message", "deleted_message", "account_changed", "accounts_changed", "chat_changed"))}
+    "edited_message", "deleted_message", "account_changed", "accounts_changed", "chat_changed",
+    "reaction_changed", "messages_read", "topic_changed", "selection_changed",
+    "download_started", "download_finished", "theme_changed"))}
+
+_UPDATE_EVENTS = {
+    "updateMessageReactions": "reaction_changed",
+    "updateEditForumTopic": "topic_changed",
+    "updatePinnedForumTopic": "topic_changed",
+    "updatePinnedForumTopics": "topic_changed",
+    **{name: "messages_read" for name in (
+        "updateReadHistoryInbox", "updateReadHistoryOutbox", "updateReadChannelInbox",
+        "updateReadChannelOutbox", "updateReadMessagesContents", "updateChannelReadMessagesContents",
+        "updateReadChannelDiscussionInbox", "updateReadChannelDiscussionOutbox",
+        "updateReadMonoForumInbox", "updateReadMonoForumOutbox")},
+}
+_UPDATE_MASK = sum(POINT_BITS[name] for name in {
+    "new_message", "edited_message", "deleted_message", *_UPDATE_EVENTS.values()})
+
 
 
 def context():
@@ -375,8 +392,8 @@ class Runtime:
         if event.get("type") == "element_click":
             self.element_click(event)
             return
-        if event.get("type") in ("widget_click", "key", "compose_changed", "menu_click", "panel_button_click",
-                                  "native_window", "native_signal"):
+        if event.get("type") in ("widget_click", "widget_available", "key", "compose_changed", "menu_click", "panel_button_click",
+                                  "native_window", "native_signal", "action", "search_page", "search_closed"):
             self.widget_rule_event(event)
             return
         with self.lock:
@@ -477,24 +494,29 @@ class Runtime:
                       message_from_native(message) if message is not None else None,
                       chat_from_native(chat) if chat is not None else None,
                       tuple(event.get("message_ids", ())),
-                      int(message["chat_id"]) if message is not None else None)
+                      int(message["chat_id"]) if message is not None else
+                      int(event["chat_id"]) if event.get("chat_id") is not None else None,
+                      details=event.get("details", {}))
         self.emit(event["point"], value)
 
     def update_event(self, event):
         from .models import Event, Message, message_from_tl
-        if not self.hook_mask & (POINT_BITS["new_message"] | POINT_BITS["edited_message"] | POINT_BITS["deleted_message"]):
+        if not self.hook_mask & _UPDATE_MASK:
             return
         data = base64.b64decode(event["data"], validate=True)
         account = str(event["account_id"])
-        key = (account, hashlib.sha256(data).digest())
-        if key in self.seen_events:
-            return
-        self.seen_events[key] = None
-        if len(self.seen_events) > 2048:
-            self.seen_events.popitem(last=False)
         kind = {"raw_updates": "Updates", "raw_update": "Update", "raw_message": "Message"}[event["point"]]
         value = tl.decode(data, kind)
         name = value.constructor_name
+        # Reaction counts and forum flags can legitimately return to an
+        # earlier value without any pts/date field distinguishing it.
+        if name not in _UPDATE_EVENTS:
+            key = (account, hashlib.sha256(data).digest())
+            if key in self.seen_events:
+                return
+            self.seen_events[key] = None
+            if len(self.seen_events) > 2048:
+                self.seen_events.popitem(last=False)
         if kind == "Message":
             if name in ("message", "messageService"):
                 message = message_from_tl(account, value)
@@ -503,8 +525,22 @@ class Runtime:
             if value.message.constructor_name not in ("message", "messageService"):
                 return
             message = message_from_tl(account, value.message)
+            action = getattr(value.message, "action", None)
+            if action and action.constructor_name in ("messageActionTopicCreate", "messageActionTopicEdit"):
+                self.emit("topic_changed", Event(account, chat_id=message.chat_id,
+                                                 message_ids=(message.id,), update=value))
             self.emit("edited_message" if name.startswith("updateEdit") else "new_message",
                       Event(account, message=message, chat_id=message.chat_id))
+        elif name in _UPDATE_EVENTS:
+            from .models import peer_id
+            peer = getattr(value, "peer", None)
+            channel = getattr(value, "channel_id", None)
+            chat_id = peer_id(peer) if peer else (channel | (2 << 48)) if channel else None
+            ids = getattr(value, "messages", ()) or ()
+            if name == "updateMessageReactions":
+                ids = (value.msg_id,)
+            self.emit(_UPDATE_EVENTS[name], Event(account, chat_id=chat_id,
+                                                  message_ids=tuple(ids), update=value))
         elif name in ("updateDeleteMessages", "updateDeleteChannelMessages"):
             chat_id = (value.channel_id | (2 << 48)) if name == "updateDeleteChannelMessages" else None
             self.emit("deleted_message", Event(account, message_ids=tuple(value.messages), chat_id=chat_id))

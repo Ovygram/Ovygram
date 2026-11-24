@@ -495,7 +495,6 @@ void Plugins::populate() {
 	}
 	Ui::AddSkip(_content);
 	Ui::AddDivider(_content);
-	Ui::AddSkip(_content);
 	Ui::AddSubsectionTitle(_content, rpl::single(u"Установленные плагины"_q));
 	const auto entries = _snapshot.value(u"plugins"_q).toArray();
 	auto found = false;

@@ -7,6 +7,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "tray.h"
 #include "tray_accounts_menu.h"
+#include "ovygram/plugin_actions.h"
 
 #include "core/application.h"
 #include "core/core_settings.h"
@@ -60,6 +61,10 @@ void Tray::create() {
 		rebuildMenu();
 	}, _tray.lifetime());
 
+	Ovygram::Actions::TrayChanges() | rpl::on_next([=] {
+		rebuildMenu();
+	}, _tray.lifetime());
+
 	TrayAccountsMenu::SetupChangesSubscription(
 		[=] { rebuildMenu(); },
 		_tray.lifetime());
@@ -106,6 +111,7 @@ void Tray::rebuildMenu() {
 		_tray.addAction(
 			std::move(notificationsText),
 			[=] { toggleSoundNotifications(); });
+		Ovygram::Actions::FillTray(_tray);
 	}
 
 	_tray.addAction(tr::lng_quit_from_tray(), [] { Core::Quit(); });

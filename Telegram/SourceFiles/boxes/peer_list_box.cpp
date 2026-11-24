@@ -1291,8 +1291,7 @@ void PeerListContent::appendSearchRow(std::unique_ptr<PeerListRow> row) {
 void PeerListContent::appendFoundRow(not_null<PeerListRow*> row) {
 	Expects(showingSearch());
 
-	auto index = findRowIndex(row);
-	if (index.value < 0) {
+	if (ranges::find(_filterResults, row) == end(_filterResults)) {
 		_filterResults.push_back(row);
 	}
 }
@@ -1304,6 +1303,14 @@ void PeerListContent::changeCheckState(
 	row->setChecked(checked, _st.item.checkbox, animated, [=] {
 		updateRow(row);
 	});
+}
+
+void PeerListContent::setPresentationFilter(Fn<bool(not_null<PeerListRow*>)> visible) {
+		setSelected(Selected());
+	setPressed(Selected());
+	setContexted(Selected());
+	_presentationFilter = std::move(visible);
+	refreshRows();
 }
 
 void PeerListContent::setRowHidden(not_null<PeerListRow*> row, bool hidden) {
@@ -1484,6 +1491,7 @@ void PeerListContent::removeRow(not_null<PeerListRow*> row) {
 		ranges::remove(_filterResults, row),
 		end(_filterResults));
 	_hiddenRows.remove(row);
+	std::erase(_presentationRows, row);
 	removeRowAtIndex(eraseFrom, index);
 
 	restoreSelection();
@@ -1500,6 +1508,7 @@ void PeerListContent::clearAllContent() {
 	_rowsById.clear();
 	_rowsByPeer.clear();
 	_filterResults.clear();
+	_presentationRows.clear();
 	_searchIndex.clear();
 	_rows.clear();
 	_searchRows.clear();
@@ -1632,6 +1641,7 @@ int PeerListContent::labelHeight() const {
 void PeerListContent::refreshRows() {
 	if (!_hiddenRows.empty()) {
 		_filterResults.clear();
+		_presentationRows.clear();
 		for (const auto &row : _rows) {
 			if (!row->hidden()) {
 				_filterResults.push_back(row.get());
@@ -1771,6 +1781,17 @@ void PeerListContent::paintEvent(QPaintEvent *e) {
 }
 
 int PeerListContent::resizeGetHeight(int newWidth) {
+	_presentationRows.clear();
+	if (_presentationFilter) {
+		const auto append = [&](not_null<PeerListRow*> row) {
+			if (_presentationFilter(row)) _presentationRows.push_back(row);
+		};
+		if (showingSearch()) {
+			for (const auto row : _filterResults) append(row);
+		} else {
+			for (const auto &row : _rows) append(row.get());
+		}
+	}
 	const auto rowsCount = shownRowsCount();
 	const auto hideAll = !rowsCount && _hideEmpty;
 	refreshSectionHeaders();
@@ -2608,6 +2629,7 @@ void PeerListContent::setSearchQuery(
 		? _searchQuery.mid(1)
 		: _searchQuery;
 	_filterResults.clear();
+	_presentationRows.clear();
 	clearSearchRows();
 }
 
@@ -2893,7 +2915,12 @@ template <typename Callback>
 bool PeerListContent::enumerateShownRows(int from, int to, Callback callback) {
 	Assert(0 <= from);
 	Assert(from <= to);
-	if (showingSearch()) {
+	if (_presentationFilter) {
+		Assert(to <= _presentationRows.size());
+		for (auto i = from; i != to; ++i) {
+			if (!callback(_presentationRows[i])) return false;
+		}
+	} else if (showingSearch()) {
 		Assert(to <= _filterResults.size());
 		for (auto i = from; i != to; ++i) {
 			if (!callback(_filterResults[i])) {
@@ -2913,7 +2940,9 @@ bool PeerListContent::enumerateShownRows(int from, int to, Callback callback) {
 
 PeerListRow *PeerListContent::getRow(RowIndex index) {
 	if (index.value >= 0) {
-		if (showingSearch()) {
+		if (_presentationFilter) {
+			return (index.value < _presentationRows.size()) ? _presentationRows[index.value].get() : nullptr;
+		} else if (showingSearch()) {
 			if (index.value < _filterResults.size()) {
 				return _filterResults[index.value];
 			}
@@ -2927,7 +2956,7 @@ PeerListRow *PeerListContent::getRow(RowIndex index) {
 PeerListContent::RowIndex PeerListContent::findRowIndex(
 		not_null<PeerListRow*> row,
 		RowIndex hint) {
-	if (!showingSearch()) {
+	if (!_presentationFilter && !showingSearch()) {
 		Assert(!row->isSearchResult());
 		return RowIndex(row->absoluteIndex());
 	}

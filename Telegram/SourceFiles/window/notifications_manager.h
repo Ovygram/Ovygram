@@ -9,6 +9,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "data/data_message_reaction_id.h"
 #include "base/timer.h"
+
+#include <QtCore/QJsonObject>
 #include "base/type_traits.h"
 #include "media/audio/media_audio_local_cache.h"
 
@@ -85,6 +87,9 @@ extern const char kOptionMacModernNotifications[];
 extern const char kOptionHideReplyButton[];
 
 class Manager;
+
+void SetPluginNotificationRule(const QJsonObject &command);
+void RemovePluginNotificationRules(const QString &installationId);
 
 struct ActivateOptions {
 	TextWithTags draft;
@@ -293,9 +298,7 @@ public:
 	explicit Manager(not_null<System*> system) : _system(system) {
 	}
 
-	void showNotification(NotificationFields fields) {
-		doShowNotification(std::move(fields));
-	}
+	void showNotification(NotificationFields fields);
 	void updateAll() {
 		doUpdateAll();
 	}
@@ -336,6 +339,8 @@ public:
 		bool hideReplyButton : 1 = false;
 		bool spoilerLoginCode : 1 = false;
 	};
+	[[nodiscard]] std::optional<QString> pluginPreview(
+		not_null<HistoryItem*> item, const DisplayOptions &options) const;
 	[[nodiscard]] DisplayOptions getNotificationOptions(
 		HistoryItem *item,
 		Data::ItemNotificationType type) const;

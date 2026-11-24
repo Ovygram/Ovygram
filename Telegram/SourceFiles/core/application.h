@@ -11,6 +11,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "mtproto/mtproto_proxy_data.h"
 #include "window/window_separate_id.h"
 
+#include <optional>
+
 class History;
 
 namespace base {
@@ -248,6 +250,10 @@ public:
 	void setCurrentProxy(
 		const MTP::ProxyData &proxy,
 		MTP::ProxyData::Settings settings);
+#ifdef OVYGRAM_ENABLED
+	void setPluginProxy(std::optional<MTP::ProxyData> proxy);
+	void setPluginSessionProxy(bool files, std::optional<MTP::ProxyData> proxy);
+#endif
 	void proxyRotationSettingsChanged();
 	void checkProxyRotation(not_null<Main::Account*> account, int32 state);
 	[[nodiscard]] rpl::producer<ProxyChange> proxyChanges() const;
@@ -422,6 +428,7 @@ private:
 	void showOpenGLCrashNotification();
 	void clearPasscodeLock();
 	void closeAdditionalWindows();
+	void finishProxyChange(const MTP::ProxyData &was);
 
 	bool openCustomUrl(
 		const QString &protocol,

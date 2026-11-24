@@ -1,0 +1,25 @@
+from base_plugin import BasePlugin
+from desktop import ui
+
+__id__ = "settings_button"
+__name__ = "Кнопка в настройках"
+__version__ = "1.0.0"
+__release__ = False
+__author__ = "Ovygram"
+__description__ = "Добавляет в общие настройки кнопку со счётчиком нажатий."
+__platform__ = "desktop"
+__desktop_sdk__ = 4
+__requirements__ = []
+
+
+class SettingsButton(BasePlugin):
+    def on_plugin_load(self):
+        self.placement = ui.Placement(self.create_row, name="settings.main")
+
+    def create_row(self, handle):
+        def clicked():
+            self.set_setting("clicks", self.get_setting("clicks", 0) + 1)
+            ui.Section(ui.Text(f"Всего нажатий: {self.get_setting('clicks', 0)}"),
+                       title="Счётчик").show()
+
+        return ui.Button("Счётчик плагина", on_click=clicked)
