@@ -576,7 +576,7 @@ void PluginUi::update(const QJsonObject &command) {
 	if (i == end(_objects)) {
 		return;
 	}
-	const auto &object = *i->second;
+	auto &object = *i->second;
 	const auto was = std::exchange(_updating, true);
 	const auto restore = gsl::finally([&] { _updating = was; });
 	object.tree.update(command.value(u"node_id"_q).toString(),
