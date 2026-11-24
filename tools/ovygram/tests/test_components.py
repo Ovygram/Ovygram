@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from unittest import mock
 from zipfile import ZIP_DEFLATED, ZipFile
@@ -51,6 +52,18 @@ class ComponentTests(unittest.TestCase):
     def command(self, op, **params):
         return self.manager.helpers.command(self.owner, op, params)
 
+    def assert_component_files_removed(self):
+        helpers = self.manager.helpers
+        deadline = time.monotonic() + 12
+        # Windows can release the executable mapping after the component exits.
+        # Use the manager's normal retry path when removal was deferred.
+        while helpers.pending_cleanup and time.monotonic() < deadline:
+            helpers.poll()
+            if helpers.pending_cleanup:
+                time.sleep(0.1)
+        self.assertFalse(helpers.pending_cleanup)
+        self.assertFalse(list(self.manager.root.glob("helper-*")))
+
     def run_tool(self, arguments, config=""):
         if not self.win:
             self.command("start", resource="bin/tool", arguments=arguments, config=config)
@@ -85,7 +98,7 @@ class ComponentTests(unittest.TestCase):
             self.assertEqual(self.run_tool(["check-private-file", str(secret)]), 0)
         else:
             self.assertNotEqual(self.run_tool(["needle", str(secret)]), 0)
-        self.assertFalse(list(self.manager.root.glob("helper-*")))
+        self.assert_component_files_removed()
 
     def test_disable_stops_component_and_withdraws_offer(self):
         args = ["wait"] if self.win else ["60"]
@@ -101,7 +114,7 @@ class ComponentTests(unittest.TestCase):
         self.manager.disable(self.owner)
         self.assertIsNotNone(process.poll())
         self.assertNotIn(self.owner, self.manager.helpers.offers)
-        self.assertFalse(list(self.manager.root.glob("helper-*")))
+        self.assert_component_files_removed()
 
     def test_only_verified_members_and_active_owners(self):
         for resource in ["../component", "C:/component", "missing"]:
