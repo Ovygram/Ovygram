@@ -1,0 +1,75 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)
+deps=${OVYGRAM_UI_PREVIEW_DEPS:-"$repo/out/ui-preview-tools"}
+build=${OVYGRAM_UI_PREVIEW_BUILD_DIR:-"$repo/out/ui-preview"}
+
+if [[ ${1:-} == --setup ]]; then
+    exec "$repo/tools/ovygram/ui_preview/setup_debian.sh" "$deps"
+fi
+if [[ -f "$deps/environment.sh" ]]; then
+    source "$deps/environment.sh"
+fi
+
+theme=dark
+build_only=false
+args=()
+while (($#)); do
+    case "$1" in
+        --theme)
+            theme=${2:?Provide dark or light after --theme}
+            shift 2
+            ;;
+        --plugin)
+            args+=(--plugin-file "${2:?Provide the plugin file after --plugin}")
+            shift 2
+            ;;
+        --plugin=*)
+            args+=("--plugin-file=${1#*=}")
+            shift
+            ;;
+        --build-only)
+            build_only=true
+            shift
+            ;;
+        *)
+            args+=("$1")
+            shift
+            ;;
+    esac
+done
+
+case "$theme" in
+    dark|light) ;;
+    *) echo 'Use --theme dark or --theme light.' >&2; exit 2 ;;
+esac
+
+if [[ ! -f "$build/CMakeCache.txt" ]]; then
+    extra=()
+    if [[ -n ${OVYGRAM_PREVIEW_SYSROOT:-} ]]; then
+        extra+=("-DGIR_DIR=$OVYGRAM_PREVIEW_SYSROOT/usr/share")
+    fi
+    cmake -S "$repo/tools/ovygram/ui_preview" -B "$build" -G Ninja \
+        -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_FLAGS_DEBUG="-O0 -g0" \
+        -DCMAKE_C_FLAGS_DEBUG="-O0 -g0" "${extra[@]}"
+fi
+cmake --build "$build" --target ovygram-ui-preview --parallel "${OVYGRAM_UI_PREVIEW_JOBS:-3}"
+if [[ $build_only == true ]]; then
+    exit 0
+fi
+
+if [[ "$theme" == dark ]]; then
+    python3 - "$repo/Telegram/Resources/night.tdesktop-theme" "$build/night.palette" <<'PY'
+from pathlib import Path
+import sys
+import zipfile
+
+source, destination = map(Path, sys.argv[1:])
+if not destination.is_file() or destination.stat().st_mtime < source.stat().st_mtime:
+    with zipfile.ZipFile(source) as theme:
+        destination.write_bytes(theme.read("colors.tdesktop-theme"))
+PY
+    args=(--palette "$build/night.palette" "${args[@]}")
+fi
+exec "$build/ovygram-ui-preview" "${args[@]}"

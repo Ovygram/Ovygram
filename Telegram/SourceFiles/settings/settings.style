@@ -53,51 +53,6 @@ settingsPluginImport: SettingsButton(settingsButtonLightNoIcon) {
 	height: 20px;
 	padding: margins(22px, 12px, 22px, 12px);
 }
-settingsPluginCardMargin: margins(12px, 3px, 12px, 8px);
-settingsPluginCardRadius: 10px;
-settingsPluginsLayerWidth: 660px;
-settingsPluginsLayerMinHeight: 640px;
-settingsPluginTextMargin: margins(14px, 0px, 14px, 8px);
-settingsPluginToggleWidth: 58px;
-settingsPluginCardAction: SettingsButton(settingsButtonLightNoIcon) {
-	textBg: transparent;
-	textBgOver: transparent;
-	ripple: RippleAnimation(defaultRippleAnimation) {
-		color: transparent;
-	}
-	padding: margins(14px, 10px, 14px, 10px);
-	height: 20px;
-}
-settingsPluginToggleAction: SettingsButton(settingsPluginCardAction) {
-	padding: margins(0px, 10px, 0px, 10px);
-	toggleSkip: 14px;
-	toggleOver: infoProfileToggle;
-}
-settingsPluginCardTitle: SettingsButton(settingsPluginCardAction) {
-	style: TextStyle(boxTextStyle) {
-		font: font(14px semibold);
-	}
-	textFg: windowBoldFg;
-	textFgOver: windowBoldFgOver;
-}
-settingsPluginCardRemove: SettingsButton(settingsPluginCardAction) {
-	textFg: attentionButtonFg;
-	textFgOver: attentionButtonFgOver;
-}
-settingsPluginCardMeta: FlatLabel(defaultFlatLabel) {
-	textFg: windowSubTextFg;
-}
-settingsPluginBody: FlatLabel(defaultFlatLabel) {
-	maxHeight: 0px;
-	style: TextStyle(defaultTextStyle) {
-		font: font(14px);
-	}
-}
-settingsPluginInstallTitle: FlatLabel(settingsPluginBody) {
-	style: TextStyle(defaultTextStyle) {
-		font: font(18px semibold);
-	}
-}
 settingsFaqKeysLegendIcon: icon {{ "menu/keyboard", menuIconColor }};
 settingsFaqKeysLegendIconOver: icon {{ "menu/keyboard", windowBoldFgOver }};
 settingsFaqKeysLegend: IconButton {

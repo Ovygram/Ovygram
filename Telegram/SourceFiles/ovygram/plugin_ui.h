@@ -64,8 +64,7 @@ private:
 	[[nodiscard]] object_ptr<Ui::RpWidget> build(
 		Object &object,
 		QWidget *parent,
-		const QJsonObject &node,
-		int depth);
+		const QJsonObject &node);
 	void send(
 		const Object &object,
 		const QString &nodeId,

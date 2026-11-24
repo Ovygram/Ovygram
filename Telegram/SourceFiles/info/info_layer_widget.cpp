@@ -26,7 +26,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #ifdef OVYGRAM_ENABLED
 #include "settings/sections/settings_plugins.h"
-#include "styles/style_settings.h"
+#include "styles/style_plugin_management.h"
 #endif
 
 namespace Info {
@@ -340,7 +340,7 @@ QRect LayerWidget::countGeometry(int newWidth) {
 #ifdef OVYGRAM_ENABLED
 	const auto section = _contentWrap->controller()->section();
 	if (section.type() == Section::Type::Settings
-		&& ::Settings::IsPluginsSection(section.settingsType())) {
+		&& section.settingsType() == ::Settings::PluginsId()) {
 		accumulate_max(desiredHeight, st::settingsPluginsLayerMinHeight);
 	}
 #endif

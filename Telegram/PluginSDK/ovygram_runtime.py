@@ -132,6 +132,7 @@ def unpack_package(payload, kind, target):
 MAX_PLUGIN_ERROR = 500
 MAX_SETTINGS = 256
 SETTING_KINDS = {"header": {"text": str}, "button": {"key": str, "text": str, "action_id": str},
+                 "link": {"key": str, "text": str, "action_id": str, "description": str},
                  "switch": {"key": str, "text": str, "value": bool},
                  "input": {"key": str, "text": str, "value": str},
                  "selector": {"key": str, "text": str, "value": int, "items": list}}
@@ -151,6 +152,8 @@ def checked_settings(fields):
                 not field["items"] or not all(isinstance(text, str) for text in field["items"])
                 or not 0 <= field["value"] < len(field["items"])):
             raise ValueError("Некорректное описание списка.")
+        if field["kind"] == "link" and not field["text"].strip():
+            raise ValueError("Ссылка на настройки требует непустое название.")
     return fields
 
 

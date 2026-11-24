@@ -10,9 +10,18 @@
   explicitly commands a build. Do not run local Windows CMake/compiler/native
   smoke builds, or dispatch a workflow merely because a change is ready.
 - Linux builds do not require GitHub Actions. Do not add a Linux Actions build
-  workflow as a plan requirement. No Linux build is authorized by this clarification;
-  run one only on a separate explicit owner request. Python tests without
-  compilation and source checks may run normally.
+  workflow as a plan requirement. The owner authorizes the standalone Linux UI
+  preview and its dependencies in Codex Cloud for UI work. Full Linux client
+  builds require a separate explicit owner request. Python tests and source
+  checks may run normally.
+- For every task that creates or changes a window, build and open the relevant
+  scenario in the [offline UI preview](docs/ui-preview.md). Exercise the
+  changed controls, inspect the rendered result, and include screenshots in
+  the final answer. Add a preview scenario when introducing a new window.
+  For plugin UI, use a temporary profile and sample data through the isolated
+  SDK host. Keep the native theme roles, including one primary action per
+  dialog and scrollable content only when it exceeds the available height.
+  Use the [reusable UI prompt](docs/ui-design-prompt.txt) for new UI briefs.
 - Official packages require the exact literal author `Ovygram`. Case variants
   remain reserved but cannot receive `official` without a corrected file.
 - Settings/data/handlers belong to installation_id. A separate plugin permission

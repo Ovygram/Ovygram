@@ -1,4 +1,5 @@
 #include "ovygram/plugin_paint.h"
+#include <QtCore/QJsonObject>
 
 #include <QtGui/QPainter>
 

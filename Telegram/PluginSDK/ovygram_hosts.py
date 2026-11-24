@@ -56,8 +56,9 @@ class Session:
 
 
 class ProcessHost:
-    def __init__(self, manager):
+    def __init__(self, manager, *, allow_network=True):
         self.manager = manager
+        self.allow_network = allow_network
         self.session = None
         self.calls = itertools.count(1)
         self.report = {"active": False, "network": True, "reason": ""}
@@ -74,6 +75,8 @@ class ProcessHost:
     def start(self):
         manager = self.manager
         python, python_environment, bundled = python_command(manager.python_dir)
+        if sys.platform.startswith("linux") and not bundled:
+            python = str(Path(python).resolve())
         data = manager.root / "data"
         data.mkdir(exist_ok=True)
         environment = {**python_environment, "PYTHONUTF8": "1", "PYTHONNOUSERSITE": "1",
@@ -87,7 +90,8 @@ class ProcessHost:
             command, descriptors, report = wrap(
                 # Resolved like python_dir: the sandbox binds real paths.
                 [python, *flags, str(Path(__file__).resolve().with_name("ovygram_host.py"))],
-                sandboxed, read_only=read_only, writable=[data], directory=data)
+                sandboxed, read_only=read_only, writable=[data], directory=data,
+                allow_network=self.allow_network)
         except SandboxError as error:
             self.report = {"active": False, "network": False, "reason": str(error)}
             raise
