@@ -160,7 +160,7 @@ _SYSTEM = (
 )
 
 
-def wrap(command, environment, read_only=(), writable=(), directory=None):
+def wrap(command, environment, read_only=(), writable=(), directory=None, *, allow_network=True):
     """(argv, file descriptors to pass, report) that run command restricted.
 
     report is what the client shows: {"active", "network", "reason"}, with
@@ -186,7 +186,7 @@ def wrap(command, environment, read_only=(), writable=(), directory=None):
     scoped = landlock_abi() >= _SCOPE_ABI
     arguments = [bwrap, "--unshare-user", "--unshare-pid", "--unshare-ipc", "--unshare-uts",
                  "--unshare-cgroup-try", "--die-with-parent", "--new-session", "--clearenv"]
-    if not scoped:
+    if not scoped or not allow_network:
         arguments.append("--unshare-net")
     for path in _SYSTEM:
         if path.count("/") == 1 and os.path.islink(path):
@@ -211,8 +211,9 @@ def wrap(command, environment, read_only=(), writable=(), directory=None):
         raise
     arguments += ["--seccomp", str(descriptor), "--", *command]
     return arguments, (descriptor,), {
-        "active": True, "network": scoped, "scoped": scoped,
-        "reason": "" if scoped else "Сеть плагинам недоступна: ядру нужен Landlock 6 (Linux 6.12)."}
+        "active": True, "network": scoped and allow_network, "scoped": scoped,
+        "reason": ("Сеть отключена в предпросмотре." if not allow_network else
+                   "" if scoped else "Сеть плагинам недоступна: ядру нужен Landlock 6 (Linux 6.12).")}
 
 
 def confine(process):

@@ -1,12 +1,14 @@
 #pragma once
 
+#include "ui/effects/animation_value.h"
 #include "ui/painter.h"
 #include "ui/widgets/labels.h"
 #include "ui/wrap/vertical_layout.h"
-#include "styles/style_settings.h"
+#include "styles/style_plugin_management.h"
 #include "styles/palette.h"
 
 #include <algorithm>
+#include <optional>
 
 namespace Ovygram {
 
@@ -38,19 +40,33 @@ inline QColor PluginTrustColor(const QString &status) {
 	return color;
 }
 
-inline void AddPluginTrustBadge(
-		not_null<Ui::VerticalLayout*> layout,
+inline object_ptr<Ui::VerticalLayout> MakePluginBadge(
+		QWidget *parent,
 		QString text,
-		QString status) {
-	const auto badge = layout->add(
-		object_ptr<Ui::VerticalLayout>(layout),
-		st::settingsPluginTextMargin);
-	const auto label = badge->add(
-		object_ptr<Ui::FlatLabel>(badge, std::move(text), st::settingsPluginBody),
-		style::margins(12, 8, 12, 8));
-	label->setBreakEverywhere(true);
+		std::optional<QString> trustStatus = std::nullopt) {
+	auto result = object_ptr<Ui::VerticalLayout>(parent);
+	const auto badge = result.data();
+	const auto warning = trustStatus
+		&& *trustStatus != u"verified"_q
+		&& *trustStatus != u"official"_q;
+	auto padding = st::settingsPluginBadgePadding;
+	if (warning) {
+		padding.setLeft(padding.left() + st::settingsPluginBadgeWarning.width()
+			+ st::settingsPluginBadgeGap);
+	}
+	auto textLabel = object_ptr<Ui::FlatLabel>(badge, std::move(text), st::settingsPluginBody);
+	const auto label = badge->add(std::move(textLabel), padding);
+	const auto foreground = [=] {
+		if (!trustStatus) {
+			return st::windowSubTextFg->c;
+		}
+		const auto color = PluginTrustColor(*trustStatus);
+		return (st::windowBg->c.lightnessF() >= 0.5)
+			? anim::color(color, st::windowFg, 0.30)
+			: color;
+	};
 	const auto updateColor = [=] {
-		label->setTextColorOverride(PluginTrustColor(status));
+		label->setTextColorOverride(foreground());
 		badge->update();
 	};
 	updateColor();
@@ -58,12 +74,27 @@ inline void AddPluginTrustBadge(
 	badge->paintRequest() | rpl::on_next([=] {
 		auto p = QPainter(badge);
 		const auto quality = PainterHighQualityEnabler(p);
-		auto background = PluginTrustColor(status);
-		background.setAlpha(26);
+		auto background = trustStatus ? foreground() : st::windowFg->c;
+		background.setAlpha(trustStatus ? 26 : 16);
 		p.setPen(Qt::NoPen);
 		p.setBrush(background);
 		p.drawRoundedRect(badge->rect(), badge->height() / 2, badge->height() / 2);
+		if (warning) {
+			const auto &icon = st::settingsPluginBadgeWarning;
+			icon.paint(p, st::settingsPluginBadgePadding.left(),
+				(badge->height() - icon.height()) / 2, badge->width(), foreground());
+		}
 	}, badge->lifetime());
+	return result;
+}
+
+inline void AddPluginTrustBadge(
+		not_null<Ui::VerticalLayout*> layout,
+		QString text,
+		QString status) {
+	layout->add(
+		MakePluginBadge(layout, std::move(text), std::move(status)),
+		st::settingsPluginTextMargin);
 }
 
 } // namespace Ovygram

@@ -234,10 +234,11 @@ class InstallationTests(unittest.TestCase):
         self.assertEqual(info["installations"], [])
         self.assertEqual(self.manager.records, {})
 
-    def test_setting_headers_and_buttons_keep_owner_and_reject_stale_clicks(self):
+    def test_setting_actions_keep_owner_and_reject_stale_clicks(self):
         source = self.root / "settings_actions.ovyplugin"
         source.write_text('''from base_plugin import BasePlugin
-from ui.settings import Button, Header, Input
+from desktop import ui
+from ui.settings import Button, Header, Input, Link
 __id__ = "settings_actions"
 __name__ = "Settings actions"
 __description__ = "Settings action test"
@@ -248,27 +249,48 @@ __platform__ = "desktop"
 __desktop_sdk__ = 2
 class SettingsPlugin(BasePlugin):
     def create_settings(self):
-        return [Header("Section"), Button("action", "Run", self.clicked), Input("name", "Name", "Default")]
+        return [
+            Header("Section"),
+            Button("action", "Run", self.clicked),
+            Link("open_settings", "Open settings", self.open_settings, description="Also in the menu"),
+            Input("name", "Name", "Default"),
+        ]
     def clicked(self):
         self.set_setting("clicked", self.get_setting("clicked", 0) + 1)
+    def open_settings(self):
+        ui.Section("Settings content", title="Plugin settings").show()
 ''', encoding="utf-8")
         first = self.manager.install(str(source))
         second = self.manager.install(str(source), separate=True)
         self.manager.enable(first)
         self.manager.enable(second)
         fields = self.manager.settings(first)
-        self.assertEqual([field["kind"] for field in fields], ["header", "button", "input"])
+        self.assertEqual([field["kind"] for field in fields], ["header", "button", "link", "input"])
         action = fields[1]["action_id"]
+        link = fields[2]
+        self.assertEqual(link["description"], "Also in the menu")
         with self.assertRaisesRegex(ValueError, "устарела"):
             self.manager.settings_action(second, action)
+        with self.assertRaisesRegex(ValueError, "устарела"):
+            self.manager.settings_action(second, link["action_id"])
         self.manager.save_settings(first, {"name": "Changed"})
         self.manager.settings_action(first, action)
         self.assertEqual(self.manager.records[first]["settings"]["clicked"], 1)
         self.assertNotIn("clicked", self.manager.records[second]["settings"])
+        commands = []
+        self.manager.runtime.sender = commands.append
+        self.manager.runtime.ready.set()
+        self.manager.settings_action(first, link["action_id"])
+        self.assertEqual(len(commands), 1)
+        command = commands[0]
+        self.assertEqual(command["installation_id"], first)
+        self.assertEqual((command["method"], command["kind"], command["title"]),
+                         ("ui.show", "section", "Plugin settings"))
         self.manager.disable(first)
         self.manager.enable(first)
-        with self.assertRaisesRegex(ValueError, "устарела"):
-            self.manager.settings_action(first, action)
+        for old_action in (action, link["action_id"]):
+            with self.assertRaisesRegex(ValueError, "устарела"):
+                self.manager.settings_action(first, old_action)
 
     def test_two_installations_of_one_id_are_isolated(self):
         first = self.manager.install(str(self.copy()))

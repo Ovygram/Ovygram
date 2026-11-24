@@ -74,6 +74,7 @@ set(style_files
     payments/ui/payments.style
     profile/profile.style
     settings/settings.style
+    ovygram/plugin_management.style
     settings/sections/settings_local_storage.style
     settings/sections/settings_active_sessions.style
     settings/sections/settings_premium.style

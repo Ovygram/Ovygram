@@ -4,26 +4,23 @@
 #include "core/file_utilities.h"
 #include "core/plugin_runtime.h"
 #include "ovygram/plugin_install.h"
-#include "ovygram/plugin_trust_badge.h"
+#include "ovygram/plugin_management_view.h"
 #include "ovygram/protected_ui.h"
 #include "lang/lang_keys.h"
 #include "mainwidget.h"
 #include "settings/settings_common_session.h"
 #include "ui/boxes/confirm_box.h"
 #include "ui/layers/generic_box.h"
-#include "ui/painter.h"
 #include "ui/search_field_controller.h"
 #include "ui/vertical_list.h"
 #include "ui/widgets/buttons.h"
-#include "ui/widgets/checkbox.h"
-#include "ui/widgets/fields/input_field.h"
 #include "ui/widgets/labels.h"
 #include "ui/wrap/slide_wrap.h"
 #include "ui/wrap/vertical_layout.h"
 #include "window/window_session_controller.h"
-#include "styles/style_boxes.h"
 #include "styles/style_layers.h"
 #include "styles/style_settings.h"
+#include "styles/style_plugin_management.h"
 
 #include <QtCore/QJsonArray>
 #include <QtCore/QJsonDocument>
@@ -31,8 +28,6 @@
 #include <QtCore/QTimer>
 #include <QtCore/QUrl>
 #include <QtGui/QDesktopServices>
-#include <algorithm>
-#include <vector>
 
 namespace Settings {
 namespace {
@@ -62,14 +57,6 @@ const auto kPluginFilter = u"Плагины (*.ovyplugin *.ovyzip *.py *.plugin 
 	}
 	notice = std::move(error);
 	return QJsonValue(QJsonValue::Undefined);
-}
-
-[[nodiscard]] QString PluginStatus(const QJsonObject &plugin) {
-	return plugin.value(u"loaded"_q).toBool()
-		? u"Запущен"_q
-		: plugin.value(u"enabled"_q).toBool()
-		? u"Включён, но не запущен"_q
-		: u"Отключён"_q;
 }
 
 [[nodiscard]] QString RuntimeStatus(const QJsonObject &snapshot) {
@@ -126,19 +113,6 @@ void AddNotice(
 	wrap->finishAnimating();
 }
 
-[[nodiscard]] QString DependencyLine(const QJsonObject &plugin) {
-	auto names = QStringList();
-	for (const auto &value : plugin.value(u"requirements"_q).toArray()) {
-		names.push_back(value.toString());
-	}
-	if (names.isEmpty()) {
-		return QString();
-	}
-	return (plugin.value(u"installing"_q).toBool()
-		? u"Устанавливаются зависимости: "_q
-		: u"Зависимости: "_q) + names.join(u", "_q);
-}
-
 [[nodiscard]] bool InstallingDependencies(const QJsonObject &snapshot) {
 	return !snapshot.value(u"dependencies"_q).toObject().value(
 		u"installing"_q).toString().isEmpty();
@@ -173,175 +147,10 @@ void AddNotice(
 	return u"Плагины не запущены. %1"_q.arg(reason);
 }
 
-[[nodiscard]] QString PluginMetadata(const QJsonObject &plugin) {
-	auto result = u"Версия %1 · %2 · %3"_q.arg(
-		plugin.value(u"version"_q).toString().simplified(),
-		plugin.value(u"display_author"_q).toString(plugin.value(u"author"_q).toString()).simplified(),
-		plugin.value(u"plugin_id"_q).toString());
-	// Installations of one plugin ID differ by their installation_id.
-	if (plugin.value(u"instances"_q).toInt() > 1) {
-		result += u" · экземпляр %1"_q.arg(
-			plugin.value(u"installation_id"_q).toString().left(8));
-	}
-	return result;
-}
-
-[[nodiscard]] QString TrustStatus(const QJsonObject &plugin) {
-	const auto status = plugin.value(u"trust"_q).toObject().value(u"status"_q).toString();
-	if (status == u"verified"_q) return u"Проверенный плагин"_q;
-	if (status == u"official"_q) return u"Официальный плагин"_q;
-	if (status == u"blocked"_q) return u"Опасный плагин / вирус — запуск запрещён"_q;
-	if (status == u"revoked"_q) return u"Непроверенный плагин — проверка отозвана"_q;
-	if (status == u"verification_unavailable"_q) return u"Проверка недоступна"_q;
-	return u"Непроверенный плагин"_q;
-}
-
 [[nodiscard]] QString ErrorPreview(const QString &description) {
 	const auto text = description.simplified();
 	constexpr auto kLimit = 160;
 	return (text.size() > kLimit) ? text.left(kLimit).trimmed() + u"…"_q : text;
-}
-
-[[nodiscard]] not_null<Ui::VerticalLayout*> AddCard(
-		not_null<Ui::VerticalLayout*> layout) {
-	const auto card = layout->add(
-		object_ptr<Ui::VerticalLayout>(layout),
-		st::settingsPluginCardMargin,
-		style::al_justify);
-	card->paintRequest() | rpl::on_next([=] {
-		auto p = QPainter(card);
-		const auto quality = PainterHighQualityEnabler(p);
-		p.setPen(Qt::NoPen);
-		p.setBrush(st::windowBgOver);
-		const auto radius = st::settingsPluginCardRadius;
-		p.drawRoundedRect(card->rect(), radius, radius);
-	}, card->lifetime());
-	return card;
-}
-
-not_null<Ui::FlatLabel*> AddCardLabel(
-		not_null<Ui::VerticalLayout*> card,
-		QString text,
-		const style::FlatLabel &style = st::defaultFlatLabel) {
-	const auto label = card->add(
-		object_ptr<Ui::FlatLabel>(card, std::move(text), style),
-		st::settingsPluginTextMargin,
-		style::al_justify);
-	label->setBreakEverywhere(true);
-	return label;
-}
-
-void AddTrustMetadata(not_null<Ui::VerticalLayout*> card, const QJsonObject &plugin) {
-	AddCardLabel(card, PluginMetadata(plugin), st::settingsPluginCardMeta);
-	const auto status = plugin.value(u"trust"_q).toObject().value(u"status"_q).toString();
-	Ovygram::AddPluginTrustBadge(card, TrustStatus(plugin), status);
-	if (status == u"verification_unavailable"_q) {
-		const auto reason = plugin.value(u"trust"_q).toObject().value(u"reason"_q).toString();
-		if (!reason.isEmpty()) AddCardLabel(card, reason, st::settingsPluginCardMeta);
-	}
-}
-
-class PluginCardButton final : public Ui::SettingsButton {
-public:
-	PluginCardButton(QWidget *parent, QString text, const style::SettingsButton &style, bool toggle)
-	: Ui::SettingsButton(parent, rpl::single(std::move(text)), style)
-	, _toggle(toggle) {
-	}
-
-protected:
-	void paintEvent(QPaintEvent *event) override {
-		if (!_toggle && (isOver() || isDown()) && !isDisabled()) {
-			auto p = QPainter(this);
-			const auto quality = PainterHighQualityEnabler(p);
-			auto fill = st::windowFg->c;
-			fill.setAlpha(isDown() ? 22 : 12);
-			p.setPen(Qt::NoPen);
-			p.setBrush(fill);
-			const auto bounds = QRect(4, 4, std::min(width() - 8, fullTextWidth() + 20), height() - 8);
-			p.drawRoundedRect(bounds, 6, 6);
-		}
-		Ui::SettingsButton::paintEvent(event);
-	}
-
-private:
-	const bool _toggle;
-};
-
-class PluginButtonRow final : public Ui::RpWidget {
-public:
-	PluginButtonRow(QWidget *parent, bool hasToggle = false)
-	: Ui::RpWidget(parent)
-	, _hasToggle(hasToggle) {
-	}
-
-	not_null<Ui::SettingsButton*> addButton(
-			QString text,
-			const style::SettingsButton &style,
-			Fn<void()> action = nullptr) {
-		const auto button = Ui::CreateChild<PluginCardButton>(
-			this,
-			std::move(text),
-			style,
-			_hasToggle && !_buttons.empty());
-		if (action) {
-			button->setClickedCallback(std::move(action));
-		}
-		button->show();
-		_buttons.push_back(button);
-		return button;
-	}
-
-protected:
-	int resizeGetHeight(int width) override {
-		const auto count = int(_buttons.size());
-		const auto toggleWidth = _hasToggle
-			? std::min(width, st::settingsPluginToggleWidth)
-			: 0;
-		const auto regular = count - (_hasToggle ? 1 : 0);
-		const auto space = width - toggleWidth;
-		auto left = 0;
-		auto height = 0;
-		for (auto i = 0; i != count; ++i) {
-			const auto right = (i < regular) ? (space * (i + 1) / regular) : width;
-			_buttons[i]->resizeToWidth(right - left);
-			height = std::max(height, _buttons[i]->height());
-			_buttons[i]->moveToLeft(left, 0, width);
-			left = right;
-		}
-		return height;
-	}
-
-private:
-	const bool _hasToggle;
-	std::vector<not_null<Ui::SettingsButton*>> _buttons;
-};
-
-void AddPluginHeader(
-		not_null<Ui::VerticalLayout*> card,
-		QString title,
-		Fn<void()> open,
-		bool enabled,
-		bool blocked,
-		Fn<void()> toggle) {
-	auto row = object_ptr<PluginButtonRow>(card, true);
-	row->addButton(std::move(title), st::settingsPluginCardTitle, std::move(open));
-	const auto button = row->addButton(
-		enabled ? u"Отключить плагин"_q : u"Включить плагин"_q,
-		st::settingsPluginToggleAction,
-		std::move(toggle));
-	button->toggleOn(rpl::single(enabled), true);
-	button->setDisabled(blocked && !enabled);
-	card->add(std::move(row));
-}
-
-void AddCardActions(
-		not_null<Ui::VerticalLayout*> card,
-		Fn<void()> share,
-		Fn<void()> remove) {
-	auto row = object_ptr<PluginButtonRow>(card);
-	row->addButton(u"Отправить"_q, st::settingsPluginCardAction, std::move(share));
-	row->addButton(u"Удалить"_q, st::settingsPluginCardRemove, std::move(remove));
-	card->add(std::move(row));
 }
 
 void ConfirmRemove(
@@ -349,12 +158,7 @@ void ConfirmRemove(
 		Fn<void(bool)> remove) {
 	controller->show(Box([=](not_null<Ui::GenericBox*> box) {
 		Ovygram::ProtectSurface(box);
-		box->setTitle(rpl::single(u"Удаление плагина"_q));
-		box->addRow(object_ptr<Ui::FlatLabel>(box,
-			rpl::single(u"Сохранить настройки и данные этого экземпляра?"_q), st::boxLabel));
-		box->addButton(rpl::single(u"Сохранить данные"_q), [=] { box->closeBox(); remove(true); });
-		box->addButton(rpl::single(u"Удалить всё"_q), [=] { box->closeBox(); remove(false); });
-		box->addButton(tr::lng_cancel(), [=] { box->closeBox(); });
+		Ovygram::BuildPluginRemovalBox(box, tr::lng_cancel(), remove);
 	}));
 }
 
@@ -473,16 +277,9 @@ void PluginDetails::refresh() {
 
 	const auto status = RuntimeStatus(snapshot);
 	const auto enabled = plugin.value(u"enabled"_q).toBool();
-	const auto card = AddCard(_content);
-	AddPluginHeader(card, PluginStatus(plugin), nullptr, enabled,
-		!status.isEmpty() || plugin.value(u"trust"_q).toObject().value(u"status"_q).toString() == u"blocked"_q, [=, this] {
-			operate(enabled ? u"disable"_q : u"enable"_q);
-		});
-	AddTrustMetadata(card, plugin);
-	AddCardLabel(card, plugin.value(u"description"_q).toString(), st::settingsPluginBody);
-	if (const auto line = DependencyLine(plugin); !line.isEmpty()) {
-		AddCardLabel(card, line, st::settingsPluginCardMeta);
-	}
+	Ovygram::AddPluginDetailsCard(_content, plugin,
+		!status.isEmpty() || plugin.value(u"trust"_q).toObject().value(u"status"_q).toString() == u"blocked"_q,
+		[=, this] { operate(enabled ? u"disable"_q : u"enable"_q); });
 	if (const auto error = plugin.value(u"error"_q).toString(); !error.isEmpty()) {
 		Ui::AddDividerText(_content, rpl::single(ErrorTitle(plugin) + error));
 	}
@@ -504,29 +301,15 @@ void PluginDetails::refresh() {
 		}
 	}
 
-	Ui::AddSkip(_content);
-	Ui::AddDivider(_content);
-	Ui::AddSkip(_content);
-	Ui::AddSubsectionTitle(_content, rpl::single(u"Управление плагином"_q));
-	AddAction(_content, u"Обновить из файла"_q, [this] { installUpdate(); });
-	if (plugin.value(u"update"_q).isObject()) {
-		const auto offer = plugin.value(u"update"_q).toObject();
-		AddAction(_content, offer.value(u"rollback"_q).toBool()
-			? u"Установить предыдущую безопасную версию"_q : u"Обновить из реестра"_q,
-			[this] { operate(u"apply_update"_q); });
-	}
-	if (plugin.value(u"previous"_q).toBool()) {
-		AddAction(_content, u"Откатить"_q, [this] { operate(u"rollback"_q); });
-	}
-	AddCardActions(
-		AddCard(_content),
+	Ovygram::AddPluginManagement(_content, plugin,
+		[this] { installUpdate(); },
+		[this](QString action) { operate(action); },
 		[this] { SharePlugin(controller(), _installationId, _notice); },
 		[this] {
 			ConfirmRemove(controller(), crl::guard(this, [this](bool keepData) {
 				operate(u"remove"_q, keepData);
 			}));
 		});
-	Ui::AddSkip(_content);
 }
 
 void PluginDetails::pollWhileInstalling(const QJsonObject &snapshot) {
@@ -569,75 +352,24 @@ void PluginDetails::installUpdate() {
 }
 
 void PluginDetails::addSettings(const QJsonArray &fields) {
-	Ui::AddSkip(_content);
-	Ui::AddDivider(_content);
-	Ui::AddSkip(_content);
-	Ui::AddSubsectionTitle(_content, rpl::single(u"Настройки плагина"_q));
-
-	auto values = std::vector<std::pair<QString, Fn<QJsonValue()>>>();
-	for (const auto &value : fields) {
-		const auto field = value.toObject();
-		const auto kind = field.value(u"kind"_q).toString();
-		const auto text = field.value(u"text"_q).toString();
-		const auto initial = field.value(u"value"_q);
-		const auto key = field.value(u"key"_q).toString();
-		if (kind == u"header"_q) {
-			Ui::AddSubsectionTitle(_content, rpl::single(text));
-		} else if (kind == u"button"_q) {
-			AddAction(_content, text, [=, this] {
-				(void)Request({ { u"action"_q, u"settings_action"_q },
-					{ u"installation_id"_q, _installationId },
-					{ u"action_id"_q, field.value(u"action_id"_q) } }, _notice);
+	Ovygram::AddPluginSettings(_content, fields,
+		[this](QJsonValue actionId, bool link) {
+			(void)Request({ { u"action"_q, u"settings_action"_q },
+				{ u"installation_id"_q, _installationId },
+				{ u"action_id"_q, actionId } }, _notice);
+			if (!link) {
 				QTimer::singleShot(0, this, [this] { refresh(); });
-			});
-		} else if (kind == u"switch"_q) {
-			const auto button = _content->add(object_ptr<Ui::SettingsButton>(
-				_content,
-				rpl::single(text),
-				st::settingsButtonNoIcon
-			))->toggleOn(rpl::single(initial.toBool()));
-			values.emplace_back(key, [=] { return QJsonValue(button->toggled()); });
-		} else if (kind == u"selector"_q) {
-			Ui::AddSubsectionTitle(_content, rpl::single(text));
-			const auto group = std::make_shared<Ui::RadiobuttonGroup>(initial.toInt());
-			auto index = 0;
-			for (const auto &item : field.value(u"items"_q).toArray()) {
-				_content->add(
-					object_ptr<Ui::Radiobutton>(
-						_content,
-						group,
-						index++,
-						item.toString(),
-						st::settingsSendType),
-					st::settingsSendTypePadding);
 			}
-			values.emplace_back(key, [=] { return QJsonValue(group->current()); });
-		} else if (kind == u"input"_q) {
-			Ui::AddSubsectionTitle(_content, rpl::single(text));
-			const auto input = _content->add(
-				object_ptr<Ui::InputField>(
-					_content,
-					st::defaultInputField,
-					Ui::InputField::Mode::SingleLine,
-					rpl::single(text),
-					TextWithTags{ initial.toString() }),
-				st::boxRowPadding);
-			values.emplace_back(key, [=] { return QJsonValue(input->getLastText()); });
-		}
-	}
-	AddAction(_content, u"Сохранить настройки"_q, [this, values = std::move(values)] {
-		auto object = QJsonObject();
-		for (const auto &[key, value] : values) {
-			object.insert(key, value());
-		}
-		if (!Request({
-			{ u"action"_q, u"save_settings"_q },
-			{ u"installation_id"_q, _installationId },
-			{ u"values"_q, object },
-		}, _notice).isUndefined()) {
-			_notice = u"Настройки сохранены."_q;
-		}
-	}, st::settingsButtonActive);
+		},
+		[this](QJsonObject values) {
+			if (!Request({
+				{ u"action"_q, u"save_settings"_q },
+				{ u"installation_id"_q, _installationId },
+				{ u"values"_q, values },
+			}, _notice).isUndefined()) {
+				_notice = u"Настройки сохранены."_q;
+			}
+		});
 }
 
 class Plugins final : public Section<Plugins> {
@@ -779,15 +511,14 @@ void Plugins::populate() {
 			continue;
 		}
 		found = true;
-		const auto card = AddCard(_content);
+		const auto card = Ovygram::AddPluginCard(_content);
 		const auto enabled = plugin.value(u"enabled"_q).toBool();
-		AddPluginHeader(
+		Ovygram::AddPluginHeader(
 			card, name,
 			[=, this] { showOther(PluginDetails::Id(id, name)); },
 			enabled, !status.isEmpty() || plugin.value(u"trust"_q).toObject().value(u"status"_q).toString() == u"blocked"_q,
 			[=, this] { operate(id, enabled ? u"disable"_q : u"enable"_q); });
-		AddTrustMetadata(card, plugin);
-		AddCardLabel(card, plugin.value(u"description"_q).toString(), st::settingsPluginBody);
+		Ovygram::AddPluginSummary(card, plugin);
 		if (plugin.value(u"update"_q).isObject()) {
 			const auto offer = plugin.value(u"update"_q).toObject();
 			const auto target = offer.value(u"latest_version"_q).toString(offer.value(u"version"_q).toString());
@@ -796,13 +527,12 @@ void Plugins::populate() {
 				: u"Обновить до версии %1"_q.arg(target),
 				[=, this] { operate(id, u"apply_update"_q); }, st::settingsPluginCardAction);
 		}
-		if (const auto line = DependencyLine(plugin); !line.isEmpty()) {
-			AddCardLabel(card, line, st::settingsPluginCardMeta);
-		}
 		if (const auto error = plugin.value(u"error"_q).toString(); !error.isEmpty()) {
-			AddCardLabel(card, ErrorTitle(plugin) + ErrorPreview(error), st::settingsPluginCardMeta);
+			auto label = object_ptr<Ui::FlatLabel>(card,
+				ErrorTitle(plugin) + ErrorPreview(error), st::settingsPluginCardMeta);
+			card->add(std::move(label), st::settingsPluginTextMargin, style::al_justify);
 		}
-		AddCardActions(
+		Ovygram::AddPluginCardActions(
 			card,
 			[=, this] { SharePlugin(controller(), id, _notice); },
 			[=, this] {

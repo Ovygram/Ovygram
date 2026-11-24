@@ -1,0 +1,69 @@
+from base_plugin import BasePlugin
+from desktop import ui
+from ui.settings import Link
+
+__id__ = "note_draft"
+__name__ = "Черновик заметки"
+__version__ = "1.0.0"
+__release__ = False
+__author__ = "Ovygram"
+__description__ = "Локальный черновик из заголовка, одной строки текста и отметки о закреплении."
+__platform__ = "desktop"
+__desktop_sdk__ = 2
+__requirements__ = []
+
+
+class NoteDraftPlugin(BasePlugin):
+    def on_plugin_load(self):
+        self.window = None
+        ui.add_menu_item("main", "Черновик заметки", lambda _: self.open_draft())
+
+    def create_settings(self):
+        return [
+            Link("open_draft", "Открыть черновик", self.open_draft,
+                 description="Также доступно в главном меню"),
+        ]
+
+    def open_draft(self):
+        if self.window is not None and not self.window.closed:
+            self.window.close()
+
+        draft = self.get_setting("draft", {
+            "title": "Идея для выходных",
+            "text": "Зайти в книжный и выбрать подарок",
+            "pinned": False,
+        })
+        status = ui.Text("")
+
+        def clear_status(_):
+            window.update(status, text="")
+
+        title = ui.Input(text=draft["title"], placeholder="Заголовок", on_change=clear_status)
+        note = ui.Input(text=draft["text"], placeholder="Текст заметки", on_change=clear_status)
+        pinned = ui.Switch("Закрепить черновик", value=draft["pinned"], on_toggle=clear_status)
+
+        def save():
+            title_text = title.props["text"].strip()
+            note_text = note.props["text"].strip()
+            if not title_text or not note_text:
+                window.update(status, text="Заполните заголовок и текст")
+                return
+            self.set_setting("draft", {
+                "title": title_text,
+                "text": note_text,
+                "pinned": pinned.props["value"],
+            })
+            window.update(status, text="Черновик сохранён")
+
+        window = ui.Window(
+            ui.Column(
+                title,
+                note,
+                pinned,
+                ui.Row(status, ui.Button("Сохранить", on_click=save, width="fit")),
+            ),
+            title="Черновик заметки",
+            width=460,
+            height=350,
+        )
+        self.window = window.show()

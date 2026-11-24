@@ -9,7 +9,7 @@
 #include "ovygram/plugin_menus.h"
 #include "ovygram/plugin_panel_buttons.h"
 #include "ovygram/plugin_native.h"
-#include "ovygram/plugin_paint.h"
+#include "ovygram/plugin_ui_tree.h"
 #include "ovygram/plugin_section.h"
 #include "ovygram/plugin_widgets.h"
 
@@ -22,9 +22,6 @@
 #include "ui/layers/show.h"
 #include "ui/rp_widget.h"
 #include "ui/widgets/buttons.h"
-#include "ui/widgets/checkbox.h"
-#include "ui/widgets/fields/input_field.h"
-#include "ui/widgets/labels.h"
 #include "ui/widgets/scroll_area.h"
 #include "ui/ui_utility.h"
 #include "ui/widgets/separate_panel.h"
@@ -51,223 +48,14 @@
 namespace Ovygram {
 namespace {
 
-constexpr auto kMaximumDepth = 32;
-constexpr auto kMaximumNodes = 2000;
-constexpr auto kMaximumCanvasHeight = 4096;
-constexpr auto kMaximumCanvasOps = 2000;
-constexpr auto kRowSkip = 8;
-constexpr auto kColumnSkip = 6;
 constexpr auto kBarPadding = 6;
 
 PluginUi *GlobalInstance = nullptr;
 
-// st::boxLabel with another alignment. Kept in static storage, because
-// FlatLabel keeps a reference to its style.
-[[nodiscard]] const style::FlatLabel &LabelStyle(style::align align) {
-	if (align == style::al_topleft) {
-		return st::boxLabel;
-	}
-	static auto center = std::optional<style::FlatLabel>();
-	static auto right = std::optional<style::FlatLabel>();
-	auto &result = (align == style::al_top) ? center : right;
-	if (!result) {
-		result.emplace(st::boxLabel);
-		result->align = align;
-		result->minWidth = 0;
-	}
-	return *result;
-}
-
-class Canvas final : public Ui::RpWidget {
-public:
-	void setHeight(int height) {
-		_height = std::clamp(height, 1, kMaximumCanvasHeight);
-	}
-
-	Canvas(QWidget *parent, int height, Fn<void(int, int)> clicked)
-	: RpWidget(parent)
-	, _height(std::clamp(height, 1, kMaximumCanvasHeight))
-	, _clicked(std::move(clicked)) {
-		resize(width(), _height);
-	}
-
-	void setCommands(const QJsonArray &commands) {
-		_ops = ParsePaintOps(commands, kMaximumCanvasOps);
-		update();
-	}
-
-protected:
-	int resizeGetHeight(int newWidth) override {
-		return _height;
-	}
-
-	void paintEvent(QPaintEvent *e) override {
-		auto p = QPainter(this);
-		p.setRenderHint(QPainter::Antialiasing);
-		PaintOps(p, _ops, rect());
-	}
-
-	void mousePressEvent(QMouseEvent *e) override {
-		if (_clicked && e->button() == Qt::LeftButton) {
-			_clicked(e->pos().x(), e->pos().y());
-		}
-	}
-
-private:
-	int _height = 0;
-	const Fn<void(int, int)> _clicked;
-	std::vector<PaintOp> _ops;
-
-};
-
-class Picture final : public Ui::RpWidget {
-public:
-	Picture(QWidget *parent, QImage image, int height)
-	: RpWidget(parent)
-	, _image(std::move(image))
-	, _height(height > 0 ? height : _image.height()) {
-		resize(width(), _height);
-	}
-
-protected:
-	int resizeGetHeight(int newWidth) override {
-		return _height;
-	}
-
-	void paintEvent(QPaintEvent *e) override {
-		auto p = QPainter(this);
-		p.setRenderHint(QPainter::SmoothPixmapTransform);
-		const auto scaled = _image.size().scaled(
-			size(),
-			Qt::KeepAspectRatio);
-		p.drawImage(QRect(QPoint(), scaled), _image);
-	}
-
-private:
-	const QImage _image;
-	const int _height = 0;
-
-};
-
-// Lays children out horizontally. Each child has a fixed width, its natural
-// width ("fit") or a share of the remaining width ("stretch"), and the
-// children are aligned vertically inside the row.
-class Row final : public Ui::RpWidget {
-public:
-	struct Size {
-		int fixed = -1;
-		bool fit = false;
-		int stretch = 1;
-	};
-
-	Row(QWidget *parent, Qt::Alignment align, int spacing)
-	: RpWidget(parent)
-	, _align(align)
-	, _spacing(spacing) {
-	}
-
-	void add(object_ptr<Ui::RpWidget> child, Size size) {
-		const auto raw = child.release();
-		raw->setParent(this);
-		raw->show();
-		_children.push_back({ raw, size });
-		raw->heightValue(
-		) | rpl::skip(1) | rpl::on_next([=] {
-			if (!_resizing) {
-				resizeToWidth(width());
-			}
-		}, lifetime());
-	}
-
-protected:
-	int resizeGetHeight(int newWidth) override {
-		std::erase_if(_children, [](const Child &child) {
-			return !child.widget;
-		});
-		const auto count = int(_children.size());
-		if (!count) {
-			return 0;
-		}
-		_resizing = true;
-		const auto available = std::max(newWidth - _spacing * (count - 1), 0);
-		auto widths = std::vector<int>(count, -1);
-		auto used = 0;
-		auto weights = 0;
-		for (auto i = 0; i != count; ++i) {
-			const auto &[widget, size] = _children[i];
-			if (size.fixed >= 0) {
-				widths[i] = size.fixed;
-			} else if (size.fit || size.stretch <= 0) {
-				widths[i] = natural(widget.data());
-			} else {
-				weights += size.stretch;
-				continue;
-			}
-			used += widths[i];
-		}
-		auto remaining = std::max(available - used, 0);
-		for (auto i = 0; i != count; ++i) {
-			if (widths[i] < 0) {
-				const auto stretch = _children[i].size.stretch;
-				widths[i] = weights ? (remaining * stretch / weights) : 0;
-				remaining -= widths[i];
-				weights -= stretch;
-			}
-		}
-		auto height = 0;
-		for (auto i = 0; i != count; ++i) {
-			const auto &[widget, size] = _children[i];
-			const auto button = dynamic_cast<Ui::RoundButton*>(widget.data());
-			if (button) {
-				// Without an override a button keeps its natural width.
-				button->setFullWidth(size.fit ? 0 : std::max(widths[i], 1));
-			} else {
-				widget->resizeToWidth(std::max(widths[i], 1));
-			}
-			height = std::max(height, widget->height());
-		}
-		auto left = 0;
-		for (auto i = 0; i != count; ++i) {
-			const auto widget = _children[i].widget.data();
-			const auto top = (_align & Qt::AlignBottom)
-				? (height - widget->height())
-				: (_align & Qt::AlignVCenter)
-				? (height - widget->height()) / 2
-				: 0;
-			widget->moveToLeft(left, top, newWidth);
-			left += widget->width() + _spacing;
-		}
-		_resizing = false;
-		return height;
-	}
-
-private:
-	struct Child {
-		QPointer<Ui::RpWidget> widget;
-		Size size;
-	};
-
-	[[nodiscard]] static int natural(not_null<Ui::RpWidget*> widget) {
-		if (const auto label = dynamic_cast<Ui::FlatLabel*>(widget.get())) {
-			return label->textMaxWidth();
-		} else if (dynamic_cast<Ui::RoundButton*>(widget.get())) {
-			return widget->width();
-		}
-		const auto result = widget->naturalWidth();
-		return (result > 0) ? result : widget->sizeHint().width();
-	}
-
-	const Qt::Alignment _align;
-	const int _spacing = 0;
-	std::vector<Child> _children;
-	bool _resizing = false;
-
-};
-
 // Keeps an overlay canvas over its target widget.
 class OverlayWatcher final : public QObject {
 public:
-	OverlayWatcher(QWidget *target, Canvas *canvas)
+	OverlayWatcher(QWidget *target, Ui::RpWidget *canvas)
 	: QObject(canvas)
 	, _canvas(canvas) {
 		target->installEventFilter(this);
@@ -277,15 +65,13 @@ protected:
 	bool eventFilter(QObject *watched, QEvent *e) override {
 		if (e->type() == QEvent::Resize && _canvas) {
 			const auto size = static_cast<QResizeEvent*>(e)->size();
-			_canvas->setHeight(size.height());
-			_canvas->resize(size);
-			_canvas->raise();
+			PluginUiTree::ResizeCanvas(_canvas.data(), size);
 		}
 		return false;
 	}
 
 private:
-	const QPointer<Canvas> _canvas;
+	const QPointer<Ui::RpWidget> _canvas;
 
 };
 
@@ -339,9 +125,7 @@ struct PluginUi::Object {
 	QString title;
 	QString accountId;
 	QString chatId;
-	std::map<QString, QPointer<QWidget>> nodes;
-	std::map<QString, std::shared_ptr<rpl::variable<QString>>> texts;
-	int count = 0;
+	PluginUiTree tree;
 	bool silent = false;
 };
 
@@ -485,7 +269,7 @@ void PluginUi::show(const QJsonObject &command) {
 		const auto width = command.value(u"width"_q).toInt();
 		// Built before the box, so an invalid tree throws before showing.
 		const auto content = std::make_shared<object_ptr<Ui::RpWidget>>(
-			build(*object, nullptr, tree, 0));
+			build(*object, nullptr, tree));
 		auto box = Box([=](not_null<Ui::GenericBox*> box) {
 			box->setTitle(rpl::single(title));
 			if (width > 0) {
@@ -527,7 +311,7 @@ void PluginUi::show(const QJsonObject &command) {
 		}, inner->lifetime());
 		const auto layout = scroll->setOwnedWidget(
 			object_ptr<Ui::VerticalLayout>(scroll));
-		layout->add(build(*object, layout.data(), tree, 0), st::boxRowPadding);
+		layout->add(build(*object, layout.data(), tree), st::boxRowPadding);
 		scroll->widthValue() | rpl::on_next([=](int width) {
 			if (layout) {
 				layout->resizeToWidth(width);
@@ -548,23 +332,15 @@ void PluginUi::show(const QJsonObject &command) {
 		} else if (tree.value(u"type"_q).toString() != u"canvas"_q) {
 			throw std::runtime_error("An overlay must be a single Canvas.");
 		}
-		const auto nodeId = tree.value(u"id"_q).toString();
 		const auto clickable = command.value(u"clickable"_q).toBool();
-		auto canvas = object_ptr<Canvas>(
-			target,
-			target->height(),
-			clickable ? Fn<void(int, int)>([=](int x, int y) {
-				if (const auto i = _objects.find(objectId); i != end(_objects)) {
-					send(*i->second, nodeId, u"click"_q, QJsonArray{ x, y });
-				}
-			}) : Fn<void(int, int)>());
-		canvas->setCommands(tree.value(u"commands"_q).toArray());
+		auto canvasTree = tree;
+		canvasTree.insert(u"height"_q, target->height());
+		auto canvas = build(*object, target, canvasTree);
 		canvas->setAttribute(Qt::WA_TransparentForMouseEvents, !clickable);
 		canvas->setGeometry(target->rect());
 		canvas->show();
 		canvas->raise();
 		new OverlayWatcher(target, canvas.data());
-		object->nodes.emplace(nodeId, canvas.data());
 		object->overlay = base::unique_qptr<Ui::RpWidget>(canvas.release());
 		connect(object->overlay.get(), &QObject::destroyed, this, [=] {
 			destroyed(objectId);
@@ -577,7 +353,7 @@ void PluginUi::show(const QJsonObject &command) {
 			throw std::runtime_error("A chat bar needs account_id and chat_id.");
 		}
 		object->bar = base::unique_qptr<Ui::RpWidget>(
-			new BarFrame(build(*object, nullptr, tree, 0)));
+			new BarFrame(build(*object, nullptr, tree)));
 		object->bar->hide();
 		connect(object->bar.get(), &QObject::destroyed, this, [=] {
 			destroyed(objectId);
@@ -594,7 +370,7 @@ void PluginUi::show(const QJsonObject &command) {
 		// creates and destroys as the user navigates.
 		auto layout = base::make_unique_q<Ui::VerticalLayout>(
 			static_cast<QWidget*>(nullptr));
-		layout->add(build(*object, layout.get(), tree, 0), st::boxRowPadding);
+		layout->add(build(*object, layout.get(), tree), st::boxRowPadding);
 		layout->hide();
 		object->title = title;
 		object->section = base::unique_qptr<Ui::RpWidget>(layout.release());
@@ -695,177 +471,32 @@ void PluginUi::relayoutChatsNow() {
 object_ptr<Ui::RpWidget> PluginUi::build(
 		Object &object,
 		QWidget *parent,
-		const QJsonObject &node,
-		int depth) {
-	if (depth > kMaximumDepth || ++object.count > kMaximumNodes) {
-		throw std::runtime_error("UI tree is too deep or too large.");
-	}
-	const auto type = node.value(u"type"_q).toString();
-	const auto id = node.value(u"id"_q).toString();
-	const auto text = node.value(u"text"_q).toString();
+		const QJsonObject &node) {
 	const auto objectId = object.objectId;
-	// A dialog belongs to the window, not to us, and can outlive us.
+	// A dialog belongs to the window and may outlive the dispatcher.
 	const auto guard = QPointer<PluginUi>(this);
-	const auto sender = [=](const QString &kind, QJsonValue value) {
-		if (!guard || _updating) {
-			// Changes made by ui.update aren't reported back, so a plugin
-			// reacting to them can't loop on its own updates.
-			return;
-		} else if (const auto i = _objects.find(objectId);
-				i != end(_objects) && !i->second->silent) {
-			send(*i->second, id, kind, value);
-		}
-	};
-	auto result = object_ptr<Ui::RpWidget>(nullptr);
-	if (type == u"column"_q) {
-		auto column = object_ptr<Ui::VerticalLayout>(parent);
-		for (const auto &child : node.value(u"children"_q).toArray()) {
-			column->add(
-				build(object, column.data(), child.toObject(), depth + 1),
-				QMargins(0, kColumnSkip, 0, kColumnSkip));
-		}
-		result = std::move(column);
-	} else if (type == u"row"_q) {
-		const auto align = node.value(u"align"_q).toString(u"center"_q);
-		auto row = object_ptr<Row>(
-			parent,
-			(align == u"top"_q) ? Qt::AlignTop
-				: (align == u"bottom"_q) ? Qt::AlignBottom
-				: (align == u"center"_q) ? Qt::AlignVCenter
-				: throw std::runtime_error("Row align must be top, center or bottom."),
-			std::clamp(node.value(u"spacing"_q).toInt(kRowSkip), 0, 200));
-		for (const auto &value : node.value(u"children"_q).toArray()) {
-			const auto child = value.toObject();
-			auto size = Row::Size();
-			const auto width = child.value(u"width"_q);
-			if (width.isString()) {
-				if (width.toString() != u"fit"_q) {
-					throw std::runtime_error("Width must be a number or \"fit\".");
-				}
-				size.fit = true;
-			} else if (width.isDouble()) {
-				size.fixed = std::clamp(width.toInt(), 0, 4000);
+	return object.tree.build(parent, node,
+		[=, this](QString id, QString kind, QJsonValue value) {
+			if (!guard || _updating) {
+				return;
 			}
-			if (child.contains(u"stretch"_q)) {
-				size.stretch = std::clamp(child.value(u"stretch"_q).toInt(), 0, 100);
+			if (const auto i = _objects.find(objectId);
+					i != end(_objects) && !i->second->silent) {
+				send(*i->second, id, kind, std::move(value));
 			}
-			row->add(build(object, row.data(), child, depth + 1), size);
-		}
-		result = std::move(row);
-	} else if (type == u"text"_q) {
-		const auto align = node.value(u"align"_q).toString(u"left"_q);
-		result = object_ptr<Ui::FlatLabel>(
-			parent,
-			text,
-			(align == u"center"_q) ? LabelStyle(style::al_top)
-				: (align == u"right"_q) ? LabelStyle(style::al_topright)
-				: (align == u"left"_q) ? LabelStyle(style::al_topleft)
-				: throw std::runtime_error("Text align must be left, center or right."));
-	} else if (type == u"button"_q) {
-		const auto value = std::make_shared<rpl::variable<QString>>(text);
-		object.texts[id] = value;
-		auto button = object_ptr<Ui::RoundButton>(
-			parent,
-			value->value(),
-			st::defaultActiveButton);
-		button->setTextTransform(Ui::RoundButtonTextTransform::NoTransform);
-		button->setClickedCallback([=] { sender(u"click"_q, QJsonValue()); });
-		result = std::move(button);
-	} else if (type == u"input"_q) {
-		auto field = object_ptr<Ui::InputField>(
-			parent,
-			st::defaultInputField,
-			Ui::InputField::Mode::SingleLine,
-			rpl::single(node.value(u"placeholder"_q).toString()),
-			TextWithTags{ text });
-		const auto raw = field.data();
-		raw->changes() | rpl::on_next([=] {
-			sender(u"change"_q, raw->getLastText());
-		}, raw->lifetime());
-		result = std::move(field);
-	} else if (type == u"switch"_q) {
-		auto box = object_ptr<Ui::Checkbox>(
-			parent,
-			text,
-			node.value(u"value"_q).toBool());
-		box->checkedChanges() | rpl::on_next([=](bool checked) {
-			sender(u"toggle"_q, checked);
-		}, box->lifetime());
-		result = std::move(box);
-	} else if (type == u"canvas"_q) {
-		auto canvas = object_ptr<Canvas>(
-			parent,
-			node.value(u"height"_q).toInt(),
-			[=](int x, int y) { sender(u"click"_q, QJsonArray{ x, y }); });
-		canvas->setCommands(node.value(u"commands"_q).toArray());
-		result = std::move(canvas);
-	} else if (type == u"image"_q) {
-		auto image = QImage(node.value(u"path"_q).toString());
-		if (image.isNull()) {
-			throw std::runtime_error("Image can't be loaded.");
-		}
-		result = object_ptr<Picture>(
-			parent,
-			std::move(image),
-			node.value(u"height"_q).toInt());
-	} else if (type == u"spacer"_q) {
-		auto spacer = object_ptr<Ui::RpWidget>(parent);
-		spacer->resize(1, std::clamp(node.value(u"height"_q).toInt(), 0, 1000));
-		result = std::move(spacer);
-	} else {
-		throw std::runtime_error("Unknown UI node type.");
-	}
-	if (id.isEmpty() || object.nodes.contains(id)) {
-		throw std::runtime_error("Invalid or repeated node ID.");
-	}
-	object.nodes.emplace(id, result.data());
-	return result;
+		});
 }
 
 void PluginUi::update(const QJsonObject &command) {
 	const auto i = _objects.find(command.value(u"object_id"_q).toString());
 	if (i == end(_objects)) {
-		return; // Closed meanwhile, Python learns it from the "closed" event.
+		return;
 	}
 	const auto &object = *i->second;
-	const auto nodeId = command.value(u"node_id"_q).toString();
-	const auto node = object.nodes.find(nodeId);
-	if (node == end(object.nodes) || !node->second) {
-		throw std::runtime_error("Unknown UI node.");
-	}
-	const auto widget = node->second.data();
-	const auto props = command.value(u"props"_q).toObject();
 	const auto was = std::exchange(_updating, true);
 	const auto restore = gsl::finally([&] { _updating = was; });
-	if (props.contains(u"text"_q)) {
-		const auto text = props.value(u"text"_q).toString();
-		if (const auto label = dynamic_cast<Ui::FlatLabel*>(widget)) {
-			label->setText(text);
-		} else if (const auto field = dynamic_cast<Ui::InputField*>(widget)) {
-			field->setText(text);
-		} else if (const auto value = object.texts.find(nodeId);
-				value != end(object.texts)) {
-			*value->second = text;
-		}
-	}
-	if (props.contains(u"value"_q)) {
-		if (const auto box = dynamic_cast<Ui::Checkbox*>(widget)) {
-			box->setChecked(
-				props.value(u"value"_q).toBool(),
-				Ui::Checkbox::NotifyAboutChange::DontNotify);
-		}
-	}
-	if (props.contains(u"commands"_q)) {
-		if (const auto canvas = dynamic_cast<Canvas*>(widget)) {
-			canvas->setCommands(props.value(u"commands"_q).toArray());
-		}
-	}
-	// An overlay's parent is the Telegram widget it covers: not ours to lay
-	// out, and its size doesn't depend on the overlay.
-	const auto parent = object.overlay ? nullptr : widget->parentWidget();
-	if (const auto rp = dynamic_cast<Ui::RpWidget*>(parent)) {
-		rp->resizeToWidth(rp->width());
-	}
+	object.tree.update(command.value(u"node_id"_q).toString(),
+		command.value(u"props"_q).toObject(), !object.overlay);
 	if (object.bar) {
 		relayoutChats();
 	}

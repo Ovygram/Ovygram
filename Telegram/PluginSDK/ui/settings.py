@@ -15,6 +15,13 @@ class Button:
 
 
 @dataclass(frozen=True)
+class Link(Button):
+    """Open a settings page, dialog or other surface through on_click."""
+
+    description: str = ""
+
+
+@dataclass(frozen=True)
 class Switch:
     key: str
     text: str

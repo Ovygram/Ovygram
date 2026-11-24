@@ -34,6 +34,12 @@ target_sources(Telegram PRIVATE
     SourceFiles/ovygram/plugin_elements.h
     SourceFiles/ovygram/plugin_install.cpp
     SourceFiles/ovygram/plugin_install.h
+    SourceFiles/ovygram/plugin_install_view.cpp
+    SourceFiles/ovygram/plugin_install_view.h
+    SourceFiles/ovygram/plugin_management_view.cpp
+    SourceFiles/ovygram/plugin_management_view.h
+    SourceFiles/ovygram/plugin_ui_tree.cpp
+    SourceFiles/ovygram/plugin_ui_tree.h
     SourceFiles/ovygram/plugin_updates.cpp
     SourceFiles/ovygram/plugin_updates.h
     SourceFiles/ovygram/plugin_trust_badge.h

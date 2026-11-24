@@ -28,7 +28,7 @@ import uuid
 from base_plugin import BasePlugin
 from desktop._runtime import Runtime
 from ovygram_deps import Dependencies
-from ui.settings import Button, Header, Input, Selector, Switch
+from ui.settings import Button, Header, Input, Link, Selector, Switch
 
 
 class LoadError(RuntimeError):
@@ -241,6 +241,10 @@ class Executor:
                 token = previous["token"] if previous and previous["context"] is context else uuid.uuid4().hex
                 actions[(installation_id, item.key)] = {"token": token, "context": context, "callback": item.on_click}
                 field.update(kind="button", action_id=token)
+                if isinstance(item, Link):
+                    if not item.text.strip() or not isinstance(item.description, str):
+                        raise ValueError("Ссылка на настройки требует непустое название и текстовое описание.")
+                    field.update(kind="link", description=item.description)
             elif isinstance(item, Switch):
                 field.update(kind="switch", value=bool(value))
             elif isinstance(item, Input):

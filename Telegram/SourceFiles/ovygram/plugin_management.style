@@ -1,0 +1,139 @@
+using "ui/basic.style";
+using "ui/widgets/widgets.style";
+using "ui/layers/layers.style";
+
+settingsPluginSwitch: Toggle(defaultToggle) {
+	untoggledFg: menuIconFg;
+}
+settingsPluginSettingRow: SettingsButton(defaultSettingsButton) {
+	toggle: settingsPluginSwitch;
+	toggleOver: Toggle(settingsPluginSwitch) {
+		untoggledFg: menuIconFgOver;
+	}
+	toggleSkip: 20px;
+}
+settingsPluginSave: SettingsButton(settingsPluginSettingRow) {
+	textFg: lightButtonFg;
+	textFgOver: lightButtonFgOver;
+}
+settingsPluginSelector: Checkbox(defaultBoxCheckbox) {
+	textPosition: point(15px, 1px);
+}
+settingsPluginSelectorMargin: margins(22px, 5px, 10px, 5px);
+
+settingsPluginCardMargin: margins(16px, 4px, 16px, 8px);
+settingsPluginCardRadius: 10px;
+settingsPluginsLayerWidth: 660px;
+settingsPluginsLayerMinHeight: 640px;
+settingsPluginTextMargin: margins(16px, 0px, 16px, 8px);
+settingsPluginSectionMargin: margins(16px, 10px, 16px, 8px);
+settingsPluginSectionTitle: FlatLabel(defaultSubsectionTitle) {
+	minWidth: 1px;
+}
+settingsPluginToggleWidth: 58px;
+settingsPluginStatusDot: 8px;
+settingsPluginStatusSkip: 8px;
+settingsPluginBadgeGap: 6px;
+settingsPluginBadgePadding: margins(10px, 4px, 10px, 4px);
+settingsPluginBadgeWarning: icon {{ "levels/level_warning-16x16", attentionButtonFg }};
+settingsPluginCardAction: SettingsButton(settingsPluginSettingRow) {
+	textFg: lightButtonFg;
+	textFgOver: lightButtonFgOver;
+	textBg: transparent;
+	textBgOver: transparent;
+	ripple: RippleAnimation(defaultRippleAnimation) {
+		color: transparent;
+	}
+	padding: margins(16px, 10px, 16px, 10px);
+	height: 20px;
+}
+settingsPluginToggleAction: SettingsButton(settingsPluginCardAction) {
+	padding: margins(0px, 10px, 0px, 10px);
+	toggleSkip: 14px;
+	toggleOver: settingsPluginSwitch;
+	toggle: settingsPluginSwitch;
+}
+settingsPluginCardTitle: SettingsButton(settingsPluginCardAction) {
+	style: TextStyle(boxTextStyle) {
+		font: font(14px semibold);
+	}
+	textFg: windowBoldFg;
+	textFgOver: windowBoldFgOver;
+}
+settingsPluginCardRemove: SettingsButton(settingsPluginCardAction) {
+	textFg: attentionButtonFg;
+	textFgOver: attentionButtonFgOver;
+}
+settingsPluginMenuRow: SettingsButton(defaultSettingsButton) {
+	padding: margins(68px, 10px, 16px, 10px);
+	iconLeft: 32px;
+}
+settingsPluginMenuRemove: SettingsButton(settingsPluginMenuRow) {
+	textFg: attentionButtonFg;
+	textFgOver: attentionButtonFgOver;
+}
+settingsPluginFileIcon: icon {{ "menu/export", menuIconFg }};
+settingsPluginRegistryIcon: icon {{ "menu/download", menuIconFg }};
+settingsPluginRollbackIcon: icon {{ "menu/restore", menuIconFg }};
+settingsPluginShareIcon: icon {{ "menu/forward", menuIconFg }};
+settingsPluginRemoveIcon: icon {{ "menu/delete", attentionButtonFg }};
+settingsPluginSettingsIcon: icon {{ "menu/settings", menuIconFg }};
+settingsPluginLinkArrow: icon {{ "settings/premium/arrow", menuIconFg }};
+settingsPluginLinkMargin: margins(16px, 0px, 16px, 6px);
+settingsPluginLinkTextSkip: 2px;
+settingsPluginLinkRow: SettingsButton(settingsPluginMenuRow) {
+	padding: margins(52px, 10px, 36px, 10px);
+	iconLeft: 16px;
+	textBg: transparent;
+	textBgOver: transparent;
+	ripple: RippleAnimation(defaultRippleAnimation) {
+		color: transparent;
+	}
+}
+settingsPluginBody: FlatLabel(defaultFlatLabel) {
+	minWidth: 1px;
+	maxHeight: 0px;
+	style: TextStyle(defaultTextStyle) {
+		font: font(14px);
+	}
+}
+settingsPluginCardMeta: FlatLabel(settingsPluginBody) {
+	textFg: windowSubTextFg;
+}
+settingsPluginSettingHint: FlatLabel(settingsPluginSectionTitle) {
+	textFg: windowSubTextFg;
+}
+settingsPluginStatus: FlatLabel(settingsPluginBody) {
+	style: TextStyle(defaultTextStyle) {
+		font: font(14px semibold);
+		lineHeight: 20px;
+	}
+	textFg: windowBoldFg;
+}
+settingsPluginInstallTitle: FlatLabel(settingsPluginBody) {
+	style: TextStyle(defaultTextStyle) {
+		font: font(18px semibold);
+	}
+}
+
+settingsPluginInstallBadge: FlatLabel(settingsPluginCardMeta) {
+	style: TextStyle(defaultTextStyle) {
+		font: font(12px);
+	}
+}
+settingsPluginInstallRowMargin: margins(16px, 10px, 16px, 10px);
+settingsPluginInstallRowGap: 12px;
+settingsPluginInstallBadgeRadius: 6px;
+settingsPluginInstallBadgePadding: margins(8px, 3px, 8px, 3px);
+settingsPluginInstallButton: RoundButton(defaultActiveButton) {
+	radius: 8px;
+}
+settingsPluginInstallSecondary: RoundButton(defaultLightButton) {
+	radius: 8px;
+	textBg: windowBgOver;
+}
+settingsPluginInstallDetailsIcon: icon {{ "menu/file", menuIconFg }};
+settingsPluginInstallDetails: SettingsButton(settingsPluginLinkRow) {
+	textFg: windowActiveTextFg;
+	textFgOver: windowActiveTextFg;
+}
