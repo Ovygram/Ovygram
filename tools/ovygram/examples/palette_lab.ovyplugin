@@ -12,7 +12,7 @@ __id__ = "palette_lab"
 __name__ = "Палитра Ovygram"
 __description__ = "Подбор цветов и скругления кнопок Ovygram с экспортом в JSON."
 __author__ = "Ovygram"
-__version__ = "1.1.0"
+__version__ = "1.1.1"
 __release__ = False
 __platform__ = "desktop"
 __desktop_sdk__ = 4
@@ -198,7 +198,8 @@ class Editor:
             BUTTONS[role], select,
             variant="choice" if selected else role, selected=selected,
             detail="Подключён" if selected and menu else "",
-            palette="ovygram", width=width, tooltip=BUTTONS[role],
+            palette="ovygram", width=width,
+            tooltip=BUTTONS[role] if role in {"trash", "proxy_reset", "back", "close", "search_clear"} else "",
             colors=spec.get("colors"), radius=spec.get("radius"),
         )
         if not menu:

@@ -250,6 +250,11 @@ settingsPluginProxyResetWidth: 38px;
 settingsPluginSdkBorderAlpha: 115;
 settingsPluginSdkDangerAlpha: 35;
 settingsPluginSdkRippleAlpha: 55;
+settingsPluginSdkHoverBlend: 0.08;
+settingsPluginSdkHoverDuration: 120;
+settingsPluginSdkArrowGap: 8px;
+settingsPluginSdkLinkArrowSize: 14px;
+settingsPluginSdkLinkArrowInset: 12px;
 
 // Fixed reference colors for palette="ovygram" in dark themes.
 // Hex literals are stored as strings because style colors follow the theme.

@@ -1,6 +1,7 @@
 #include "ovygram/plugin_ui_tree.h"
 
 #include "ovygram/plugin_paint.h"
+#include "ui/effects/animations.h"
 #include "ui/effects/ripple_animation.h"
 #include "ui/layers/box_layer_widget.h"
 #include "ui/layers/generic_box.h"
@@ -234,6 +235,10 @@ public:
 	return path;
 }
 
+[[nodiscard]] QColor FilledButtonHoverColor(QColor fill, QColor text) {
+	return anim::color(fill, text, st::settingsPluginSdkHoverBlend);
+}
+
 class PaletteRoundButton final : public Ui::RoundButton, public ColorableButton {
 public:
 	PaletteRoundButton(
@@ -269,10 +274,11 @@ protected:
 			auto p = QPainter(this);
 			const auto quality = PainterHighQualityEnabler(p);
 			const auto bounds = rect().marginsRemoved(st().padding);
-			const auto over = isOver() || isDown();
-			const auto fill = (over ? _colors.hoverBackground : std::nullopt)
-				.value_or(_fill.value_or((over ? st().textBgOver : st().textBg)->c));
-			p.setBrush(fill);
+			const auto over = Highlighted(state());
+			const auto fill = _fill.value_or(st().textBg->c);
+			p.setBrush(_hoverFill
+				? anim::color(fill, *_hoverFill, _hoverAnimation.value(over ? 1. : 0.))
+				: over ? st().textBgOver->c : fill);
 			p.setPen(_border ? QPen(*_border, _borderWidth) : QPen(Qt::NoPen));
 			const auto corners = cornerRadius(bounds);
 			p.drawRoundedRect(myrtlrect(bounds), corners, corners);
@@ -288,12 +294,23 @@ protected:
 
 	void onStateChanged(State was, StateChangeSource source) override {
 		RoundButton::onStateChanged(was, source);
+		const auto over = Highlighted(state());
+		if (_hoverFill && over != Highlighted(was)) {
+			_hoverAnimation.start([this] { update(); },
+				_hoverAnimation.value(over ? 0. : 1.), over ? 1. : 0.,
+				st::settingsPluginSdkHoverDuration);
+		}
 		if (_colors.hoverText) applyText();
 	}
 
 private:
+	[[nodiscard]] static bool Highlighted(State state) {
+		return (state & (StateFlag::Over | StateFlag::Down))
+			&& !(state & StateFlag::Disabled);
+	}
+
 	[[nodiscard]] bool customShape() const {
-		return _radius.has_value() || _colors.hoverBackground.has_value();
+		return _radius.has_value() || _hoverFill.has_value();
 	}
 
 	[[nodiscard]] int cornerRadius(QRect bounds) const {
@@ -303,7 +320,7 @@ private:
 	}
 
 	void applyText() {
-		setTextFgOverride((isOver() || isDown()) && _colors.hoverText ? _colors.hoverText : _text);
+		setTextFgOverride(Highlighted(state()) && _colors.hoverText ? _colors.hoverText : _text);
 	}
 
 	void applyColors() {
@@ -312,6 +329,11 @@ private:
 		_fill = _colors.background ? _colors.background : role.background;
 		_border = _colors.border ? _colors.border : role.border;
 		if (_border && !_fill) _fill = st().textBg->c;
+		_hoverFill = _colors.hoverBackground;
+		if (!_hoverFill && _fill) {
+			_hoverFill = FilledButtonHoverColor(*_fill, _text.value_or(st().textFg->c));
+		}
+		if (!_hoverFill) _hoverAnimation.stop();
 		auto ripple = role.ripple;
 		if (_colors.ripple || _colors.text || _colors.border) {
 			ripple = _colors.ripple ? _colors.ripple : _colors.text ? _colors.text : _colors.border;
@@ -335,8 +357,10 @@ private:
 	ButtonOverrides _colors;
 	std::optional<QColor> _text;
 	std::optional<QColor> _fill;
+	std::optional<QColor> _hoverFill;
 	std::optional<QColor> _border;
 	std::optional<int> _radius;
+	Ui::Animations::Simple _hoverAnimation;
 	qreal _borderWidth = 1.;
 };
 
@@ -517,16 +541,45 @@ private:
 	return nullptr;
 }
 
+[[nodiscard]] const style::icon *MenuRowIcon(const QString &variant) {
+	if (variant == u"menu_action"_q) return &st::settingsPluginRollbackIcon;
+	if (variant == u"menu_danger"_q) return &st::settingsPluginRemoveIcon;
+	return nullptr;
+}
+
+[[nodiscard]] bool HasRowArrow(const QString &variant) {
+	return variant == u"card_title"_q || variant == u"settings_link"_q || variant == u"file_details"_q;
+}
+
 class PaletteSettingsButton : public Ui::SettingsButton, public ColorableButton {
 public:
 	PaletteSettingsButton(QWidget *parent, rpl::producer<QString> text,
-		const style::SettingsButton &style, QString variant = {})
+		const style::SettingsButton &style, QString variant = {}, bool fit = false)
 	: SettingsButton(parent, std::move(text), style)
-	, _variant(std::move(variant)) {
+	, _variant(std::move(variant))
+	, _menuIcon(MenuRowIcon(_variant))
+	, _menuIconLeft(fit && _menuIcon ? style.padding.right() : style.iconLeft) {
 		if (!_variant.isEmpty()) {
-			const auto arrow = (_variant == u"card_title"_q) ? st::settingsPluginLinkArrow.width() : 0;
-			setNaturalWidth(fullTextWidth() + st().padding.left() + st().padding.right() + arrow);
+			auto padding = st().padding;
+			if (fit && _menuIcon) {
+				// Preserve the space between the icon and its text.
+				padding.setLeft(padding.left() + _menuIconLeft - st().iconLeft);
+			}
+			const auto arrowArea = (_variant == u"link"_q)
+				? st::settingsPluginSdkLinkArrowInset + st::settingsPluginSdkLinkArrowSize
+				: HasRowArrow(_variant) ? st::settingsPluginTextMargin.right() + st::settingsPluginLinkArrow.width()
+				: 0;
+			if (arrowArea) {
+				padding.setRight(std::max(padding.right(), arrowArea + st::settingsPluginSdkArrowGap));
+			}
+			if (padding != st().padding) setPaddingOverride(padding);
+			_horizontalPadding = padding.left() + padding.right();
+			refreshNaturalWidth();
 		}
+	}
+
+	void refreshNaturalWidth() {
+		if (!_variant.isEmpty()) setNaturalWidth(fullTextWidth() + _horizontalPadding);
 	}
 
 	void setColors(ButtonOverrides colors) override {
@@ -545,13 +598,12 @@ public:
 protected:
 	void paintEvent(QPaintEvent *e) override {
 		const auto over = (isOver() || isDown()) && !isDisabled();
-		const auto cardAction = _variant == u"card_title"_q
-			|| _variant == u"card_action"_q || _variant == u"card_danger"_q;
+		const auto centerText = _variant == u"card_action"_q || _variant == u"card_danger"_q;
+		const auto cardAction = centerText || _variant == u"card_title"_q;
 		const auto settingsLink = _variant == u"settings_link"_q;
 		const auto fileDetails = _variant == u"file_details"_q;
-		const auto menuAction = _variant == u"menu_action"_q || _variant == u"menu_danger"_q;
 		if (!_colors.background && !_colors.hoverBackground && !_colors.border && !_colors.ripple
-			&& !_radius && !cardAction && !settingsLink && !fileDetails && !menuAction) {
+			&& !_radius && !cardAction && !settingsLink && !fileDetails && !_menuIcon) {
 			SettingsButton::paintEvent(e);
 			return;
 		}
@@ -570,21 +622,31 @@ protected:
 		} else if (cardAction && over && !_colors.background && !_colors.hoverBackground) {
 			fill = st::settingsPluginCardActionOverlay->c;
 			fill.setAlpha(isDown() ? st::settingsPluginCardActionPressedAlpha : st::settingsPluginCardActionHoverAlpha);
-			bounds = QRect(4, 4, std::min(width() - 8, fullTextWidth() + 20), height() - 8);
+			bounds.adjust(0, 4, 0, -4);
 			if (!_radius) radius = st::settingsPluginLegacyCardActionRadius;
 		}
 		paintSurface(p, bounds, radius, fill);
-		paintText(p, over, width());
-		if (settingsLink || fileDetails || menuAction) {
-			const auto &icon = settingsLink ? st::settingsPluginSettingsIcon
-				: fileDetails ? st::settingsPluginInstallDetailsIcon
-				: _variant == u"menu_danger"_q ? st::settingsPluginRemoveIcon : st::settingsPluginRollbackIcon;
-			icon.paint(p, st().iconLeft, (height() - icon.height()) / 2, width());
+		if (centerText) {
+			const auto spare = width() - st().padding.left() - st().padding.right() - fullTextWidth();
+			const auto offset = std::max(spare, 0) / 2;
+			p.save();
+			p.translate(style::RightToLeft() ? -offset : offset, 0);
+			paintText(p, over, width());
+			p.restore();
+		} else {
+			paintText(p, over, width());
 		}
-		if (settingsLink || fileDetails || _variant == u"card_title"_q) {
+		const auto icon = settingsLink ? &st::settingsPluginSettingsIcon
+			: fileDetails ? &st::settingsPluginInstallDetailsIcon : _menuIcon;
+		if (icon) {
+			icon->paint(p, _menuIconLeft, (height() - icon->height()) / 2, width());
+		}
+		if (HasRowArrow(_variant)) {
 			const auto &arrow = st::settingsPluginLinkArrow;
-			arrow.paint(p, width() - st::settingsPluginTextMargin.right() - arrow.width(),
-				(height() - arrow.height()) / 2, width());
+			const auto left = width() - st::settingsPluginTextMargin.right() - arrow.width();
+			if (left >= 0) {
+				arrow.paint(p, left, (height() - arrow.height()) / 2, width());
+			}
 		}
 	}
 
@@ -620,6 +682,9 @@ protected:
 
 private:
 	const QString _variant;
+	const style::icon *const _menuIcon;
+	const int _menuIconLeft;
+	int _horizontalPadding = 0;
 };
 
 class ChoiceButton final : public PaletteSettingsButton {
@@ -1175,7 +1240,9 @@ QJsonObject PluginStylePalette() {
 			const auto &style = ButtonStyle(variant);
 			auto colors = RoundColors(variant, true);
 			colors.hoverText = colors.text.value_or(style.textFgOver->c);
-			colors.hoverBackground = colors.background.value_or(style.textBgOver->c);
+			colors.hoverBackground = colors.background
+				? FilledButtonHoverColor(*colors.background, colors.text.value_or(style.textFg->c))
+				: style.textBgOver->c;
 			colors.text = colors.text.value_or(style.textFg->c);
 			colors.background = colors.background.value_or(style.textBg->c);
 			colors.ripple = colors.ripple.value_or(style.ripple.color->c);
@@ -1310,10 +1377,10 @@ object_ptr<Ui::RpWidget> PluginUiTree::build(
 				button->setClickedCallback([=] { sender(u"click"_q, QJsonValue()); });
 				result = std::move(button);
 			} else if (variant == u"link"_q) {
-				auto button = object_ptr<PaletteSettingsButton>(parent, value->value(), *RowStyle(variant));
+				auto button = object_ptr<PaletteSettingsButton>(parent, value->value(), *RowStyle(variant), variant);
 				const auto raw = button.data();
 				const auto icon = Ui::CreateChild<Ui::RpWidget>(raw);
-				const auto size = style::ConvertScale(14);
+				const auto size = st::settingsPluginSdkLinkArrowSize;
 				icon->resize(size, size);
 				icon->setAttribute(Qt::WA_TransparentForMouseEvents);
 				icon->paintRequest() | rpl::on_next([=](QRect) {
@@ -1328,13 +1395,15 @@ object_ptr<Ui::RpWidget> PluginUiTree::build(
 					p.drawLine(QPointF(size * to, size * .50), QPointF(size * from, size * .78));
 				}, icon->lifetime());
 				raw->sizeValue() | rpl::on_next([=](QSize outer) {
-					icon->moveToRight(style::ConvertScale(12), (outer.height() - size) / 2);
+					const auto inset = st::settingsPluginSdkLinkArrowInset;
+					icon->moveToRight(inset, (outer.height() - size) / 2);
+					icon->setVisible(outer.width() >= inset + size);
 				}, icon->lifetime());
-				icon->show();
 				button->setClickedCallback([=] { sender(u"click"_q, QJsonValue()); });
 				result = std::move(button);
 			} else if (const auto rowStyle = RowStyle(variant)) {
-				auto button = object_ptr<PaletteSettingsButton>(parent, value->value(), *rowStyle, variant);
+				const auto fit = node.value(u"width"_q).toString() == u"fit"_q;
+				auto button = object_ptr<PaletteSettingsButton>(parent, value->value(), *rowStyle, variant, fit);
 				button->setClickedCallback([=] { sender(u"click"_q, QJsonValue()); });
 				result = std::move(button);
 			} else {
@@ -1431,6 +1500,9 @@ void PluginUiTree::update(
 		} else if (const auto value = _texts.find(nodeId);
 				value != end(_texts)) {
 			*value->second = text;
+			if (const auto button = dynamic_cast<PaletteSettingsButton*>(widget)) {
+				button->refreshNaturalWidth();
+			}
 		}
 	}
 	if (props.contains(u"enabled"_q)) widget->setEnabled(props.value(u"enabled"_q).toBool());
