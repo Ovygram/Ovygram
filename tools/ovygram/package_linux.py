@@ -1,7 +1,7 @@
 """Packs a Linux build into ovygram-<version>-linux-x86_64.tar.xz.
 
-The archive holds the Ovygram binary, the python directory next to it
-(the plugin runtime looks for it there), the .desktop file and icons named
+The archive holds the Ovygram binary, the widget helper and the python
+directory next to it, the .desktop file and icons named
 by the application ID, and the license. The binary is linked against the
 system libraries of the build machine, see packaging/arch for the package.
 
@@ -23,6 +23,7 @@ from baseline import CLIENT_VERSION, OVYGRAM_VERSION  # noqa: E402
 
 APP_ID = "io.github.maxutka00.Ovygram"
 ICON_SIZES = (16, 32, 48, 64, 128, 256, 512)
+WIDGET_HELPER = Path("TelegramHelpers/TelegramWidgetHelper")
 # A stale python directory would ship without dependency support.
 REQUIRED_RUNTIME = ("ovygram_host.so", "python313.zip", "pip.whl",
                     "sdk/ovygram_runtime.py", "sdk/ovygram_deps.py",
@@ -33,19 +34,25 @@ def check_build(build):
     binary = build / "Ovygram"
     if not binary.is_file():
         raise SystemExit(f"No Ovygram binary in {build}.")
+    helper = build / WIDGET_HELPER
+    if not helper.is_file():
+        raise SystemExit(f"No {WIDGET_HELPER} in {build}.")
     python = build / "python"
     missing = [name for name in REQUIRED_RUNTIME if not (python / name).exists()]
     if missing:
         raise SystemExit("The python directory is incomplete: " + ", ".join(missing))
-    return binary, python
+    return binary, helper, python
 
 
 def stage(build, target, strip):
-    binary, python = check_build(build)
+    binary, helper, python = check_build(build)
     target.mkdir(parents=True)
     shutil.copy2(binary, target / "Ovygram")
     if strip:
         subprocess.run(["strip", "--strip-unneeded", str(target / "Ovygram")], check=True)
+    # The client checks the built helper's digest, so preserve its bytes.
+    (target / WIDGET_HELPER.parent).mkdir()
+    shutil.copy2(helper, target / WIDGET_HELPER)
     shutil.copytree(python, target / "python",
                     ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
     shutil.copy2(ROOT / "packaging/linux" / f"{APP_ID}.desktop", target / f"{APP_ID}.desktop")

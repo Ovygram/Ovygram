@@ -851,6 +851,11 @@ class aicompose:
         unsave: bool
         def __init__(self, *, tone: TLObject, unsave: bool) -> None: ...
 
+    class setChatStyle(TLObject):
+        peer: TLObject
+        style: TLObject | None
+        def __init__(self, *, peer: TLObject, style: TLObject | None = ...) -> None: ...
+
     class tones(TLObject):
         hash: int
         tones: list[TLObject]
@@ -3181,10 +3186,11 @@ class communityFull(TLObject):
     about: str
     chat_photo: TLObject
     linked_peers: list[TLObject]
+    notify_settings: TLObject | None
     admins_count: int | None
     kicked_count: int | None
     peer_link_requests_pending: int | None
-    def __init__(self, *, id: int, about: str, chat_photo: TLObject, linked_peers: list[TLObject], admins_count: int | None = ..., kicked_count: int | None = ..., peer_link_requests_pending: int | None = ...) -> None: ...
+    def __init__(self, *, id: int, about: str, chat_photo: TLObject, linked_peers: list[TLObject], notify_settings: TLObject | None = ..., admins_count: int | None = ..., kicked_count: int | None = ..., peer_link_requests_pending: int | None = ...) -> None: ...
 
 class communityPeer(TLObject):
     can_view_history: bool
@@ -3205,6 +3211,7 @@ class config(TLObject):
     revoke_pm_inbox: bool
     blocked_mode: bool
     force_try_ipv6: bool
+    fpnv_allowed: bool
     date: int
     expires: int
     test_mode: bool
@@ -3247,7 +3254,7 @@ class config(TLObject):
     base_lang_pack_version: int | None
     reactions_default: TLObject | None
     autologin_token: str | None
-    def __init__(self, *, default_p2p_contacts: bool = ..., preload_featured_stickers: bool = ..., revoke_pm_inbox: bool = ..., blocked_mode: bool = ..., force_try_ipv6: bool = ..., date: int, expires: int, test_mode: bool, this_dc: int, dc_options: list[TLObject], dc_txt_domain_name: str, chat_size_max: int, megagroup_size_max: int, forwarded_count_max: int, online_update_period_ms: int, offline_blur_timeout_ms: int, offline_idle_timeout_ms: int, online_cloud_timeout_ms: int, notify_cloud_delay_ms: int, notify_default_delay_ms: int, push_chat_period_ms: int, push_chat_limit: int, edit_time_limit: int, revoke_time_limit: int, revoke_pm_time_limit: int, rating_e_decay: int, stickers_recent_limit: int, channels_read_media_period: int, tmp_sessions: int | None = ..., call_receive_timeout_ms: int, call_ring_timeout_ms: int, call_connect_timeout_ms: int, call_packet_timeout_ms: int, me_url_prefix: str, autoupdate_url_prefix: str | None = ..., gif_search_username: str | None = ..., venue_search_username: str | None = ..., img_search_username: str | None = ..., static_maps_provider: str | None = ..., caption_length_max: int, message_length_max: int, webfile_dc_id: int, suggested_lang_code: str | None = ..., lang_pack_version: int | None = ..., base_lang_pack_version: int | None = ..., reactions_default: TLObject | None = ..., autologin_token: str | None = ...) -> None: ...
+    def __init__(self, *, default_p2p_contacts: bool = ..., preload_featured_stickers: bool = ..., revoke_pm_inbox: bool = ..., blocked_mode: bool = ..., force_try_ipv6: bool = ..., fpnv_allowed: bool = ..., date: int, expires: int, test_mode: bool, this_dc: int, dc_options: list[TLObject], dc_txt_domain_name: str, chat_size_max: int, megagroup_size_max: int, forwarded_count_max: int, online_update_period_ms: int, offline_blur_timeout_ms: int, offline_idle_timeout_ms: int, online_cloud_timeout_ms: int, notify_cloud_delay_ms: int, notify_default_delay_ms: int, push_chat_period_ms: int, push_chat_limit: int, edit_time_limit: int, revoke_time_limit: int, revoke_pm_time_limit: int, rating_e_decay: int, stickers_recent_limit: int, channels_read_media_period: int, tmp_sessions: int | None = ..., call_receive_timeout_ms: int, call_ring_timeout_ms: int, call_connect_timeout_ms: int, call_packet_timeout_ms: int, me_url_prefix: str, autoupdate_url_prefix: str | None = ..., gif_search_username: str | None = ..., venue_search_username: str | None = ..., img_search_username: str | None = ..., static_maps_provider: str | None = ..., caption_length_max: int, message_length_max: int, webfile_dc_id: int, suggested_lang_code: str | None = ..., lang_pack_version: int | None = ..., base_lang_pack_version: int | None = ..., reactions_default: TLObject | None = ..., autologin_token: str | None = ...) -> None: ...
 
 class connectedBot(TLObject):
     bot_id: int
@@ -3701,11 +3708,13 @@ class draftMessage(TLObject):
     effect: int | None
     suggested_post: TLObject | None
     rich_message: TLObject | None
-    def __init__(self, *, no_webpage: bool = ..., invert_media: bool = ..., reply_to: TLObject | None = ..., message: str, entities: list[TLObject] | None = ..., media: TLObject | None = ..., date: int, effect: int | None = ..., suggested_post: TLObject | None = ..., rich_message: TLObject | None = ...) -> None: ...
+    ai_style: TLObject | None
+    def __init__(self, *, no_webpage: bool = ..., invert_media: bool = ..., reply_to: TLObject | None = ..., message: str, entities: list[TLObject] | None = ..., media: TLObject | None = ..., date: int, effect: int | None = ..., suggested_post: TLObject | None = ..., rich_message: TLObject | None = ..., ai_style: TLObject | None = ...) -> None: ...
 
 class draftMessageEmpty(TLObject):
     date: int | None
-    def __init__(self, *, date: int | None = ...) -> None: ...
+    ai_style: TLObject | None
+    def __init__(self, *, date: int | None = ..., ai_style: TLObject | None = ...) -> None: ...
 
 class emailVerificationApple(TLObject):
     token: str
@@ -4556,6 +4565,13 @@ class inlineQueryPeerTypePM(TLObject):
 
 class inlineQueryPeerTypeSameBotPM(TLObject):
     def __init__(self) -> None: ...
+
+class inputAiComposeStyle(TLObject):
+    emojify: bool
+    proofread: bool
+    tone: TLObject | None
+    to_lang: str | None
+    def __init__(self, *, emojify: bool = ..., proofread: bool = ..., tone: TLObject | None = ..., to_lang: str | None = ...) -> None: ...
 
 class inputAiComposeToneDefault(TLObject):
     tone: str
@@ -6308,6 +6324,10 @@ class messageActionBotAllowed(TLObject):
     app: TLObject | None
     def __init__(self, *, attach_menu: bool = ..., from_request: bool = ..., domain: str | None = ..., app: TLObject | None = ...) -> None: ...
 
+class messageActionBotInvite(TLObject):
+    inviter_id: int
+    def __init__(self, *, inviter_id: int) -> None: ...
+
 class messageActionChangeCommunity(TLObject):
     community_id: int | None
     def __init__(self, *, community_id: int | None = ...) -> None: ...
@@ -6449,7 +6469,8 @@ class messageActionGramTransfer(TLObject):
     peer_address: str
     transaction_id: str
     comment: str | None
-    def __init__(self, *, comment_encrypted: bool = ..., amount: int, peer_address: str, transaction_id: str, comment: str | None = ...) -> None: ...
+    onramp_provider_name: str | None
+    def __init__(self, *, comment_encrypted: bool = ..., amount: int, peer_address: str, transaction_id: str, comment: str | None = ..., onramp_provider_name: str | None = ...) -> None: ...
 
 class messageActionGroupCall(TLObject):
     call: TLObject
@@ -6616,6 +6637,24 @@ class messageActionStarGift(TLObject):
     to_id: TLObject | None
     gift_num: int | None
     def __init__(self, *, name_hidden: bool = ..., saved: bool = ..., converted: bool = ..., upgraded: bool = ..., refunded: bool = ..., can_upgrade: bool = ..., prepaid_upgrade: bool = ..., upgrade_separate: bool = ..., auction_acquired: bool = ..., gift: TLObject, message: TLObject | None = ..., convert_stars: int | None = ..., upgrade_msg_id: int | None = ..., upgrade_stars: int | None = ..., from_id: TLObject | None = ..., peer: TLObject | None = ..., saved_id: int | None = ..., prepaid_upgrade_hash: str | None = ..., gift_msg_id: int | None = ..., to_id: TLObject | None = ..., gift_num: int | None = ...) -> None: ...
+
+class messageActionStarGiftOnchainOffer(TLObject):
+    accepted: bool
+    declined: bool
+    cancelled: bool
+    expired: bool
+    settled: bool
+    buyer: bool
+    cancelling: bool
+    offer_id: int
+    gift: TLObject
+    amount: int
+    fee_bps: int
+    expires_at: int
+    offer_address: str
+    buyer_refund: int | None
+    fine: int | None
+    def __init__(self, *, accepted: bool = ..., declined: bool = ..., cancelled: bool = ..., expired: bool = ..., settled: bool = ..., buyer: bool = ..., cancelling: bool = ..., offer_id: int, gift: TLObject, amount: int, fee_bps: int, expires_at: int, offer_address: str, buyer_refund: int | None = ..., fine: int | None = ...) -> None: ...
 
 class messageActionStarGiftPurchaseOffer(TLObject):
     accepted: bool
@@ -7513,11 +7552,12 @@ class messages:
         def __init__(self, *, tags_enabled: bool = ..., filters: list[TLObject]) -> None: ...
 
     class dialogs(TLObject):
+        topics: list[TLObject] | None
         dialogs: list[TLObject]
         messages: list[TLObject]
         chats: list[TLObject]
         users: list[TLObject]
-        def __init__(self, *, dialogs: list[TLObject], messages: list[TLObject], chats: list[TLObject], users: list[TLObject]) -> None: ...
+        def __init__(self, *, topics: list[TLObject] | None = ..., dialogs: list[TLObject], messages: list[TLObject], chats: list[TLObject], users: list[TLObject]) -> None: ...
 
     class dialogsNotModified(TLObject):
         count: int
@@ -7525,11 +7565,12 @@ class messages:
 
     class dialogsSlice(TLObject):
         count: int
+        topics: list[TLObject] | None
         dialogs: list[TLObject]
         messages: list[TLObject]
         chats: list[TLObject]
         users: list[TLObject]
-        def __init__(self, *, count: int, dialogs: list[TLObject], messages: list[TLObject], chats: list[TLObject], users: list[TLObject]) -> None: ...
+        def __init__(self, *, count: int, topics: list[TLObject] | None = ..., dialogs: list[TLObject], messages: list[TLObject], chats: list[TLObject], users: list[TLObject]) -> None: ...
 
     class discardEncryption(TLObject):
         delete_history: bool
@@ -7739,13 +7780,14 @@ class messages:
 
     class forumTopics(TLObject):
         order_by_create_date: bool
+        top_icons: list[int] | None
         count: int
         topics: list[TLObject]
         messages: list[TLObject]
         chats: list[TLObject]
         users: list[TLObject]
         pts: int
-        def __init__(self, *, order_by_create_date: bool = ..., count: int, topics: list[TLObject], messages: list[TLObject], chats: list[TLObject], users: list[TLObject], pts: int) -> None: ...
+        def __init__(self, *, order_by_create_date: bool = ..., top_icons: list[int] | None = ..., count: int, topics: list[TLObject], messages: list[TLObject], chats: list[TLObject], users: list[TLObject], pts: int) -> None: ...
 
     class forwardMessages(TLObject):
         silent: bool
@@ -7992,11 +8034,13 @@ class messages:
     class getForumTopics(TLObject):
         peer: TLObject
         q: str | None
+        icon_emoji_id: int | None
+        closed: bool
         offset_date: int
         offset_id: int
         offset_topic: int
         limit: int
-        def __init__(self, *, peer: TLObject, q: str | None = ..., offset_date: int, offset_id: int, offset_topic: int, limit: int) -> None: ...
+        def __init__(self, *, peer: TLObject, q: str | None = ..., icon_emoji_id: int | None = ..., closed: bool = ..., offset_date: int, offset_id: int, offset_topic: int, limit: int) -> None: ...
 
     class getForumTopicsByID(TLObject):
         peer: TLObject
@@ -8289,6 +8333,10 @@ class messages:
         peer: TLObject | None
         def __init__(self, *, peer: TLObject | None = ...) -> None: ...
 
+    class getTranscriptionModels(TLObject):
+        version: int
+        def __init__(self, *, version: int) -> None: ...
+
     class getUnreadMentions(TLObject):
         peer: TLObject
         top_msg_id: int | None
@@ -8388,6 +8436,11 @@ class messages:
         archived: bool
         def __init__(self, *, stickerset: TLObject, archived: bool) -> None: ...
 
+    class inviteUsersToBot(TLObject):
+        bot: TLObject
+        users: list[TLObject]
+        def __init__(self, *, bot: TLObject, users: list[TLObject]) -> None: ...
+
     class invitedUsers(TLObject):
         updates: TLObject
         missing_invitees: list[TLObject]
@@ -8450,12 +8503,13 @@ class messages:
         def __init__(self, *, count: int, sets: list[TLObject]) -> None: ...
 
     class peerDialogs(TLObject):
+        topics: list[TLObject] | None
         dialogs: list[TLObject]
         messages: list[TLObject]
         chats: list[TLObject]
         users: list[TLObject]
         state: TLObject
-        def __init__(self, *, dialogs: list[TLObject], messages: list[TLObject], chats: list[TLObject], users: list[TLObject], state: TLObject) -> None: ...
+        def __init__(self, *, topics: list[TLObject] | None = ..., dialogs: list[TLObject], messages: list[TLObject], chats: list[TLObject], users: list[TLObject], state: TLObject) -> None: ...
 
     class peerSettings(TLObject):
         settings: TLObject
@@ -9553,9 +9607,10 @@ class pageBlockBlockquote(TLObject):
     def __init__(self, *, collapsed: bool = ..., text: TLObject, caption: TLObject) -> None: ...
 
 class pageBlockBlockquoteBlocks(TLObject):
+    collapsed: bool
     blocks: list[TLObject]
     caption: TLObject
-    def __init__(self, *, blocks: list[TLObject], caption: TLObject) -> None: ...
+    def __init__(self, *, collapsed: bool = ..., blocks: list[TLObject], caption: TLObject) -> None: ...
 
 class pageBlockButtonRow(TLObject):
     align_left: bool
@@ -9855,6 +9910,10 @@ class paymentSavedCredentialsCard(TLObject):
     def __init__(self, *, id: str, title: str) -> None: ...
 
 class payments:
+    class acceptStarGiftOnchainOffer(TLObject):
+        offer_msg_id: int
+        def __init__(self, *, offer_msg_id: int) -> None: ...
+
     class applyGiftCode(TLObject):
         slug: str
         def __init__(self, *, slug: str) -> None: ...
@@ -9880,9 +9939,25 @@ class payments:
         charge_id: str
         def __init__(self, *, restore: bool = ..., user_id: TLObject, charge_id: str) -> None: ...
 
+    class buyStarGiftOnchain(TLObject):
+        show_name: bool
+        slug: str
+        expected_amount: int
+        peer: TLObject | None
+        message: TLObject | None
+        def __init__(self, *, show_name: bool = ..., slug: str, expected_amount: int, peer: TLObject | None = ..., message: TLObject | None = ...) -> None: ...
+
     class canPurchaseStore(TLObject):
         purpose: TLObject
         def __init__(self, *, purpose: TLObject) -> None: ...
+
+    class cancelStarGiftOnchainOffer(TLObject):
+        offer_msg_id: int
+        def __init__(self, *, offer_msg_id: int) -> None: ...
+
+    class cancelStarGiftOnchainSale(TLObject):
+        slug: str
+        def __init__(self, *, slug: str) -> None: ...
 
     class changeStarsSubscription(TLObject):
         peer: TLObject
@@ -9964,6 +10039,10 @@ class payments:
     class currencyRates(TLObject):
         rates: list[TLObject]
         def __init__(self, *, rates: list[TLObject]) -> None: ...
+
+    class declineStarGiftOnchainOffer(TLObject):
+        offer_msg_id: int
+        def __init__(self, *, offer_msg_id: int) -> None: ...
 
     class deleteStarGift(TLObject):
         stargift: TLObject
@@ -10084,12 +10163,14 @@ class payments:
         sort_by_num: bool
         for_craft: bool
         stars_only: bool
+        ton_only: bool
+        fragment_only: bool
         attributes_hash: int | None
         gift_id: int
         attributes: list[TLObject] | None
         offset: str
         limit: int
-        def __init__(self, *, sort_by_price: bool = ..., sort_by_num: bool = ..., for_craft: bool = ..., stars_only: bool = ..., attributes_hash: int | None = ..., gift_id: int, attributes: list[TLObject] | None = ..., offset: str, limit: int) -> None: ...
+        def __init__(self, *, sort_by_price: bool = ..., sort_by_num: bool = ..., for_craft: bool = ..., stars_only: bool = ..., ton_only: bool = ..., fragment_only: bool = ..., attributes_hash: int | None = ..., gift_id: int, attributes: list[TLObject] | None = ..., offset: str, limit: int) -> None: ...
 
     class getSavedInfo(TLObject):
         def __init__(self) -> None: ...
@@ -10381,6 +10462,13 @@ class payments:
         allow_paid_stars: int | None
         def __init__(self, *, peer: TLObject, slug: str, price: TLObject, duration: int, random_id: int, allow_paid_stars: int | None = ...) -> None: ...
 
+    class sendStarGiftOnchainOffer(TLObject):
+        slug: str
+        amount: int
+        duration: int
+        random_id: int
+        def __init__(self, *, slug: str, amount: int, duration: int, random_id: int) -> None: ...
+
     class sendStarsForm(TLObject):
         form_id: int
         invoice: TLObject
@@ -10422,6 +10510,44 @@ class payments:
         payload: bytes
         amount: int
         def __init__(self, *, nft_address: str, payload: bytes, amount: int) -> None: ...
+
+    class starGiftOnchainFixedSalePayload(TLObject):
+        sale_address: str
+        messages: list[TLObject]
+        gasless_messages: list[TLObject] | None
+        def __init__(self, *, sale_address: str, messages: list[TLObject], gasless_messages: list[TLObject] | None = ...) -> None: ...
+
+    class starGiftOnchainOfferTx(TLObject):
+        offer_id: int
+        offer_address: str
+        expires_at: int
+        message: TLObject
+        gasless_message: TLObject | None
+        rent_budget: int | None
+        execution_allowance: int | None
+        forward_amount: int | None
+        fine: int | None
+        def __init__(self, *, offer_id: int, offer_address: str, expires_at: int, message: TLObject, gasless_message: TLObject | None = ..., rent_budget: int | None = ..., execution_allowance: int | None = ..., forward_amount: int | None = ..., fine: int | None = ...) -> None: ...
+
+    class starGiftOnchainOfferTxInitState(TLObject):
+        code: bytes
+        data: bytes
+        def __init__(self, *, code: bytes, data: bytes) -> None: ...
+
+    class starGiftOnchainOfferTxMessage(TLObject):
+        destination: str
+        value: int
+        mode: int
+        body: bytes
+        init_state: TLObject | None
+        def __init__(self, *, destination: str, value: int, mode: int, body: bytes, init_state: TLObject | None = ...) -> None: ...
+
+    class starGiftOnchainSalePayload(TLObject):
+        gasless_available: bool
+        nft_address: str
+        amount: int
+        payload: bytes
+        def __init__(self, *, gasless_available: bool = ..., nft_address: str, amount: int, payload: bytes) -> None: ...
 
     class starGiftUpgradeAttributes(TLObject):
         attributes: list[TLObject]
@@ -10527,6 +10653,11 @@ class payments:
         order: list[TLObject] | None
         def __init__(self, *, peer: TLObject, collection_id: int, title: str | None = ..., delete_stargift: list[TLObject] | None = ..., add_stargift: list[TLObject] | None = ..., order: list[TLObject] | None = ...) -> None: ...
 
+    class updateStarGiftOnchainPrice(TLObject):
+        slug: str
+        amount: int
+        def __init__(self, *, slug: str, amount: int) -> None: ...
+
     class updateStarGiftPrice(TLObject):
         stargift: TLObject
         resell_amount: TLObject
@@ -10553,6 +10684,13 @@ class payments:
         stargift: TLObject
         tmp_password: bytes
         def __init__(self, *, keep_on_profile: bool = ..., stargift: TLObject, tmp_password: bytes) -> None: ...
+
+    class withdrawStarsRevenueToWallet(TLObject):
+        ton: bool
+        peer: TLObject
+        amount: int | None
+        tmp_password: bytes
+        def __init__(self, *, ton: bool = ..., peer: TLObject, amount: int | None = ..., tmp_password: bytes) -> None: ...
 
 class peerBlocked(TLObject):
     peer_id: TLObject
@@ -10628,7 +10766,9 @@ class peerSettings(TLObject):
     phone_country: str | None
     name_change_date: int | None
     photo_change_date: int | None
-    def __init__(self, *, report_spam: bool = ..., add_contact: bool = ..., block_contact: bool = ..., share_contact: bool = ..., need_contacts_exception: bool = ..., report_geo: bool = ..., autoarchived: bool = ..., invite_members: bool = ..., request_chat_broadcast: bool = ..., business_bot_paused: bool = ..., business_bot_can_reply: bool = ..., geo_distance: int | None = ..., request_chat_title: str | None = ..., request_chat_date: int | None = ..., business_bot_id: int | None = ..., business_bot_manage_url: str | None = ..., charge_paid_message_stars: int | None = ..., registration_month: str | None = ..., phone_country: str | None = ..., name_change_date: int | None = ..., photo_change_date: int | None = ...) -> None: ...
+    bot_inviter_id: int | None
+    bot_owner_id: int | None
+    def __init__(self, *, report_spam: bool = ..., add_contact: bool = ..., block_contact: bool = ..., share_contact: bool = ..., need_contacts_exception: bool = ..., report_geo: bool = ..., autoarchived: bool = ..., invite_members: bool = ..., request_chat_broadcast: bool = ..., business_bot_paused: bool = ..., business_bot_can_reply: bool = ..., geo_distance: int | None = ..., request_chat_title: str | None = ..., request_chat_date: int | None = ..., business_bot_id: int | None = ..., business_bot_manage_url: str | None = ..., charge_paid_message_stars: int | None = ..., registration_month: str | None = ..., phone_country: str | None = ..., name_change_date: int | None = ..., photo_change_date: int | None = ..., bot_inviter_id: int | None = ..., bot_owner_id: int | None = ...) -> None: ...
 
 class peerStories(TLObject):
     peer: TLObject
@@ -12254,6 +12394,11 @@ class starGiftUnique(TLObject):
     theme_available: bool
     burned: bool
     crafted: bool
+    onchain_sale: bool
+    fixed_sale: bool
+    my_sale: bool
+    offer_min_amount: int | None
+    fee_bps: int | None
     id: int
     gift_id: int
     title: str
@@ -12276,7 +12421,7 @@ class starGiftUnique(TLObject):
     host_id: TLObject | None
     offer_min_stars: int | None
     craft_chance_permille: int | None
-    def __init__(self, *, require_premium: bool = ..., resale_ton_only: bool = ..., theme_available: bool = ..., burned: bool = ..., crafted: bool = ..., id: int, gift_id: int, title: str, slug: str, num: int, owner_id: TLObject | None = ..., owner_name: str | None = ..., owner_address: str | None = ..., attributes: list[TLObject], availability_issued: int, availability_total: int, gift_address: str | None = ..., resell_amount: list[TLObject] | None = ..., released_by: TLObject | None = ..., value_amount: int | None = ..., value_currency: str | None = ..., value_usd_amount: int | None = ..., theme_peer: TLObject | None = ..., peer_color: TLObject | None = ..., host_id: TLObject | None = ..., offer_min_stars: int | None = ..., craft_chance_permille: int | None = ...) -> None: ...
+    def __init__(self, *, require_premium: bool = ..., resale_ton_only: bool = ..., theme_available: bool = ..., burned: bool = ..., crafted: bool = ..., onchain_sale: bool = ..., fixed_sale: bool = ..., my_sale: bool = ..., offer_min_amount: int | None = ..., fee_bps: int | None = ..., id: int, gift_id: int, title: str, slug: str, num: int, owner_id: TLObject | None = ..., owner_name: str | None = ..., owner_address: str | None = ..., attributes: list[TLObject], availability_issued: int, availability_total: int, gift_address: str | None = ..., resell_amount: list[TLObject] | None = ..., released_by: TLObject | None = ..., value_amount: int | None = ..., value_currency: str | None = ..., value_usd_amount: int | None = ..., theme_peer: TLObject | None = ..., peer_color: TLObject | None = ..., host_id: TLObject | None = ..., offer_min_stars: int | None = ..., craft_chance_permille: int | None = ...) -> None: ...
 
 class starGiftUpgradePrice(TLObject):
     date: int
@@ -13433,6 +13578,12 @@ class topPeerCategoryPeers(TLObject):
 class topPeerCategoryPhoneCalls(TLObject):
     def __init__(self) -> None: ...
 
+class transcriptionModel(TLObject):
+    document: TLObject
+    languages: list[str]
+    version: int
+    def __init__(self, *, document: TLObject, languages: list[str], version: int) -> None: ...
+
 class true(TLObject):
     def __init__(self) -> None: ...
 
@@ -13674,7 +13825,9 @@ class updateChannelReadMessagesContents(TLObject):
 class updateChannelTooLong(TLObject):
     channel_id: int
     pts: int | None
-    def __init__(self, *, channel_id: int, pts: int | None = ...) -> None: ...
+    last_msg_id: int | None
+    last_msg_date: int | None
+    def __init__(self, *, channel_id: int, pts: int | None = ..., last_msg_id: int | None = ..., last_msg_date: int | None = ...) -> None: ...
 
 class updateChannelUserTyping(TLObject):
     channel_id: int
@@ -14524,11 +14677,12 @@ class updates(TLObject):
         final: bool
         pts: int
         timeout: int | None
+        topics: list[TLObject] | None
         new_messages: list[TLObject]
         other_updates: list[TLObject]
         chats: list[TLObject]
         users: list[TLObject]
-        def __init__(self, *, final: bool = ..., pts: int, timeout: int | None = ..., new_messages: list[TLObject], other_updates: list[TLObject], chats: list[TLObject], users: list[TLObject]) -> None: ...
+        def __init__(self, *, final: bool = ..., pts: int, timeout: int | None = ..., topics: list[TLObject] | None = ..., new_messages: list[TLObject], other_updates: list[TLObject], chats: list[TLObject], users: list[TLObject]) -> None: ...
 
     class channelDifferenceEmpty(TLObject):
         final: bool
@@ -14539,20 +14693,22 @@ class updates(TLObject):
     class channelDifferenceTooLong(TLObject):
         final: bool
         timeout: int | None
+        topics: list[TLObject] | None
         dialog: TLObject
         messages: list[TLObject]
         chats: list[TLObject]
         users: list[TLObject]
-        def __init__(self, *, final: bool = ..., timeout: int | None = ..., dialog: TLObject, messages: list[TLObject], chats: list[TLObject], users: list[TLObject]) -> None: ...
+        def __init__(self, *, final: bool = ..., timeout: int | None = ..., topics: list[TLObject] | None = ..., dialog: TLObject, messages: list[TLObject], chats: list[TLObject], users: list[TLObject]) -> None: ...
 
     class difference(TLObject):
+        topics: list[TLObject] | None
         new_messages: list[TLObject]
         new_encrypted_messages: list[TLObject]
         other_updates: list[TLObject]
         chats: list[TLObject]
         users: list[TLObject]
         state: TLObject
-        def __init__(self, *, new_messages: list[TLObject], new_encrypted_messages: list[TLObject], other_updates: list[TLObject], chats: list[TLObject], users: list[TLObject], state: TLObject) -> None: ...
+        def __init__(self, *, topics: list[TLObject] | None = ..., new_messages: list[TLObject], new_encrypted_messages: list[TLObject], other_updates: list[TLObject], chats: list[TLObject], users: list[TLObject], state: TLObject) -> None: ...
 
     class differenceEmpty(TLObject):
         date: int
@@ -14560,13 +14716,14 @@ class updates(TLObject):
         def __init__(self, *, date: int, seq: int) -> None: ...
 
     class differenceSlice(TLObject):
+        topics: list[TLObject] | None
         new_messages: list[TLObject]
         new_encrypted_messages: list[TLObject]
         other_updates: list[TLObject]
         chats: list[TLObject]
         users: list[TLObject]
         intermediate_state: TLObject
-        def __init__(self, *, new_messages: list[TLObject], new_encrypted_messages: list[TLObject], other_updates: list[TLObject], chats: list[TLObject], users: list[TLObject], intermediate_state: TLObject) -> None: ...
+        def __init__(self, *, topics: list[TLObject] | None = ..., new_messages: list[TLObject], new_encrypted_messages: list[TLObject], other_updates: list[TLObject], chats: list[TLObject], users: list[TLObject], intermediate_state: TLObject) -> None: ...
 
     class differenceTooLong(TLObject):
         pts: int
@@ -15218,6 +15375,56 @@ class wallet:
         users: list[TLObject]
         def __init__(self, *, addresses: list[TLObject], users: list[TLObject]) -> None: ...
 
+class walletOnchainGiftActionBuy(TLObject):
+    def __init__(self) -> None: ...
+
+class walletOnchainGiftActionChangePrice(TLObject):
+    old_price: int | None
+    new_price: int
+    def __init__(self, *, old_price: int | None = ..., new_price: int) -> None: ...
+
+class walletOnchainGiftActionDelist(TLObject):
+    def __init__(self) -> None: ...
+
+class walletOnchainGiftActionOfferAccept(TLObject):
+    buyer: bool
+    offer_address: str
+    counterparty_address: str
+    price: int
+    service_fee: int
+    def __init__(self, *, buyer: bool = ..., offer_address: str, counterparty_address: str, price: int, service_fee: int) -> None: ...
+
+class walletOnchainGiftActionOfferCancel(TLObject):
+    offer_address: str
+    counterparty_address: str | None
+    price: int | None
+    refund_amount: int
+    fine: int | None
+    def __init__(self, *, offer_address: str, counterparty_address: str | None = ..., price: int | None = ..., refund_amount: int, fine: int | None = ...) -> None: ...
+
+class walletOnchainGiftActionOfferCreate(TLObject):
+    offer_address: str
+    counterparty_address: str | None
+    price: int
+    amount: int
+    service_fee: int
+    expires_at: int | None
+    def __init__(self, *, offer_address: str, counterparty_address: str | None = ..., price: int, amount: int, service_fee: int, expires_at: int | None = ...) -> None: ...
+
+class walletOnchainGiftActionOfferDecline(TLObject):
+    offer_address: str
+    counterparty_address: str | None
+    price: int | None
+    refund_amount: int
+    def __init__(self, *, offer_address: str, counterparty_address: str | None = ..., price: int | None = ..., refund_amount: int) -> None: ...
+
+class walletOnchainGiftActionOfferExpire(TLObject):
+    offer_address: str
+    counterparty_address: str | None
+    price: int | None
+    refund_amount: int
+    def __init__(self, *, offer_address: str, counterparty_address: str | None = ..., price: int | None = ..., refund_amount: int) -> None: ...
+
 class walletOwnershipProof(TLObject):
     timestamp: int
     signature: bytes
@@ -15242,6 +15449,7 @@ class walletTransaction(TLObject):
     failed: bool
     key_change: bool
     comment_encrypted: bool
+    suspected_spam: bool
     id: str
     amount: int
     fee: int
@@ -15250,7 +15458,7 @@ class walletTransaction(TLObject):
     comment: str | None
     tx_hash: str | None
     nft: TLObject | None
-    def __init__(self, *, incoming: bool = ..., gasless: bool = ..., failed: bool = ..., key_change: bool = ..., comment_encrypted: bool = ..., id: str, amount: int, fee: int, date: int, peer: TLObject, comment: str | None = ..., tx_hash: str | None = ..., nft: TLObject | None = ...) -> None: ...
+    def __init__(self, *, incoming: bool = ..., gasless: bool = ..., failed: bool = ..., key_change: bool = ..., comment_encrypted: bool = ..., suspected_spam: bool = ..., id: str, amount: int, fee: int, date: int, peer: TLObject, comment: str | None = ..., tx_hash: str | None = ..., nft: TLObject | None = ...) -> None: ...
 
 class walletTransactionPeerAddress(TLObject):
     address: str
@@ -15262,6 +15470,10 @@ class walletTransactionPeerChannel(TLObject):
     address: str
     domain: str | None
     def __init__(self, *, channel_id: int, address: str, domain: str | None = ...) -> None: ...
+
+class walletTransactionPeerOnchainGift(TLObject):
+    action: TLObject
+    def __init__(self, *, action: TLObject) -> None: ...
 
 class walletTransactionPeerOnramp(TLObject):
     address: str

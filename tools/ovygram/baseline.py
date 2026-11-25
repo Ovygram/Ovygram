@@ -10,14 +10,14 @@ import time
 import zipfile
 
 
-UPSTREAM = '346f10fde53c499ad50de8708a99e3c003bc1cf3'
-CLIENT_VERSION = '7.4.3'
+UPSTREAM = '4f0d56441f3ff57e8597b5c89b369a11f84007d3'
+CLIENT_VERSION = '7.4.6'
 # Keep in sync with OvygramVersionStr in Telegram/SourceFiles/core/version.h.
 OVYGRAM_VERSION = '0.1.0'
 GIB = 1024 ** 3
-# QuickJS deliberately sets update=none for its JavaScript conformance suite.
-# It is not a client build dependency and recursive checkout leaves it absent.
+# The engines set update=none for their JavaScript conformance suites.
 OPTIONAL_SUBMODULES = {
+    'Telegram/ThirdParty/nova-safe/tests/test262',
     'Telegram/ThirdParty/widget-sandbox/packages/ios/Sources/CQuickJS/quickjs/test262',
 }
 
@@ -111,21 +111,25 @@ def run_monitored(command, cwd, log, deadline, minimum_free=2 * GIB,
 
 def package(source, target, plugins=False, configuration='Debug'):
     binary_name = 'Ovygram.exe' if plugins else 'Telegram.exe'
-    executable = source / 'out' / configuration / binary_name
+    binary_dir = source / 'out' / configuration
+    executable = binary_dir / binary_name
     if not executable.is_file():
         raise RuntimeError('No compiled client executable; refusing to package.')
+    helper = binary_dir / 'modules/x64/TelegramWidgetHelper.exe'
+    if not helper.is_file():
+        raise RuntimeError('TelegramWidgetHelper.exe is missing from the package directory.')
+    runtime = binary_dir / 'python'
+    if plugins and not (runtime / 'ovygram_host.dll').is_file():
+        raise RuntimeError('Python host DLL is missing from the package directory.')
     target.mkdir(parents=True, exist_ok=True)
     name = 'ovygram' if plugins else 'upstream-baseline'
     version = f'{OVYGRAM_VERSION}-{CLIENT_VERSION}' if plugins else CLIENT_VERSION
     archive = target / f'{name}-{version}-win64-{configuration.lower()}.zip'
     with zipfile.ZipFile(archive, 'w', zipfile.ZIP_DEFLATED) as output:
         output.write(executable, binary_name)
+        output.write(helper, helper.relative_to(binary_dir).as_posix())
         output.writestr('TelegramForcePortable', '')
         if plugins:
-            binary_dir = executable.parent
-            runtime = binary_dir / 'python'
-            if not (runtime / 'ovygram_host.dll').is_file():
-                raise RuntimeError('Python host DLL is missing from the package directory.')
             for path in sorted(runtime.rglob('*')):
                 if path.is_file():
                     output.write(path, path.relative_to(binary_dir).as_posix())

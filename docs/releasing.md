@@ -1,6 +1,6 @@
 # Releasing Ovygram
 
-A release is tagged `v<ovygram>-<telegram>`, e.g. `v0.1.0-7.4.3`, and ships
+A release is tagged `v<ovygram>-<telegram>`, e.g. `v0.1.0-7.4.6`, and ships
 the sources with these assets:
 
 | Asset | Made by |
@@ -26,8 +26,8 @@ meant for Arch Linux and the `ovygram-bin` package.
    the pip wheel) and build Release as in
    [building-ovygram.md](building-ovygram.md#linux-x64).
 2. Pack: `python tools/ovygram/package_linux.py --build out/Release`. The
-   script refuses a `python` directory without `pip.whl` or the current SDK,
-   strips the binary and writes the archive and its `.sha256` to `dist/`.
+   script checks the Python bundle and widget helper, strips the Ovygram
+   binary and writes the archive and its `.sha256` to `dist/`.
 3. If the build machine's libraries changed, refresh the dependencies:
    `python tools/ovygram/arch_depends.py out/Release` and update `depends`
    in `packaging/arch/ovygram-bin/PKGBUILD` (keep the runtime-only ones:
@@ -42,7 +42,7 @@ next to the official Telegram Desktop.
 
 Run `ovygram-windows.yml` with `mode: plugins` on the commit being released
 and download the `ovygram-<run_id>` artifact. It contains
-`ovygram-0.1.0-7.4.3-win64-release.zip` and its `.sha256`; the workflow
+`ovygram-0.1.0-7.4.6-win64-release.zip` and its `.sha256`; the workflow
 does not rename the ZIP to `Ovygram-win64-portable.zip`. Check the portable
 client on Windows 11 without Python installed.
 
@@ -53,13 +53,13 @@ client on Windows 11 without Python installed.
    publish (the draft notes are in `docs/release-notes/`):
 
    ```
-   git tag -a v0.1.0-7.4.3 -m "Ovygram 0.1.0 (Telegram Desktop 7.4.3)"
-   git push origin v0.1.0-7.4.3
-   gh release create v0.1.0-7.4.3 --notes-file docs/release-notes/0.1.0-7.4.3.md \
-       dist/ovygram-0.1.0-7.4.3-linux-x86_64.tar.xz \
-       dist/ovygram-0.1.0-7.4.3-linux-x86_64.tar.xz.sha256 \
-       artifacts/ovygram-0.1.0-7.4.3-win64-release.zip \
-       artifacts/ovygram-0.1.0-7.4.3-win64-release.zip.sha256
+   git tag -a v0.1.0-7.4.6 -m "Ovygram 0.1.0 (Telegram Desktop 7.4.6)"
+   git push origin v0.1.0-7.4.6
+   gh release create v0.1.0-7.4.6 --notes-file docs/release-notes/0.1.0-7.4.6.md \
+       dist/ovygram-0.1.0-7.4.6-linux-x86_64.tar.xz \
+       dist/ovygram-0.1.0-7.4.6-linux-x86_64.tar.xz.sha256 \
+       artifacts/ovygram-0.1.0-7.4.6-win64-release.zip \
+       artifacts/ovygram-0.1.0-7.4.6-win64-release.zip.sha256
    ```
 
 3. AUR: in `packaging/arch/ovygram-bin`, put the archive's SHA-256 into

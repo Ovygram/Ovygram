@@ -1,7 +1,7 @@
 # Maintainer: bezumnui <bezumnui.mistikgt@gmail.com>
 
 pkgname=ovygram-bin
-_tag=0.1.0-7.4.3
+_tag=0.1.0-7.4.6
 pkgver=${_tag//-/_}
 pkgrel=1
 pkgdesc='Telegram Desktop fork with Python plugins'
@@ -11,7 +11,6 @@ license=('GPL-3.0-or-later WITH OpenSSL-exception')
 # From tools/ovygram/arch_depends.py on the build, plus what is loaded at
 # runtime: icons, PipeWire, Qt image formats.
 depends=('abseil-cpp'
-         'ada'
          'bubblewrap'
          'bzip2'
          'cairo'
@@ -77,7 +76,7 @@ optdepends=('geoclue: geoinformation support'
 provides=('ovygram')
 conflicts=('ovygram')
 # The binary is stripped by tools/ovygram/package_linux.py; the bundled
-# Python must stay as built.
+# Python and the pinned widget helper must stay as built.
 options=('!strip' '!debug')
 source=("https://github.com/Ovygram/Ovygram/releases/download/v${_tag}/ovygram-${_tag}-linux-x86_64.tar.xz")
 # Replace with the .sha256 published next to the release archive
@@ -87,10 +86,9 @@ sha256sums=('0000000000000000000000000000000000000000000000000000000000000000')
 package() {
   cd "ovygram-${_tag}-linux-x86_64"
 
-  # The plugin runtime looks for python/ next to the binary, so both live
-  # in /opt; /usr/bin gets a link (the binary resolves its real path).
+  # The binary locates the Python runtime and widget helper relative to itself.
   install -d "$pkgdir/opt/ovygram" "$pkgdir/usr/bin"
-  cp -a Ovygram python "$pkgdir/opt/ovygram/"
+  cp -a Ovygram python TelegramHelpers "$pkgdir/opt/ovygram/"
   ln -s /opt/ovygram/Ovygram "$pkgdir/usr/bin/ovygram"
 
   install -Dm644 io.github.maxutka00.Ovygram.desktop \

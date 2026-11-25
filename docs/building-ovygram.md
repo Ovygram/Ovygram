@@ -77,7 +77,7 @@ sudo pacman -S --needed base-devel cmake ninja git python just gperf \
     boost libtg_owt range-v3 tl-expected microsoft-gsl \
     qt6-base qt6-declarative qt6-imageformats qt6-svg qt6-wayland qt6-shadertools \
     vulkan-headers glib2 glib2-devel gobject-introspection \
-    abseil-cpp ada cairo ffmpeg fontconfig hunspell kcoreaddons libavif libfido2 \
+    abseil-cpp cairo ffmpeg fontconfig hunspell kcoreaddons libavif libfido2 \
     libheif libjpeg-turbo libjxl libpipewire libsrtp libvpx libxcomposite libxdamage \
     libxkbcommon libxrandr libxtst lz4 minizip openal openh264 opus pango pipewire \
     rnnoise tlottie xxhash \
@@ -103,7 +103,7 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$PWD/inst
 cmake --build build && cmake --install build
 cd ..
 
-curl -fsSLO https://raw.githubusercontent.com/desktop-app/patches/a59fc82462fb2987e9f0ee1498e2db694410ae81/wallet-engine.patch
+curl -fsSLO https://raw.githubusercontent.com/desktop-app/patches/8a28b8433af70771c3d101c776ad837a94bd47ec/wallet-engine.patch
 git clone https://github.com/i582/wallet-engine.git
 cd wallet-engine
 git checkout e59e0d89d7ee90c388bf36e3334c5b276f396697
@@ -167,7 +167,8 @@ on, so it suits local use rather than distribution.
 ### Packaging
 
 `tools/ovygram/package_linux.py --build out/Release` packs the build into a
-`.tar.xz` for Arch Linux and the `ovygram-bin` package, see
+`.tar.xz` with the client and `TelegramHelpers/TelegramWidgetHelper` for Arch
+Linux and the `ovygram-bin` package. See
 [releasing.md](releasing.md#linux).
 
 ### System libraries
@@ -208,7 +209,7 @@ attempt may manage to save the dependencies but not to build the client. Old
 caches may not fit after a toolchain or recipe change.
 
 The `plugins` mode builds Ovygram, and `build` builds the unchanged pinned
-Telegram baseline. The future package names are `ovygram-0.1.0-7.4.3-win64-release.zip`
-and `upstream-baseline-7.4.3-win64-debug.zip` respectively. There is no real new
+Telegram baseline. The future package names are `ovygram-0.1.0-7.4.6-win64-release.zip`
+and `upstream-baseline-7.4.6-win64-debug.zip` respectively. There is no real new
 ZIP at the moment; the history of earlier personal builds is not carried over to
 this repository.

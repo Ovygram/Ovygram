@@ -1,5 +1,5 @@
 {
-  "schema_sha256": "c2bbefcaec3285ba46c8af8f429c7012fe5aea253fd16d4be089f91c7c3fa71e",
+  "schema_sha256": "4f9282f98a5c4044abcbec290143e62ba744a0dcb48b2f5d2f37f7af15b7d454",
   "declarations": [
     {
       "name": "boolFalse",
@@ -2494,7 +2494,7 @@
     },
     {
       "name": "communityFull",
-      "id": 3417810183,
+      "id": 1885799163,
       "fields": [
         [
           "flags",
@@ -2515,6 +2515,10 @@
         [
           "linked_peers",
           "Vector<CommunityPeer>"
+        ],
+        [
+          "notify_settings",
+          "flags.3?PeerNotifySettings"
         ],
         [
           "admins_count",
@@ -5016,7 +5020,7 @@
     },
     {
       "name": "messageActionGramTransfer",
-      "id": 2468997683,
+      "id": 888697961,
       "fields": [
         [
           "flags",
@@ -5041,6 +5045,10 @@
         [
           "comment",
           "flags.0?string"
+        ],
+        [
+          "onramp_provider_name",
+          "flags.2?string"
         ]
       ],
       "result": "MessageAction",
@@ -5090,6 +5098,90 @@
       "name": "messageActionNoPaidMessagesTokenUsed",
       "id": 3251827142,
       "fields": [],
+      "result": "MessageAction",
+      "function": false
+    },
+    {
+      "name": "messageActionStarGiftOnchainOffer",
+      "id": 1145726312,
+      "fields": [
+        [
+          "flags",
+          "#"
+        ],
+        [
+          "accepted",
+          "flags.0?true"
+        ],
+        [
+          "declined",
+          "flags.1?true"
+        ],
+        [
+          "cancelled",
+          "flags.2?true"
+        ],
+        [
+          "expired",
+          "flags.3?true"
+        ],
+        [
+          "settled",
+          "flags.6?true"
+        ],
+        [
+          "buyer",
+          "flags.7?true"
+        ],
+        [
+          "cancelling",
+          "flags.8?true"
+        ],
+        [
+          "offer_id",
+          "long"
+        ],
+        [
+          "gift",
+          "StarGift"
+        ],
+        [
+          "amount",
+          "long"
+        ],
+        [
+          "fee_bps",
+          "int"
+        ],
+        [
+          "expires_at",
+          "int"
+        ],
+        [
+          "offer_address",
+          "string"
+        ],
+        [
+          "buyer_refund",
+          "flags.4?long"
+        ],
+        [
+          "fine",
+          "flags.5?long"
+        ]
+      ],
+      "result": "MessageAction",
+      "function": false
+    },
+    {
+      "name": "messageActionBotInvite",
+      "id": 3842617723,
+      "fields": [
+        [
+          "inviter_id",
+          "long"
+        ]
+      ],
       "result": "MessageAction",
       "function": false
     },
@@ -5743,7 +5835,7 @@
     },
     {
       "name": "peerSettings",
-      "id": 4101456375,
+      "id": 608290891,
       "fields": [
         [
           "flags",
@@ -5832,6 +5924,14 @@
         [
           "photo_change_date",
           "flags.18?int"
+        ],
+        [
+          "bot_inviter_id",
+          "flags.19?long"
+        ],
+        [
+          "bot_owner_id",
+          "flags.20?long"
         ]
       ],
       "result": "PeerSettings",
@@ -6384,8 +6484,16 @@
     },
     {
       "name": "messages.dialogs",
-      "id": 364538944,
+      "id": 771611027,
       "fields": [
+        [
+          "flags",
+          "#"
+        ],
+        [
+          "topics",
+          "flags.0?Vector<ForumTopic>"
+        ],
         [
           "dialogs",
           "Vector<Dialog>"
@@ -6408,11 +6516,19 @@
     },
     {
       "name": "messages.dialogsSlice",
-      "id": 1910543603,
+      "id": 3514069060,
       "fields": [
+        [
+          "flags",
+          "#"
+        ],
         [
           "count",
           "int"
+        ],
+        [
+          "topics",
+          "flags.0?Vector<ForumTopic>"
         ],
         [
           "dialogs",
@@ -7287,7 +7403,7 @@
     },
     {
       "name": "updateChannelTooLong",
-      "id": 277713951,
+      "id": 256790106,
       "fields": [
         [
           "flags",
@@ -7300,6 +7416,14 @@
         [
           "pts",
           "flags.0?int"
+        ],
+        [
+          "last_msg_id",
+          "flags.1?int"
+        ],
+        [
+          "last_msg_date",
+          "flags.1?int"
         ]
       ],
       "result": "Update",
@@ -10433,8 +10557,16 @@
     },
     {
       "name": "updates.difference",
-      "id": 16030880,
+      "id": 3079653952,
       "fields": [
+        [
+          "flags",
+          "#"
+        ],
+        [
+          "topics",
+          "flags.0?Vector<ForumTopic>"
+        ],
         [
           "new_messages",
           "Vector<Message>"
@@ -10465,8 +10597,16 @@
     },
     {
       "name": "updates.differenceSlice",
-      "id": 2835028353,
+      "id": 130363219,
       "fields": [
+        [
+          "flags",
+          "#"
+        ],
+        [
+          "topics",
+          "flags.0?Vector<ForumTopic>"
+        ],
         [
           "new_messages",
           "Vector<Message>"
@@ -10961,6 +11101,10 @@
         [
           "force_try_ipv6",
           "flags.14?true"
+        ],
+        [
+          "fpnv_allowed",
+          "flags.17?true"
         ],
         [
           "date",
@@ -14339,7 +14483,7 @@
     },
     {
       "name": "updates.channelDifferenceTooLong",
-      "id": 2763835134,
+      "id": 364083073,
       "fields": [
         [
           "flags",
@@ -14352,6 +14496,10 @@
         [
           "timeout",
           "flags.1?int"
+        ],
+        [
+          "topics",
+          "flags.2?Vector<ForumTopic>"
         ],
         [
           "dialog",
@@ -14375,7 +14523,7 @@
     },
     {
       "name": "updates.channelDifference",
-      "id": 543450958,
+      "id": 3533562173,
       "fields": [
         [
           "flags",
@@ -14392,6 +14540,10 @@
         [
           "timeout",
           "flags.1?int"
+        ],
+        [
+          "topics",
+          "flags.2?Vector<ForumTopic>"
         ],
         [
           "new_messages",
@@ -16212,8 +16364,16 @@
     },
     {
       "name": "messages.peerDialogs",
-      "id": 863093588,
+      "id": 2806641637,
       "fields": [
+        [
+          "flags",
+          "#"
+        ],
+        [
+          "topics",
+          "flags.0?Vector<ForumTopic>"
+        ],
         [
           "dialogs",
           "Vector<Dialog>"
@@ -16380,7 +16540,7 @@
     },
     {
       "name": "draftMessageEmpty",
-      "id": 453805082,
+      "id": 583289800,
       "fields": [
         [
           "flags",
@@ -16389,6 +16549,10 @@
         [
           "date",
           "flags.0?int"
+        ],
+        [
+          "ai_style",
+          "flags.1?InputAiComposeStyle"
         ]
       ],
       "result": "DraftMessage",
@@ -16396,7 +16560,7 @@
     },
     {
       "name": "draftMessage",
-      "id": 1627271828,
+      "id": 2628900090,
       "fields": [
         [
           "flags",
@@ -16441,6 +16605,10 @@
         [
           "rich_message",
           "flags.9?RichMessage"
+        ],
+        [
+          "ai_style",
+          "flags.10?InputAiComposeStyle"
         ]
       ],
       "result": "DraftMessage",
@@ -17907,8 +18075,16 @@
     },
     {
       "name": "pageBlockBlockquoteBlocks",
-      "id": 242108356,
+      "id": 638843030,
       "fields": [
+        [
+          "flags",
+          "#"
+        ],
+        [
+          "collapsed",
+          "flags.0?true"
+        ],
         [
           "blocks",
           "Vector<PageBlock>"
@@ -27380,7 +27556,7 @@
     },
     {
       "name": "messages.forumTopics",
-      "id": 913709011,
+      "id": 2848878229,
       "fields": [
         [
           "flags",
@@ -27389,6 +27565,10 @@
         [
           "order_by_create_date",
           "flags.0?true"
+        ],
+        [
+          "top_icons",
+          "flags.1?Vector<long>"
         ],
         [
           "count",
@@ -32098,7 +32278,7 @@
     },
     {
       "name": "starGiftUnique",
-      "id": 2247141837,
+      "id": 2267103634,
       "fields": [
         [
           "flags",
@@ -32123,6 +32303,26 @@
         [
           "crafted",
           "flags.15?true"
+        ],
+        [
+          "onchain_sale",
+          "flags.17?true"
+        ],
+        [
+          "fixed_sale",
+          "flags.19?true"
+        ],
+        [
+          "my_sale",
+          "flags.21?true"
+        ],
+        [
+          "offer_min_amount",
+          "flags.18?long"
+        ],
+        [
+          "fee_bps",
+          "flags.20?int"
         ],
         [
           "id",
@@ -36249,6 +36449,18 @@
       "function": false
     },
     {
+      "name": "walletTransactionPeerOnchainGift",
+      "id": 1257549816,
+      "fields": [
+        [
+          "action",
+          "WalletOnchainGiftAction"
+        ]
+      ],
+      "result": "WalletTransactionPeer",
+      "function": false
+    },
+    {
       "name": "walletTransaction",
       "id": 2502803779,
       "fields": [
@@ -36275,6 +36487,10 @@
         [
           "comment_encrypted",
           "flags.6?true"
+        ],
+        [
+          "suspected_spam",
+          "flags.8?true"
         ],
         [
           "id",
@@ -37115,6 +37331,392 @@
         ]
       ],
       "result": "messages.WidgetPublicData",
+      "function": false
+    },
+    {
+      "name": "walletOnchainGiftActionBuy",
+      "id": 4180849965,
+      "fields": [],
+      "result": "WalletOnchainGiftAction",
+      "function": false
+    },
+    {
+      "name": "walletOnchainGiftActionDelist",
+      "id": 2584227726,
+      "fields": [],
+      "result": "WalletOnchainGiftAction",
+      "function": false
+    },
+    {
+      "name": "walletOnchainGiftActionChangePrice",
+      "id": 1208637885,
+      "fields": [
+        [
+          "flags",
+          "#"
+        ],
+        [
+          "old_price",
+          "flags.0?long"
+        ],
+        [
+          "new_price",
+          "long"
+        ]
+      ],
+      "result": "WalletOnchainGiftAction",
+      "function": false
+    },
+    {
+      "name": "walletOnchainGiftActionOfferCreate",
+      "id": 3843019278,
+      "fields": [
+        [
+          "flags",
+          "#"
+        ],
+        [
+          "offer_address",
+          "string"
+        ],
+        [
+          "counterparty_address",
+          "flags.0?string"
+        ],
+        [
+          "price",
+          "long"
+        ],
+        [
+          "amount",
+          "long"
+        ],
+        [
+          "service_fee",
+          "long"
+        ],
+        [
+          "expires_at",
+          "flags.1?int"
+        ]
+      ],
+      "result": "WalletOnchainGiftAction",
+      "function": false
+    },
+    {
+      "name": "walletOnchainGiftActionOfferAccept",
+      "id": 4107669064,
+      "fields": [
+        [
+          "flags",
+          "#"
+        ],
+        [
+          "buyer",
+          "flags.0?true"
+        ],
+        [
+          "offer_address",
+          "string"
+        ],
+        [
+          "counterparty_address",
+          "string"
+        ],
+        [
+          "price",
+          "long"
+        ],
+        [
+          "service_fee",
+          "long"
+        ]
+      ],
+      "result": "WalletOnchainGiftAction",
+      "function": false
+    },
+    {
+      "name": "walletOnchainGiftActionOfferCancel",
+      "id": 1707653005,
+      "fields": [
+        [
+          "flags",
+          "#"
+        ],
+        [
+          "offer_address",
+          "string"
+        ],
+        [
+          "counterparty_address",
+          "flags.0?string"
+        ],
+        [
+          "price",
+          "flags.1?long"
+        ],
+        [
+          "refund_amount",
+          "long"
+        ],
+        [
+          "fine",
+          "flags.2?long"
+        ]
+      ],
+      "result": "WalletOnchainGiftAction",
+      "function": false
+    },
+    {
+      "name": "walletOnchainGiftActionOfferDecline",
+      "id": 3316143340,
+      "fields": [
+        [
+          "flags",
+          "#"
+        ],
+        [
+          "offer_address",
+          "string"
+        ],
+        [
+          "counterparty_address",
+          "flags.0?string"
+        ],
+        [
+          "price",
+          "flags.1?long"
+        ],
+        [
+          "refund_amount",
+          "long"
+        ]
+      ],
+      "result": "WalletOnchainGiftAction",
+      "function": false
+    },
+    {
+      "name": "walletOnchainGiftActionOfferExpire",
+      "id": 3666185936,
+      "fields": [
+        [
+          "flags",
+          "#"
+        ],
+        [
+          "offer_address",
+          "string"
+        ],
+        [
+          "counterparty_address",
+          "flags.0?string"
+        ],
+        [
+          "price",
+          "flags.1?long"
+        ],
+        [
+          "refund_amount",
+          "long"
+        ]
+      ],
+      "result": "WalletOnchainGiftAction",
+      "function": false
+    },
+    {
+      "name": "payments.starGiftOnchainSalePayload",
+      "id": 1024677616,
+      "fields": [
+        [
+          "flags",
+          "#"
+        ],
+        [
+          "gasless_available",
+          "flags.0?true"
+        ],
+        [
+          "nft_address",
+          "string"
+        ],
+        [
+          "amount",
+          "long"
+        ],
+        [
+          "payload",
+          "bytes"
+        ]
+      ],
+      "result": "payments.StarGiftOnchainSalePayload",
+      "function": false
+    },
+    {
+      "name": "payments.starGiftOnchainFixedSalePayload",
+      "id": 2197406391,
+      "fields": [
+        [
+          "flags",
+          "#"
+        ],
+        [
+          "sale_address",
+          "string"
+        ],
+        [
+          "messages",
+          "Vector<payments.StarGiftOnchainOfferTxMessage>"
+        ],
+        [
+          "gasless_messages",
+          "flags.0?Vector<payments.StarGiftOnchainOfferTxMessage>"
+        ]
+      ],
+      "result": "payments.StarGiftOnchainSalePayload",
+      "function": false
+    },
+    {
+      "name": "payments.starGiftOnchainOfferTxInitState",
+      "id": 148300917,
+      "fields": [
+        [
+          "code",
+          "bytes"
+        ],
+        [
+          "data",
+          "bytes"
+        ]
+      ],
+      "result": "payments.StarGiftOnchainOfferTxInitState",
+      "function": false
+    },
+    {
+      "name": "payments.starGiftOnchainOfferTxMessage",
+      "id": 2291959317,
+      "fields": [
+        [
+          "flags",
+          "#"
+        ],
+        [
+          "destination",
+          "string"
+        ],
+        [
+          "value",
+          "long"
+        ],
+        [
+          "mode",
+          "int"
+        ],
+        [
+          "body",
+          "bytes"
+        ],
+        [
+          "init_state",
+          "flags.0?payments.StarGiftOnchainOfferTxInitState"
+        ]
+      ],
+      "result": "payments.StarGiftOnchainOfferTxMessage",
+      "function": false
+    },
+    {
+      "name": "payments.starGiftOnchainOfferTx",
+      "id": 4267082191,
+      "fields": [
+        [
+          "flags",
+          "#"
+        ],
+        [
+          "offer_id",
+          "long"
+        ],
+        [
+          "offer_address",
+          "string"
+        ],
+        [
+          "expires_at",
+          "int"
+        ],
+        [
+          "message",
+          "payments.StarGiftOnchainOfferTxMessage"
+        ],
+        [
+          "gasless_message",
+          "flags.3?payments.StarGiftOnchainOfferTxMessage"
+        ],
+        [
+          "rent_budget",
+          "flags.0?long"
+        ],
+        [
+          "execution_allowance",
+          "flags.0?long"
+        ],
+        [
+          "forward_amount",
+          "flags.1?long"
+        ],
+        [
+          "fine",
+          "flags.2?long"
+        ]
+      ],
+      "result": "payments.StarGiftOnchainOfferTx",
+      "function": false
+    },
+    {
+      "name": "inputAiComposeStyle",
+      "id": 2820735472,
+      "fields": [
+        [
+          "flags",
+          "#"
+        ],
+        [
+          "emojify",
+          "flags.2?true"
+        ],
+        [
+          "proofread",
+          "flags.3?true"
+        ],
+        [
+          "tone",
+          "flags.0?InputAiComposeTone"
+        ],
+        [
+          "to_lang",
+          "flags.1?string"
+        ]
+      ],
+      "result": "InputAiComposeStyle",
+      "function": false
+    },
+    {
+      "name": "transcriptionModel",
+      "id": 12676885,
+      "fields": [
+        [
+          "document",
+          "Document"
+        ],
+        [
+          "languages",
+          "Vector<string>"
+        ],
+        [
+          "version",
+          "int"
+        ]
+      ],
+      "result": "TranscriptionModel",
       "function": false
     },
     {
@@ -45653,7 +46255,7 @@
     },
     {
       "name": "messages.getForumTopics",
-      "id": 1000635391,
+      "id": 3331072410,
       "fields": [
         [
           "flags",
@@ -45666,6 +46268,14 @@
         [
           "q",
           "flags.0?string"
+        ],
+        [
+          "icon_emoji_id",
+          "flags.1?long"
+        ],
+        [
+          "closed",
+          "flags.2?Bool"
         ],
         [
           "offset_date",
@@ -46496,6 +47106,34 @@
         ]
       ],
       "result": "Vector<string>",
+      "function": true
+    },
+    {
+      "name": "messages.inviteUsersToBot",
+      "id": 498593787,
+      "fields": [
+        [
+          "bot",
+          "InputUser"
+        ],
+        [
+          "users",
+          "Vector<InputUser>"
+        ]
+      ],
+      "result": "Bool",
+      "function": true
+    },
+    {
+      "name": "messages.getTranscriptionModels",
+      "id": 136274721,
+      "fields": [
+        [
+          "version",
+          "int"
+        ]
+      ],
+      "result": "Vector<TranscriptionModel>",
       "function": true
     },
     {
@@ -49879,6 +50517,14 @@
           "flags.5?true"
         ],
         [
+          "ton_only",
+          "flags.6?true"
+        ],
+        [
+          "fragment_only",
+          "flags.7?true"
+        ],
+        [
           "attributes_hash",
           "flags.0?long"
         ],
@@ -50447,6 +51093,154 @@
         ]
       ],
       "result": "Bool",
+      "function": true
+    },
+    {
+      "name": "payments.withdrawStarsRevenueToWallet",
+      "id": 1461184265,
+      "fields": [
+        [
+          "flags",
+          "#"
+        ],
+        [
+          "ton",
+          "flags.0?true"
+        ],
+        [
+          "peer",
+          "InputPeer"
+        ],
+        [
+          "amount",
+          "flags.1?long"
+        ],
+        [
+          "tmp_password",
+          "bytes"
+        ]
+      ],
+      "result": "Bool",
+      "function": true
+    },
+    {
+      "name": "payments.buyStarGiftOnchain",
+      "id": 1551278953,
+      "fields": [
+        [
+          "flags",
+          "#"
+        ],
+        [
+          "show_name",
+          "flags.2?true"
+        ],
+        [
+          "slug",
+          "string"
+        ],
+        [
+          "expected_amount",
+          "long"
+        ],
+        [
+          "peer",
+          "flags.0?InputPeer"
+        ],
+        [
+          "message",
+          "flags.1?TextWithEntities"
+        ]
+      ],
+      "result": "payments.StarGiftOnchainSalePayload",
+      "function": true
+    },
+    {
+      "name": "payments.updateStarGiftOnchainPrice",
+      "id": 3259032527,
+      "fields": [
+        [
+          "slug",
+          "string"
+        ],
+        [
+          "amount",
+          "long"
+        ]
+      ],
+      "result": "payments.StarGiftOnchainSalePayload",
+      "function": true
+    },
+    {
+      "name": "payments.cancelStarGiftOnchainSale",
+      "id": 2723105082,
+      "fields": [
+        [
+          "slug",
+          "string"
+        ]
+      ],
+      "result": "payments.StarGiftOnchainSalePayload",
+      "function": true
+    },
+    {
+      "name": "payments.sendStarGiftOnchainOffer",
+      "id": 3044905022,
+      "fields": [
+        [
+          "slug",
+          "string"
+        ],
+        [
+          "amount",
+          "long"
+        ],
+        [
+          "duration",
+          "int"
+        ],
+        [
+          "random_id",
+          "long"
+        ]
+      ],
+      "result": "payments.StarGiftOnchainOfferTx",
+      "function": true
+    },
+    {
+      "name": "payments.acceptStarGiftOnchainOffer",
+      "id": 4223311582,
+      "fields": [
+        [
+          "offer_msg_id",
+          "int"
+        ]
+      ],
+      "result": "payments.StarGiftOnchainOfferTx",
+      "function": true
+    },
+    {
+      "name": "payments.declineStarGiftOnchainOffer",
+      "id": 1511098022,
+      "fields": [
+        [
+          "offer_msg_id",
+          "int"
+        ]
+      ],
+      "result": "Updates",
+      "function": true
+    },
+    {
+      "name": "payments.cancelStarGiftOnchainOffer",
+      "id": 470989500,
+      "fields": [
+        [
+          "offer_msg_id",
+          "int"
+        ]
+      ],
+      "result": "payments.StarGiftOnchainOfferTx",
       "function": true
     },
     {
@@ -53079,6 +53873,26 @@
         ]
       ],
       "result": "AiComposeToneExample",
+      "function": true
+    },
+    {
+      "name": "aicompose.setChatStyle",
+      "id": 1570322880,
+      "fields": [
+        [
+          "flags",
+          "#"
+        ],
+        [
+          "peer",
+          "InputPeer"
+        ],
+        [
+          "style",
+          "flags.0?InputAiComposeStyle"
+        ]
+      ],
+      "result": "Bool",
       "function": true
     },
     {

@@ -14,6 +14,10 @@ class PackageLinuxTests(unittest.TestCase):
         build = Path(directory) / "build"
         (build / "python/sdk").mkdir(parents=True)
         (build / "Ovygram").write_bytes(b"binary")
+        (build / "TelegramHelpers").mkdir()
+        helper = build / "TelegramHelpers/TelegramWidgetHelper"
+        helper.write_bytes(b"widget helper")
+        helper.chmod(0o755)
         names = ["ovygram_host.so", "python313.zip", "sdk/ovygram_runtime.py", "sdk/ovygram_deps.py",
                  "sdk/ovygram_host.py", "sdk/ovygram_sandbox.py"]
         if complete:
@@ -35,9 +39,12 @@ class PackageLinuxTests(unittest.TestCase):
             result = self.run_script(build, Path(directory) / "dist")
             self.assertEqual(result.returncode, 0, result.stderr)
             archive = Path(result.stdout.splitlines()[0])
+            prefix = archive.name.removesuffix(".tar.xz")
             with tarfile.open(archive) as tar:
                 names = set(tar.getnames())
-            prefix = archive.name.removesuffix(".tar.xz")
+                helper = tar.getmember(f"{prefix}/TelegramHelpers/TelegramWidgetHelper")
+                self.assertEqual(helper.mode, 0o755)
+                self.assertEqual(tar.extractfile(helper).read(), b"widget helper")
             for name in ("Ovygram", "LICENSE", "io.github.maxutka00.Ovygram.desktop",
                          "python/pip.whl", "python/sdk/ovygram_deps.py",
                          "icons/hicolor/256x256/apps/io.github.maxutka00.Ovygram.png",

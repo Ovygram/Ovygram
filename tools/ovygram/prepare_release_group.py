@@ -1,4 +1,5 @@
 """Prepare pinned Windows dependencies for the optimized client."""
+import os
 from pathlib import Path
 import sys
 
@@ -7,18 +8,7 @@ from prepare_group import grouped_recipe
 
 
 def release_recipe(text, filename, group):
-    if group == 'foundation':
-        # The portable bundle has no symbol upload step. Keep the Breakpad
-        # client libraries, but skip dump_syms, which requires the ATL SDK.
-        dump_syms = (
-            '    cd tools\\\\windows\\\\dump_syms\n'
-            '    gyp dump_syms.gyp --format=msvs\n'
-            '    msbuild -m dump_syms.vcxproj /property:Configuration=Release '
-            '/property:Platform="x64" %ToolsetProp%\n')
-        if text.count(dump_syms) != 1:
-            raise RuntimeError('Pinned Breakpad recipe changed. Review the symbol tool step.')
-        text = text.replace(dump_syms, '')
-    elif group == 'qt':
+    if group == 'qt':
         # Preserve upstream's patching and flags. Build only the variant we link
         # and omit the extra Qt debug symbols to stay within runner disk limits.
         changes = {
@@ -30,13 +20,10 @@ def release_recipe(text, filename, group):
              '    cmake --install .\n'): ('    cmake --build . --config Release\n'
                                           '    cmake --install . --config Release\n'),
         }
-        marker = "else: # qt > '6'\n"
-        head, separator, qt = text.partition(marker)
-        if not separator or any(qt.count(original) != 1 for original in changes):
+        if any(text.count(original) != 1 for original in changes):
             raise RuntimeError('Pinned Qt recipe changed. Review the Release-only configuration.')
         for original, updated in changes.items():
-            qt = qt.replace(original, updated)
-        text = head + separator + qt
+            text = text.replace(original, updated)
     return grouped_recipe(text, filename, group)
 
 
@@ -44,6 +31,9 @@ def main():
     group, filename = sys.argv[1:3]
     if group not in ('foundation', 'qt', 'extras'):
         raise ValueError('Unknown dependency group.')
+    if group == 'foundation':
+        # The portable bundle does not need Breakpad's ATL-based symbol tool.
+        os.environ['SKIP_DUMPSYMS'] = '1'
     recipe = Path(filename).resolve()
     sys.path.insert(0, str(recipe.parent))
     sys.argv = [str(recipe), 'qt6', 'silent']

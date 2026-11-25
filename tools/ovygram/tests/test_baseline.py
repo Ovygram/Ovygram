@@ -34,8 +34,8 @@ class SourceVerificationTests(unittest.TestCase):
         (module / 'dependency.txt').write_text('pinned dependency', encoding='utf-8')
         self.git(module, 'add', '.')
         self.git(module, 'commit', '-m', 'Pinned dependency')
-        self.optional = next(iter(baseline.OPTIONAL_SUBMODULES))
-        for path in ('required', self.optional):
+        self.optional = sorted(baseline.OPTIONAL_SUBMODULES)
+        for path in ('required', *self.optional):
             self.git(self.source, '-c', 'protocol.file.allow=always',
                      'submodule', 'add', str(module), path)
         self.git(self.source, 'commit', '-am', 'Pin dependencies')
@@ -48,14 +48,15 @@ class SourceVerificationTests(unittest.TestCase):
 
     def test_all_pinned_submodules_are_accepted(self):
         modules = baseline.verify_source(self.source, self.expected)
-        self.assertEqual(len(modules), 2)
+        self.assertEqual(len(modules), 3)
         self.assertTrue(all(line.startswith(' ') for line in modules))
 
     def test_deliberately_absent_test262_is_accepted(self):
-        self.git(self.source, 'submodule', 'deinit', '-f', self.optional)
+        self.git(self.source, 'submodule', 'deinit', '-f', *self.optional)
         modules = baseline.verify_source(self.source, self.expected)
-        self.assertTrue(any(line.startswith('-') and line.endswith(self.optional)
-                            for line in modules))
+        for path in self.optional:
+            self.assertTrue(any(line.startswith('-') and line.endswith(path)
+                                for line in modules))
 
     def test_missing_required_submodule_is_rejected(self):
         self.git(self.source, 'submodule', 'deinit', '-f', 'required')
@@ -63,7 +64,7 @@ class SourceVerificationTests(unittest.TestCase):
             baseline.verify_source(self.source, self.expected)
 
     def test_changed_optional_revision_is_rejected(self):
-        repository = self.source / self.optional
+        repository = self.source / self.optional[0]
         self.git(repository, '-c', 'user.name=Build test',
                  '-c', 'user.email=build-test@example.invalid',
                  'commit', '--allow-empty', '-m', 'Unpinned change')
@@ -120,15 +121,25 @@ class BaselineTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'No compiled'):
             baseline.package(self.root, self.root / 'artifacts')
 
+    def test_package_requires_widget_helper(self):
+        directory = self.root / 'out/Debug'
+        directory.mkdir(parents=True)
+        (directory / 'Telegram.exe').write_bytes(b'test binary fixture')
+        with self.assertRaisesRegex(RuntimeError, 'TelegramWidgetHelper.exe'):
+            baseline.package(self.root, self.root / 'artifacts')
+
     def test_package_excludes_account_data(self):
         directory = self.root / 'out/Debug'
         directory.mkdir(parents=True)
         (directory / 'Telegram.exe').write_bytes(b'test binary fixture')
+        (directory / 'modules/x64').mkdir(parents=True)
+        (directory / 'modules/x64/TelegramWidgetHelper.exe').write_bytes(b'helper')
         (directory / 'secret.session').write_text('must not be shipped')
         archive = baseline.package(self.root, self.root / 'artifacts')
         with zipfile.ZipFile(archive) as source:
             self.assertEqual(set(source.namelist()), {
-                'Telegram.exe', 'TelegramForcePortable', 'BASELINE.txt'})
+                'Telegram.exe', 'modules/x64/TelegramWidgetHelper.exe',
+                'TelegramForcePortable', 'BASELINE.txt'})
 
     def test_versions_match_client_source(self):
         source = (Path(__file__).parents[3] / 'Telegram/SourceFiles/core/version.h').read_text(
@@ -144,11 +155,14 @@ class BaselineTests(unittest.TestCase):
         runtime = release / 'python'
         runtime.mkdir(parents=True)
         (release / 'Ovygram.exe').write_bytes(b'release executable')
+        (release / 'modules/x64').mkdir(parents=True)
+        (release / 'modules/x64/TelegramWidgetHelper.exe').write_bytes(b'release helper')
         (runtime / 'ovygram_host.dll').write_bytes(b'release host')
         archive = baseline.package(self.root, self.root / 'artifacts', True, 'Release')
-        self.assertEqual(archive.name, 'ovygram-0.1.0-7.4.3-win64-release.zip')
+        self.assertEqual(archive.name, 'ovygram-0.1.0-7.4.6-win64-release.zip')
         with zipfile.ZipFile(archive) as source:
             self.assertEqual(source.read('Ovygram.exe'), b'release executable')
+            self.assertEqual(source.read('modules/x64/TelegramWidgetHelper.exe'), b'release helper')
             self.assertEqual(source.read('python/ovygram_host.dll'), b'release host')
 
     def test_cache_identity_changes_with_compiler_and_recipe(self):
