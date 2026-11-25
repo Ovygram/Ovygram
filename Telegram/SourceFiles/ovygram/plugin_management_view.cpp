@@ -447,6 +447,14 @@ void AddPluginSettings(
 	AddDetailsSection(layout, u"Настройки плагина"_q);
 
 	auto values = std::vector<std::pair<QString, Fn<QJsonValue()>>>();
+	auto seenKeys = std::vector<QString>();
+	const auto acceptKey = [&](const QString &key) {
+		if (key.isEmpty() || std::find(begin(seenKeys), end(seenKeys), key) != end(seenKeys)) {
+			return false;
+		}
+		seenKeys.push_back(key);
+		return true;
+	};
 	for (const auto &value : fields) {
 		const auto field = value.toObject();
 		const auto kind = field.value(u"kind"_q).toString();
@@ -466,17 +474,22 @@ void AddPluginSettings(
 					st::settingsPluginLinkMargin, style::al_justify);
 				row->setClickedCallback(std::move(callback));
 			} else {
-				AddAction(layout, text, std::move(callback));
+				const auto button = AddAction(layout, text, std::move(callback));
+				button->setAllowTextLines();
 			}
 		} else if (kind == u"switch"_q) {
+			if (!acceptKey(key)) continue;
 			const auto button = layout->add(object_ptr<Ui::SettingsButton>(
 				layout,
 				rpl::single(text),
 				st::settingsPluginSettingRow
 			))->toggleOn(rpl::single(initial.toBool()));
+			button->setAllowTextLines();
 			values.emplace_back(key, [=] { return QJsonValue(button->toggled()); });
 		} else if (kind == u"selector"_q) {
-			Ui::AddSubsectionTitle(layout, rpl::single(text));
+			if (!acceptKey(key)) continue;
+			AddPluginLabel(layout, text, st::settingsPluginSettingHint,
+				st::settingsPluginSectionMargin);
 			const auto group = std::make_shared<Ui::RadiobuttonGroup>(initial.toInt());
 			auto index = 0;
 			for (const auto &item : field.value(u"items"_q).toArray()) {
@@ -491,7 +504,8 @@ void AddPluginSettings(
 			}
 			values.emplace_back(key, [=] { return QJsonValue(group->current()); });
 		} else if (kind == u"input"_q) {
-			Ui::AddSubsectionTitle(layout, rpl::single(text));
+			if (!acceptKey(key)) continue;
+			const auto side = st::settingsPluginTextMargin.left();
 			const auto input = layout->add(
 				object_ptr<Ui::InputField>(
 					layout,
@@ -499,7 +513,7 @@ void AddPluginSettings(
 					Ui::InputField::Mode::SingleLine,
 					rpl::single(text),
 					TextWithTags{ initial.toString() }),
-				st::boxRowPadding);
+				style::margins(side, style::ConvertScale(2), side, style::ConvertScale(8)));
 			values.emplace_back(key, [=] { return QJsonValue(input->getLastText()); });
 		}
 	}
@@ -520,19 +534,30 @@ void BuildPluginRemovalBox(
 		rpl::producer<QString> cancel,
 		Fn<void(bool)> remove) {
 	box->setTitle(rpl::single(u"Удаление плагина"_q));
-	box->addRow(object_ptr<Ui::FlatLabel>(box,
-		u"Сохранить настройки и данные этого экземпляра?"_q, st::boxLabel));
-	box->addButton(rpl::single(u"Сохранить данные"_q), [=] {
+	box->addTopButton(st::settingsPluginClose, [=] { box->closeBox(); })
+		->setAccessibleName(u"Закрыть"_q);
+	box->addRow(object_ptr<Ui::FlatLabel>(
+		box,
+		u"Удалить выбранный экземпляр плагина?"_q,
+		st::boxLabel));
+	const auto keepData = box->addRow(
+		object_ptr<Ui::Checkbox>(
+			box,
+			u"Сохранить настройки и данные"_q,
+			false,
+			st::defaultBoxCheckbox),
+		style::margins(
+			st::boxRowPadding.left(),
+			style::ConvertScale(12),
+			st::boxRowPadding.right(),
+			style::ConvertScale(4)));
+	box->addLeftButton(std::move(cancel), [=] { box->closeBox(); }, st::settingsPluginDialog);
+	box->addButton(rpl::single(u"Удалить"_q), [=] {
+		const auto keep = keepData->checked();
 		const auto invoke = remove;
 		box->closeBox();
-		invoke(true);
-	}, st::settingsPluginDialog);
-	box->addButton(rpl::single(u"Удалить всё"_q), [=] {
-		const auto invoke = remove;
-		box->closeBox();
-		invoke(false);
-	}, st::settingsPluginDialog);
-	box->addButton(std::move(cancel), [=] { box->closeBox(); }, st::settingsPluginDialog);
+		invoke(keep);
+	}, st::settingsPluginDialogDanger);
 }
 
 } // namespace Ovygram

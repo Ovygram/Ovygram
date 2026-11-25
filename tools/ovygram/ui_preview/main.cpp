@@ -34,6 +34,7 @@
 #include <QtCore/QProcess>
 #include <QtCore/QRegularExpression>
 #include <QtCore/QTemporaryDir>
+#include <QtCore/QThreadPool>
 #include <QtCore/QTimer>
 #include <QtGui/QClipboard>
 #include <QtGui/QPainter>
@@ -66,6 +67,9 @@ public:
 	Integration(int argc, char **argv) : base::Integration(argc, argv) {
 		base::Integration::Set(this);
 		Ui::Integration::Set(this);
+	}
+	~Integration() {
+		QThreadPool::globalInstance()->waitForDone();
 	}
 
 	void enterFromEventLoop(FnMut<void()> &&call) override { call(); }
@@ -126,13 +130,13 @@ void ApplyPalette(const QString &path) {
 
 QJsonObject SamplePlugin() {
 	return {
-		{ u"name"_q, u"PROXY · Подписки (Windows)"_q },
-		{ u"id"_q, u"proxy_windows"_q },
-		{ u"plugin_id"_q, u"proxy_windows"_q },
+		{ u"name"_q, u"Прокси-туннель (Windows)"_q },
+		{ u"id"_q, u"proxy_tunnel_windows"_q },
+		{ u"plugin_id"_q, u"proxy_tunnel_windows"_q },
 		{ u"version"_q, u"1.0.3"_q },
 		{ u"display_author"_q, u"Неизвестный автор"_q },
 		{ u"description"_q,
-			u"Импорт профилей PROXY из HTTPS-подписок, текста, Base64, JSON и Clash YAML. "
+			u"Импорт профилей прокси из HTTPS-подписок, текста, Base64 и JSON. "
 			u"Поиск серверов и автообновление."_q },
 		{ u"release"_q, true },
 		{ u"enabled"_q, true },
@@ -176,7 +180,7 @@ QJsonArray SampleSettings(bool longForm) {
 		{ u"kind"_q, u"link"_q },
 		{ u"key"_q, u"open"_q },
 		{ u"action_id"_q, u"sample-settings"_q },
-		{ u"text"_q, u"Открыть «PROXY · Подписки»"_q },
+		{ u"text"_q, u"Открыть «Прокси-туннель»"_q },
 		{ u"description"_q, u"Также доступно из бокового меню над списком чатов"_q },
 	} };
 	if (longForm) {
@@ -250,8 +254,8 @@ public:
 		resize(width, height);
 		move((parentWidget()->width() - width) / 2, gap);
 		_scroll->setGeometry(0, head, width, height - head - footer);
-		_back->moveToLeft(0, 0, width);
-		_close->moveToRight(0, 0, width);
+		_back->moveToLeft(0, (head - _back->height()) / 2, width);
+		_close->moveToRight(0, (head - _close->height()) / 2, width);
 		_title->resizeToWidth(width - 2 * head);
 		_title->moveToLeft(head, (head - _title->height()) / 2, width);
 	}
@@ -338,6 +342,9 @@ public:
 		} else if (_scenario == u"proxies"_q) {
 			showProxies();
 			finishSoon();
+		} else if (_scenario == u"removal"_q) {
+			showRemoval();
+			finishSoon();
 		} else if (_scenario.startsWith(u"install-"_q)) {
 			showInstaller(InstallInfo(_scenario));
 			finishSoon();
@@ -365,6 +372,13 @@ private:
 	void showPluginList();
 	void buildPluginList();
 	void showListNotice(QString title, QString body);
+	void exitLater(int code) {
+		if (_exiting) {
+			return;
+		}
+		_exiting = true;
+		QTimer::singleShot(0, qApp, [code] { QCoreApplication::exit(code); });
+	}
 
 	void showDetails(QJsonObject plugin, QJsonArray fields) {
 		_plugin = std::move(plugin);
@@ -450,7 +464,7 @@ private:
 	void showProxies() {
 		const auto state = std::make_shared<Ovygram::ProxyViewState>();
 		const auto routes = QJsonArray{u"default"_q, u"api"_q, u"files"_q, u"pages"_q, u"mini_apps"_q};
-		const auto offer = QJsonObject{ {u"label"_q, u"PROXY"_q}, {u"owner"_q, u"8e88c753"_q},
+		const auto offer = QJsonObject{ {u"label"_q, u"Прокси-туннель"_q}, {u"owner"_q, u"8e88c753"_q},
 			{u"token"_q, u"demo"_q}, {u"routes"_q, routes} };
 		state->offers.push_back(offer);
 		for (const auto &value : routes) {
@@ -476,15 +490,21 @@ private:
 
 	void showSampleSettings() {
 		_layers.showBox(Box([](not_null<Ui::GenericBox*> box) {
-			box->setTitle(u"PROXY · Подписки"_q);
+			box->setTitle(u"Прокси-туннель"_q);
 			box->addRow(object_ptr<Ui::FlatLabel>(box, u"Тестовый раздел подписок"_q, st::boxLabel));
 			box->addButton(rpl::single(u"Закрыть"_q), [=] { box->closeBox(); });
 		}), Ui::LayerOption::KeepOther, anim::type::instant);
 	}
 
 	void showRemoval() {
-		_layers.showBox(Box([](not_null<Ui::GenericBox*> box) {
-			Ovygram::BuildPluginRemovalBox(box, rpl::single(u"Отмена"_q), [](bool) {});
+		if (!_details && !_list) {
+			showDetails(SamplePlugin(), SampleSettings(false));
+		}
+		_removalChoice = QString();
+		_layers.showBox(Box([this](not_null<Ui::GenericBox*> box) {
+			Ovygram::BuildPluginRemovalBox(box, rpl::single(u"Отмена"_q), [this](bool keepData) {
+				_removalChoice = keepData ? u"keep"_q : u"delete"_q;
+			});
 		}), Ui::LayerOption::KeepOther, anim::type::instant);
 	}
 
@@ -517,11 +537,13 @@ private:
 	QJsonObject _plugin;
 	QJsonArray _fields;
 	QString _installChoice;
+	QString _removalChoice;
 	QProcess _process;
 	std::map<QString, std::unique_ptr<Surface>> _surfaces;
 	QPointer<QWidget> _captureWindow;
 	bool _updating = false;
 	bool _finishQueued = false;
+	bool _exiting = false;
 };
 
 void Preview::showListNotice(QString title, QString body) {
@@ -556,7 +578,7 @@ void Preview::buildPluginList() {
 	_listRows->clear();
 	const auto query = _listSearch->getLastText().trimmed();
 	const auto open = [this](QJsonObject plugin) {
-		const auto fields = plugin.value(u"plugin_id"_q) == u"proxy_windows"_q
+		const auto fields = plugin.value(u"plugin_id"_q) == u"proxy_tunnel_windows"_q
 			? SampleSettings(false) : QJsonArray();
 		showDetails(std::move(plugin), fields);
 	};
@@ -607,19 +629,21 @@ void Preview::startPlugin(
 				handlePlugin(QJsonDocument::fromJson(line).object());
 			} catch (const std::exception &error) {
 				qCritical("%s", error.what());
-				QCoreApplication::exit(1);
+				exitLater(1);
 				break;
 			}
 		}
 	});
 	connect(&_process, &QProcess::errorOccurred, this, [this] {
+		if (_exiting) return;
 		qCritical().noquote() << _process.errorString();
-		QCoreApplication::exit(1);
+		exitLater(1);
 	});
 	connect(&_process, &QProcess::finished, this, [this](int code) {
+		if (_exiting) return;
 		if (code || (!_details && _surfaces.empty())) {
 			qCritical("The plugin host left the preview.");
-			QCoreApplication::exit(1);
+			exitLater(1);
 		}
 	});
 	_process.start(python, {
@@ -627,9 +651,9 @@ void Preview::startPlugin(
 		QFileInfo(plugin).absoluteFilePath(), menu, setting, dependencies
 	});
 	QTimer::singleShot(10000, this, [this] {
-		if (!_details && _surfaces.empty()) {
+		if (!_exiting && !_details && _surfaces.empty()) {
 			qCritical("No plugin window opened. Check the menu or settings key.");
-			QCoreApplication::exit(1);
+			exitLater(1);
 		}
 	});
 }
@@ -742,12 +766,14 @@ void Preview::showPluginSurface(const QJsonObject &command) {
 			const auto defaultWidth = (kind == u"section"_q) ? st::settingsPluginsLayerWidth : st::boxWidth;
 			box->setWidth(std::min(available, requested ? style::ConvertScale(std::clamp(requested, 320, 960)) : defaultWidth));
 			box->setMaxHeight(height() - style::ConvertScale(118));
-			box->addTopButton(st::boxTitleClose, [=] { box->closeBox(); });
+			box->addTopButton(st::boxTitleClose, [=] { box->closeBox(); })->setAccessibleName(u"Закрыть"_q);
 			if (const auto cap = command.value(u"max_content_width"_q).toInt(); cap > 0) {
 				*wrapper = Ovygram::PluginUiTree::CenterContent(box, std::move(*wrapper), 0, cap);
 			}
 			box->addRow(std::move(*wrapper), style::al_justify);
-			Ovygram::PluginUiTree::AddDialogButtons(box, std::move(*footerAction));
+			if (kind == u"dialog"_q || *footerAction) {
+				Ovygram::PluginUiTree::AddDialogButtons(box, std::move(*footerAction));
+			}
 			surface->box = box.get();
 			connect(box.get(), &QObject::destroyed, this, [=, this] {
 				_surfaces.erase(id);
@@ -774,7 +800,7 @@ void Preview::finishSoon() {
 				this, [this] { finish(); });
 		} catch (const std::exception &error) {
 			qCritical("%s", error.what());
-			QCoreApplication::exit(1);
+			exitLater(1);
 		}
 	});
 }
@@ -788,8 +814,22 @@ void Preview::verify() {
 		Click(this, u"Сбросить все"_q);
 		const auto defaultReset = dynamic_cast<Ui::RoundButton*>(ByName(this, u"Сбросить маршрут: Прокси по умолчанию"_q));
 		Check(defaultReset && defaultReset->isDisabled(), "Reset all did not clear the routes.");
+	} else if (_scenario == u"removal"_q) {
+		const auto top = const_cast<Ui::LayerWidget*>(_layers.topShownLayer());
+		Check(top && ByName(top, u"Отмена"_q) && ByName(top, u"Удалить"_q)
+			&& ByName(top, u"Сохранить настройки и данные"_q),
+			"Removal box controls are missing.");
+		Click(top, u"Сохранить настройки и данные"_q);
+		Click(top, u"Удалить"_q);
+		_layers.finishAnimating();
+		Check(_removalChoice == u"keep"_q, "Removal checkbox did not preserve plugin data.");
+		showRemoval();
+		const auto second = const_cast<Ui::LayerWidget*>(_layers.topShownLayer());
+		Click(second, u"Удалить"_q);
+		_layers.finishAnimating();
+		Check(_removalChoice == u"delete"_q, "Removal default action did not delete plugin data.");
 	} else if (_scenario == u"list-after"_q) {
-		const auto first = u"PROXY · Подписки (Windows)"_q;
+		const auto first = u"Прокси-туннель (Windows)"_q;
 		const auto note = u"Черновик заметки"_q;
 		Check(ByName(_list, first), "A plugin is missing from the list.");
 		Check(ByName(_list, u"Не проверен"_q) && ByName(_list, u"Официальный"_q)
@@ -798,7 +838,7 @@ void Preview::verify() {
 		_listLaunchBlocked = true;
 		buildPluginList();
 		const auto start = dynamic_cast<Ui::SettingsButton*>(ByName(_list, u"Включить Черновик заметки"_q));
-		const auto stop = dynamic_cast<Ui::SettingsButton*>(ByName(_list, u"Отключить PROXY · Подписки (Windows)"_q));
+		const auto stop = dynamic_cast<Ui::SettingsButton*>(ByName(_list, u"Отключить Прокси-туннель (Windows)"_q));
 		Check(start && start->isDisabled() && stop && !stop->isDisabled(),
 			"Runtime recovery must prevent starting plugins and allow stopping them.");
 		_listLaunchBlocked = false;
@@ -842,7 +882,7 @@ void Preview::verify() {
 		}
 		if (_action.isEmpty()) {
 			Click(this, u"Подробности файла"_q);
-			Check(ByName(this, u"ID: proxy_windows"_q), "File details didn't expand.");
+			Check(ByName(this, u"ID: proxy_tunnel_windows"_q), "File details didn't expand.");
 			Click(this, u"Подробности файла"_q);
 		}
 	} else {
@@ -853,7 +893,7 @@ void Preview::verify() {
 			Check(ByName(this, u"Остановлен"_q), "The stop status didn't change.");
 			Click(this, u"Включить плагин"_q);
 			Check(ByName(this, u"Запущен"_q), "The start status didn't change.");
-			Click(this, u"Открыть «PROXY · Подписки»"_q);
+			Click(this, u"Открыть «Прокси-туннель»"_q);
 			Check(ByName(this, u"Тестовый раздел подписок"_q), "Settings destination did not open.");
 			const auto top = const_cast<Ui::LayerWidget*>(_layers.topShownLayer());
 			Click(top, u"Закрыть"_q);
@@ -874,13 +914,13 @@ void Preview::finish() {
 		const auto pixmap = _captureWindow ? _captureWindow->grab() : area.isEmpty() ? grab() : grab(area);
 		if (pixmap.isNull() || !pixmap.save(_output)) {
 			qCritical().noquote() << "Could not save screenshot to" << _output;
-			QCoreApplication::exit(1);
+			exitLater(1);
 			return;
 		}
 		qInfo().noquote() << _output << pixmap.width() << "×" << pixmap.height();
 	}
 	// A separate SDK panel handles Close itself, so it can veto QApplication's quit event.
-	QCoreApplication::exit(0);
+	exitLater(0);
 }
 
 } // namespace
@@ -904,7 +944,7 @@ int main(int argc, char **argv) {
 	parser.setApplicationDescription(u"Open Ovygram UI with a temporary profile and sample data."_q);
 	parser.addHelpOption();
 	parser.addOptions({
-		{ u"scenario"_q, u"list-before, list-after, details, stopped, long, install-new, install-update, install-multiple, install-long, proxies."_q,
+		{ u"scenario"_q, u"list-before, list-after, details, stopped, long, install-new, install-update, install-multiple, install-long, proxies, removal."_q,
 			u"name"_q, u"details"_q },
 		{ u"palette"_q, u"Apply a plain Telegram color palette."_q, u"file"_q },
 		{ u"scale"_q, u"Ovygram UI scale in percent."_q, u"percent"_q, u"100"_q },
@@ -917,14 +957,14 @@ int main(int argc, char **argv) {
 		{ u"menu"_q, u"Open a main-menu item from the plugin."_q, u"label"_q },
 		{ u"setting"_q, u"Open a Button or Link by its settings key."_q, u"key"_q },
 		{ u"dependencies"_q, u"Prepared plugin libraries installed into a directory."_q, u"directory"_q },
-		{ u"python"_q, u"System CPython 3.13 for the SDK host."_q, u"executable"_q, u"python3.13"_q },
+		{ u"python"_q, u"System CPython for the SDK host."_q, u"executable"_q, u"python3"_q },
 	});
 	parser.process(app);
 	try {
 		const auto scenario = parser.value(u"scenario"_q);
 		const auto plugin = parser.value(u"plugin-file"_q);
 		Check(QStringList{ u"list-before"_q, u"list-after"_q, u"details"_q, u"stopped"_q, u"long"_q, u"install-new"_q, u"install-update"_q,
-			u"install-multiple"_q, u"install-long"_q, u"proxies"_q }.contains(scenario), "Unknown preview scenario.");
+			u"install-multiple"_q, u"install-long"_q, u"proxies"_q, u"removal"_q }.contains(scenario), "Unknown preview scenario.");
 		Check(!(parser.isSet(u"menu"_q) && parser.isSet(u"setting"_q)), "Choose --menu or --setting.");
 		Check(!plugin.isEmpty() || !(parser.isSet(u"menu"_q) || parser.isSet(u"setting"_q)),
 			"Use --plugin with --menu or --setting.");

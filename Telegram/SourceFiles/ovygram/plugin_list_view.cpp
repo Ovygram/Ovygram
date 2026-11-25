@@ -117,8 +117,15 @@ public:
 			_error->setTextColorOverride(SecondaryText());
 			_error->setAttribute(Qt::WA_TransparentForMouseEvents);
 		}
+		const auto applyColors = [this] {
+			_meta->setTextColorOverride(SecondaryText());
+			if (_update) _update->setTextColorOverride(st::settingsPluginLabelAccent->c);
+			if (_error) _error->setTextColorOverride(SecondaryText());
+			this->update();
+		};
 		_meta->setAttribute(Qt::WA_TransparentForMouseEvents);
-		_meta->setTextColorOverride(SecondaryText());
+		applyColors();
+		style::PaletteChanged() | rpl::on_next(applyColors, lifetime());
 		setPaddingOverride({ 0, Px(10), Px(27), 0 });
 		setAllowTextLines();
 	}
@@ -331,6 +338,9 @@ void AddPluginListRows(
 	const auto journal = Action(layout, u"Открыть журнал"_q, std::move(log));
 	journal->setPaddingOverride(Inset(10, 8));
 	journal->setColorOverride(SecondaryText());
+	style::PaletteChanged() | rpl::on_next([journal] {
+		journal->setColorOverride(SecondaryText());
+	}, journal->lifetime());
 	Ui::AddSkip(layout);
 }
 

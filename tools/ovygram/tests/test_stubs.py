@@ -5,7 +5,8 @@ from pathlib import Path
 import unittest
 
 SDK = Path(__file__).resolve().parents[3] / "Telegram/PluginSDK"
-STUBS = ("desktop/notifications", "desktop/actions", "desktop/search", "desktop/ui", "desktop/native", "desktop/client", "desktop/media", "desktop/commands", "desktop/components",
+STUBS = ("desktop/notifications", "desktop/actions", "desktop/search", "desktop/ui", "desktop/native",
+         "desktop/client", "desktop/lists", "desktop/media", "desktop/commands", "desktop/components",
          "base_plugin", "desktop_utils", "file_utils")
 
 
@@ -18,7 +19,9 @@ def parameters(node):
         names.append("**" + arguments.kwarg.arg)
     # Private parameters are internal to the SDK and stay out of the stubs.
     names = [name for name in names if not name.lstrip("*").startswith("_")]
-    return names, isinstance(node, ast.AsyncFunctionDef)
+    is_async_gen = isinstance(node, ast.AsyncFunctionDef) and any(
+        isinstance(child, (ast.Yield, ast.YieldFrom)) for child in ast.walk(node))
+    return names, isinstance(node, ast.AsyncFunctionDef) and not is_async_gen
 
 
 def public_api(path):

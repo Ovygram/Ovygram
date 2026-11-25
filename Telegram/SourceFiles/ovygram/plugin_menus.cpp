@@ -1,11 +1,13 @@
 #include "ovygram/plugin_menus.h"
 
 #include "base/weak_ptr.h"
+#include "core/application.h"
 #include "data/data_peer.h"
 #include "data/data_session.h"
 #include "history/history.h"
 #include "history/history_item.h"
 #include "main/main_session.h"
+#include "ovygram/plugin_install.h"
 #include "settings/settings_common.h"
 #include "ui/widgets/buttons.h"
 #include "ui/widgets/menu/menu_add_action_callback.h"
@@ -87,6 +89,9 @@ void Clicked(
 		Main::Session *session,
 		PeerData *peer,
 		HistoryItem *item) {
+	if (InstallationUiActive() || Core::App().passcodeLocked()) {
+		return;
+	}
 	const auto &state = Get();
 	const auto i = state.items.find(ruleId);
 	if (i == end(state.items) || !state.send) {
@@ -218,14 +223,19 @@ QJsonObject DescribeContext(Main::Session &session, PeerData *peer, HistoryItem 
 
 void Handle(const QJsonObject &command) {
 	const auto method = command.value(u"method"_q).toString();
+	const auto installationId = command.value(u"installation_id"_q).toString();
 	const auto ruleId = command.value(u"rule_id"_q).toString();
 	if (ruleId.isEmpty()) {
 		throw std::runtime_error("A menu item needs an ID.");
 	}
 	auto &state = Get();
+	if (const auto i = state.items.find(ruleId);
+		i != end(state.items) && i->second.installationId != installationId) {
+		throw std::runtime_error("Menu item belongs to another installation.");
+	}
 	if (method == u"ui.menu.add"_q) {
 		auto item = Item{
-			.installationId = command.value(u"installation_id"_q).toString(),
+			.installationId = installationId,
 			.location = ParseLocation(command.value(u"menu"_q).toString()),
 			.text = command.value(u"text"_q).toString().trimmed(),
 		};

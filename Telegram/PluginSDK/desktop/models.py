@@ -5,20 +5,43 @@ from . import tl
 
 # Characters not allowed in a file name on Windows, plus control characters.
 _UNSAFE_NAME = re.compile(r'[\x00-\x1f<>:"/\\|?*]')
-_MAX_NAME = 200
+_MAX_NAME_BYTES = 180
+_WINDOWS_RESERVED = frozenset({
+    "con", "prn", "aux", "nul",
+    *(f"com{i}" for i in range(1, 10)),
+    *(f"lpt{i}" for i in range(1, 10)),
+})
+
+
+def _trim_utf8_bytes(text, limit):
+    encoded = text.encode("utf-8")
+    if len(encoded) <= limit:
+        return text
+    return encoded[:limit].decode("utf-8", "ignore")
 
 
 def safe_file_name(name, fallback):
     """Makes a file name sent by someone else safe to join with a directory.
 
-    Keeps only the last path component, drops characters Windows forbids and
-    falls back when nothing usable is left (".", "..", empty).
+    Keeps only the last path component, drops characters Windows forbids,
+    avoids Windows reserved device names, caps UTF-8 byte length for
+    255-byte filesystems, and falls back when nothing usable is left.
     """
     name = str(name or "").replace("\\", "/").rsplit("/", 1)[-1]
     name = _UNSAFE_NAME.sub("_", name).strip(" .")
     if not name:
         return str(fallback)
-    return name[-_MAX_NAME:]
+    stem, dot, ext = name.partition(".")
+    if stem.lower() in _WINDOWS_RESERVED:
+        name = "_" + name
+    if len(name.encode("utf-8")) > _MAX_NAME_BYTES:
+        base, sep, suffix = name.rpartition(".")
+        if sep and base and 0 < len(suffix.encode("utf-8")) <= 32:
+            keep = _trim_utf8_bytes(base, _MAX_NAME_BYTES - len(suffix.encode("utf-8")) - 1).rstrip(" .")
+            name = f"{keep}.{suffix}" if keep else _trim_utf8_bytes(name, _MAX_NAME_BYTES).rstrip(" .")
+        else:
+            name = _trim_utf8_bytes(name, _MAX_NAME_BYTES).rstrip(" .")
+    return name or str(fallback)
 
 
 @dataclass(frozen=True)

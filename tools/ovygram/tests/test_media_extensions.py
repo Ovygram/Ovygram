@@ -102,3 +102,34 @@ class MediaExtensionTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(media, "_request", request):
             await media.control_playback("10", state, "seek", position_ms=3200)
         request.assert_awaited_once_with("media.control", "10", **state, action="seek", position_ms=3200)
+
+    async def test_download_file_continues_after_short_chunk_when_size_known(self):
+        from desktop.models import Attachment
+        chunks = [b"a" * 100, b"b" * 100]
+        offsets = []
+
+        async def rpc(account, request, dc_id=None):
+            self.assertEqual(account, "10")
+            self.assertEqual(dc_id, 2)
+            offsets.append(request.offset)
+            data = chunks.pop(0) if chunks else b""
+            return SimpleNamespace(constructor_name="upload.file", bytes=data)
+
+        location = tl.inputDocumentFileLocation(id=42, access_hash=7, file_reference=b"ref", thumb_size="")
+        attachment = Attachment("10", location, 2, 200, "sample.bin")
+        destination = self.directory / "downloaded.bin"
+        with patch.object(media, "rpc", rpc):
+            result = await media.download_file(attachment, destination)
+        self.assertEqual(result, destination.resolve())
+        self.assertEqual(offsets, [0, 100])
+        self.assertEqual(destination.read_bytes(), b"a" * 100 + b"b" * 100)
+
+    def test_safe_file_name_guards_windows_reserved_and_long_utf8(self):
+        from desktop.models import safe_file_name
+        self.assertEqual(safe_file_name("CON.txt", "file"), "_CON.txt")
+        self.assertEqual(safe_file_name("nul", "file"), "_nul")
+        self.assertEqual(safe_file_name("com1.log", "file"), "_com1.log")
+        long_cyrillic = "привет" * 40 + ".pdf"
+        safe = safe_file_name(long_cyrillic, "file")
+        self.assertTrue(safe.endswith(".pdf"))
+        self.assertLessEqual(len(safe.encode("utf-8")), 180)

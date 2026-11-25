@@ -572,11 +572,13 @@ class Runtime:
     # the declarations and decides what runs; the handlers stay here.
 
     def add_command(self, command):
+        from ovygram_commands import checked
         owned = self.commands.setdefault(command.owner.installation_id, {})
         if command.name in owned:
             raise ValueError(f"Команда /{command.name} уже добавлена.")
         owned[command.name] = command
         try:
+            checked([item.declaration() for item in owned.values()])
             self.publish_commands(command.owner.installation_id)
         except BaseException:
             owned.pop(command.name, None)
@@ -626,7 +628,10 @@ class Runtime:
             str(context.get("kind", "")), tuple(args)))
         if inspect.isawaitable(result):
             async def wait():
-                deliver(await asyncio.wait_for(result, 2))
+                try:
+                    deliver(await asyncio.wait_for(result, 2))
+                except TimeoutError:
+                    return
             self.schedule(owner, wait())
         else:
             deliver(result)

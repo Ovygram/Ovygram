@@ -216,12 +216,21 @@ def _read_zip(data: bytes) -> tuple[dict, list[str]]:
             raise InvalidPlugin("Распакованный архив больше 64 МиБ.")
         files: dict[str, zipfile.ZipInfo] = {}
         folded = set()
+        file_keys = set()
+        dir_keys = set()
         for entry in entries:
             path = archive_path(entry.orig_filename)
             key = path.as_posix().casefold()
             if key in folded:
                 raise InvalidPlugin(f"Повторный путь в архиве: {entry.orig_filename!r}.")
             folded.add(key)
+            for parent in path.parents:
+                if parent == PurePosixPath("."):
+                    continue
+                parent_key = parent.as_posix().casefold()
+                if parent_key in file_keys:
+                    raise InvalidPlugin(f"Конфликт файла и каталога в архиве: {entry.orig_filename!r}.")
+                dir_keys.add(parent_key)
             # Only the file type bits: many tools store bare permissions.
             kind = stat.S_IFMT(entry.external_attr >> 16)
             if kind not in (0, stat.S_IFREG, stat.S_IFDIR):
@@ -230,7 +239,14 @@ def _read_zip(data: bytes) -> tuple[dict, list[str]]:
                 raise InvalidPlugin("Зашифрованные записи не поддерживаются.")
             if entry.file_size > 1024 * 1024 and entry.file_size > MAX_RATIO * max(entry.compress_size, 1):
                 raise InvalidPlugin(f"Слишком сильное сжатие: {entry.orig_filename!r}.")
-            if not entry.is_dir():
+            if entry.is_dir():
+                if key in file_keys:
+                    raise InvalidPlugin(f"Конфликт файла и каталога в архиве: {entry.orig_filename!r}.")
+                dir_keys.add(key)
+            else:
+                if key in dir_keys:
+                    raise InvalidPlugin(f"Конфликт файла и каталога в архиве: {entry.orig_filename!r}.")
+                file_keys.add(key)
                 files[path.as_posix()] = entry
         if MANIFEST not in files:
             raise InvalidPlugin(f"В корне архива нужен {MANIFEST}.")

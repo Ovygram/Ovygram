@@ -335,6 +335,20 @@ class DistributionTests(unittest.TestCase):
         self.assertIn(identity, self.manager.loaded)
         self.assertEqual(self.manager.describe(identity)["trust"]["status"], "revoked")
 
+    def test_rollback_rejects_revoked_previous_version(self):
+        first = self.source("1.0.0")
+        first_digest = self.approve(first)
+        identity = self.install(first)
+        self.records[first_digest]["status"] = "revoked"
+        self.check()
+        self.assertEqual(self.manager.describe(identity)["trust"]["status"], "revoked")
+        second = self.source("1.1.0")
+        self.approve(second, "1.1.0", 2)
+        self.install(second, installation_id=identity)
+        with self.assertRaisesRegex(ValueError, "отозвана"):
+            self.manager.rollback(identity)
+        self.assertEqual(self.manager.describe(identity)["version"], "1.1.0")
+
     def test_outage_removes_green_badge_but_retains_chain_for_retry(self):
         self.approve(self.source())
         identity = self.install()
@@ -682,7 +696,8 @@ class RegistryConfigurationTests(unittest.TestCase):
 
 class AuthorAndJsonTests(unittest.TestCase):
     def test_reserved_author_confusables_and_invisibles(self):
-        for author in ("OVYGRAM", "Оvygrаm", "Ovy\u200bgram", "Ovygrm", "Ovygram Team", "Ovygrarn"):
+        for author in ("OVYGRAM", "Оvygrаm", "Ovy\u200bgram", "Ovygrm", "Ovygram Team", "Ovygrarn",
+                       "Ovy-gram", "Ovy_gram", "O.v.y.g.r.a.m", "Ovy gr4m", "0vygram"):
             self.assertTrue(protected_author(author, "unverified"), author)
             self.assertFalse(protected_author(author, "official"), author)
         for author in ("Alice", "Developer", "Programmer", "John Smith"):

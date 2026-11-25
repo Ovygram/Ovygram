@@ -72,17 +72,28 @@ bool InsideProtected(const QObject *object) {
 }
 
 bool CouldCoverProtected(const QWidget *widget, const QString &member) {
+	if (!widget) {
+		return false;
+	}
 	static const auto kMembers = std::vector<QString>{
 		u"geometry"_q, u"pos"_q, u"size"_q, u"visible"_q,
 		u"minimumSize"_q, u"maximumSize"_q, u"minimumWidth"_q,
 		u"minimumHeight"_q, u"maximumWidth"_q, u"maximumHeight"_q,
-		u"windowOpacity"_q, u"raise"_q, u"lower"_q, u"show"_q,
+		u"windowOpacity"_q, u"windowModality"_q, u"windowFlags"_q,
+		u"windowState"_q, u"styleSheet"_q, u"setStyleSheet"_q,
+		u"enabled"_q, u"setEnabled"_q, u"setDisabled"_q, u"deleteLater"_q,
+		u"raise"_q, u"lower"_q, u"show"_q,
 		u"showNormal"_q, u"showMaximized"_q, u"showFullScreen"_q,
 		u"showMinimized"_q, u"setVisible"_q, u"setHidden"_q, u"hide"_q,
 		u"close"_q, u"setFocus"_q,
 	};
 	if (std::find(begin(kMembers), end(kMembers), member) == end(kMembers)) {
 		return false;
+	}
+	if (member == u"windowModality"_q
+		|| member == u"deleteLater"_q
+		|| widget->isWindow()) {
+		return ProtectedSurfaceExists();
 	}
 	for (const auto &surface : Get().surfaces) {
 		if (surface && surface->window() == widget->window()) {

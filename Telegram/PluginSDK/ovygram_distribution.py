@@ -52,6 +52,13 @@ class Distribution:
     def submit(self, operation, work, context=None):
         self.prune()
         if len(self.jobs) >= 16:
+            stale = sorted(
+                ((job["created"], token) for token, job in self.jobs.items()
+                 if job["operation"] == "prepare" and job["state"] != "pending"),
+            )
+            while len(self.jobs) >= 16 and stale:
+                self.jobs.pop(stale.pop(0)[1], None)
+        if len(self.jobs) >= 16:
             raise ValueError("Дождитесь завершения предыдущей проверки.")
         token = uuid.uuid4().hex
         self.jobs[token] = {"operation": operation, "context": context, "created": time.monotonic(),
@@ -92,8 +99,10 @@ class Distribution:
 
     def prepared(self, token):
         self.poll()
-        job = self.jobs[token]
-        if job["state"] != "ready" or job["operation"] != "prepare":
+        job = self.jobs.get(token)
+        if job is None or job["operation"] != "prepare":
+            raise ValueError("Проверка файла устарела. Выберите файл заново.")
+        if job["state"] != "ready":
             return {"state": job["state"], "error": job.get("error", "")}
         result = job["result"]
         trust = self.registry.cached({**result, "blocked": result["trust"]["status"] == "blocked"})
@@ -108,8 +117,10 @@ class Distribution:
     def commit(self, token, installation_id="", separate=False, allow_unavailable=False,
                allow_loss=False):
         self.poll()
-        job = self.jobs[token]
-        if job["state"] != "ready" or job["operation"] != "prepare":
+        job = self.jobs.get(token)
+        if job is None or job["operation"] != "prepare":
+            raise ValueError("Проверка файла устарела. Выберите файл заново.")
+        if job["state"] != "ready":
             raise ValueError("Файл ещё не проверен.")
         package = job["result"]
         trust = self.registry.cached({**package, "blocked": package["trust"]["status"] == "blocked"})
@@ -136,6 +147,15 @@ class Distribution:
         if not manual and self.manager.distribution_state.get("interval") == interval:
             return False
         records = copy.deepcopy(self.manager.records)
+        valid_previous = {}
+        for identity, record in records.items():
+            local = record.get("previous")
+            if local and local.get("sha256"):
+                try:
+                    self.manager.check_integrity(local)
+                    valid_previous[identity] = local
+                except Exception as error:
+                    valid_previous[identity] = str(error)
         # Keep the last attempted interval across restarts, even on network errors.
         self.manager.distribution_state["interval"] = interval
         self.manager.save()
@@ -155,13 +175,16 @@ class Distribution:
                 old = version.get("trust", {})
                 chain = trust.get("chain") or old.get("chain")
                 sequence = trust.get("release_sequence") or old.get("release_sequence")
-                if trust["status"] in ("blocked", "revoked") and chain and sequence:
-                    local = record.get("previous")
-                    if local and local.get("sha256"):
+                if trust["status"] in ("blocked", "revoked") and type(chain) is int and chain > 0 \
+                        and type(sequence) is int and sequence > 0:
+                    local = valid_previous.get(identity)
+                    if isinstance(local, str):
+                        errors.append(local)
+                    elif isinstance(local, dict):
                         try:
-                            self.manager.check_integrity(local)
                             candidate = self.registry.check(local["metadata"], local["sha256"], local["package_type"])
                             if candidate["status"] in TRUSTED and candidate.get("chain") == chain \
+                                    and type(candidate.get("release_sequence")) is int \
                                     and candidate["release_sequence"] < sequence:
                                 offers[identity] = {**candidate, "rollback": True,
                                                     "local_directory": local["directory"],
@@ -170,8 +193,9 @@ class Distribution:
                             errors.append(str(error))
                     try:
                         safe = [candidate for candidate in self.registry.chain(chain, record["plugin_id"])
-                                if candidate.get("status") in TRUSTED
-                                and candidate.get("publication") == "published" and candidate.get("url")
+                                if isinstance(candidate, dict) and candidate.get("status") in TRUSTED
+                                and candidate.get("publication") == "published"
+                                and isinstance(candidate.get("url"), str) and candidate["url"]
                                 and type(candidate.get("release_sequence")) is int
                                 and candidate["release_sequence"] < sequence]
                         if safe:
@@ -186,10 +210,13 @@ class Distribution:
                 for identity, record in records.items():
                     version = record["current"]
                     trust = checked.get(identity, {}).get("trust", {})
-                    candidate = index.get(record["plugin_id"], {})
+                    candidate = index.get(record["plugin_id"])
+                    if not isinstance(candidate, dict):
+                        continue
                     sequence = candidate.get("release_sequence")
                     if trust.get("status") in TRUSTED and version["metadata"]["release"] \
-                            and type(sequence) is int and sequence > trust["release_sequence"]:
+                            and type(sequence) is int and sequence > trust["release_sequence"] \
+                            and isinstance(candidate.get("url"), str) and candidate["url"]:
                         offers[identity] = {**candidate, "chain": trust["chain"], "rollback": False,
                                             "from_directory": version["directory"]}
             except Exception as error:
@@ -212,6 +239,15 @@ class Distribution:
         if current["directory"] != offer["from_directory"]:
             raise ValueError("Установленная версия уже изменилась. Повторите проверку.")
         self.manager.check_integrity(current)
+        local_payload = None
+        local_suffix = None
+        if offer.get("local_directory"):
+            previous = record.get("previous")
+            if not previous or previous["directory"] != offer["local_directory"]:
+                raise ValueError("Сохранённая версия для отката изменилась.")
+            self.manager.check_integrity(previous)
+            local_payload = self.manager.original(previous).read_bytes()
+            local_suffix = previous["package_type"]
 
         def work():
             # Recheck the source and target on this action, never trust the index.
@@ -221,14 +257,13 @@ class Distribution:
                 raise ValueError("Исходная версия не подтверждена для этой цепочки.")
             def candidate_package(candidate):
                 if candidate.get("local_directory"):
-                    previous = record.get("previous")
-                    if not previous or previous["directory"] != candidate["local_directory"]:
+                    if local_payload is None:
                         raise ValueError("Сохранённая версия для отката изменилась.")
-                    self.manager.check_integrity(previous)
-                    payload = self.manager.original(previous).read_bytes()
-                    suffix = previous["package_type"]
+                    payload, suffix = local_payload, local_suffix
                 else:
-                    url = candidate["url"]
+                    url = candidate.get("url")
+                    if not isinstance(url, str) or not url:
+                        raise ValueError("Отсутствует ссылка на пакет обновления.")
                     suffix = url.split("?", 1)[0].rsplit(".", 1)[-1]
                     payload = self.registry.package(url)
                 if suffix not in ("ovyplugin", "ovyzip"):

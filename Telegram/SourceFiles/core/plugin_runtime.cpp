@@ -47,15 +47,37 @@ void SetPath(
 		PyConfig &config,
 		wchar_t **field,
 		const std::filesystem::path &path) {
+#ifdef _WIN32
 	CheckStatus(PyConfig_SetString(&config, field, path.wstring().c_str()));
+#else // _WIN32
+	CheckStatus(PyConfig_SetBytesString(&config, field, path.string().c_str()));
+#endif // _WIN32
+}
+
+void AppendSearchPath(
+		PyWideStringList &list,
+		const std::filesystem::path &path) {
+#ifdef _WIN32
+	const auto wide = path.wstring();
+	CheckStatus(PyWideStringList_Append(&list, wide.c_str()));
+#else // _WIN32
+	const auto utf8 = path.string();
+	auto *decoded = Py_DecodeLocale(utf8.c_str(), nullptr);
+	if (!decoded) {
+		throw std::runtime_error("Failed to decode plugin search path.");
+	}
+	const auto status = PyWideStringList_Append(&list, decoded);
+	PyMem_RawFree(decoded);
+	CheckStatus(status);
+#endif // _WIN32
 }
 
 void InitializePython(const std::filesystem::path &directory) {
-	if (!std::filesystem::is_regular_file(directory / L"sdk/ovygram_runtime.py")) {
+	if (!std::filesystem::is_regular_file(directory / "sdk" / "ovygram_runtime.py")) {
 		throw std::runtime_error("Plugin SDK is missing.");
 	}
 #ifndef OVYGRAM_SYSTEM_PYTHON
-	if (!std::filesystem::is_regular_file(directory / L"python313.zip")) {
+	if (!std::filesystem::is_regular_file(directory / "python313.zip")) {
 		throw std::runtime_error("Bundled Python is missing.");
 	}
 #endif // !OVYGRAM_SYSTEM_PYTHON
@@ -75,21 +97,25 @@ void InitializePython(const std::filesystem::path &directory) {
 	config.write_bytecode = 0;
 #ifdef OVYGRAM_SYSTEM_PYTHON
 	py::initialize_interpreter(&config, 0, nullptr, false);
+#ifdef _WIN32
 	py::module_::import("sys").attr("path").attr("append")(
-		(directory / L"sdk").wstring());
+		(directory / "sdk").wstring());
+#else // _WIN32
+	py::module_::import("sys").attr("path").attr("append")(
+		(directory / "sdk").string());
+#endif // _WIN32
 #else // OVYGRAM_SYSTEM_PYTHON
 	config.module_search_paths_set = 1;
 	try {
 #ifdef _WIN32
-		const auto executable = directory / L"python.exe";
+		const auto executable = directory / "python.exe";
 #else
-		const auto executable = directory / L"python";
+		const auto executable = directory / "python";
 #endif
 		SetPath(config, &config.home, directory);
 		SetPath(config, &config.executable, executable);
-		for (const auto *name : { L"python313.zip", L".", L"sdk" }) {
-			const auto path = (directory / name).wstring();
-			CheckStatus(PyWideStringList_Append(&config.module_search_paths, path.c_str()));
+		for (const auto *name : { "python313.zip", ".", "sdk" }) {
+			AppendSearchPath(config.module_search_paths, directory / name);
 		}
 	} catch (...) {
 		PyConfig_Clear(&config);
@@ -123,9 +149,15 @@ PluginRuntime::PluginRuntime(
 			const auto lock = std::lock_guard(NativeClientMutex);
 			ActiveNativeClient = _private->client;
 		}
+#ifdef _WIN32
 		_private->manager = py::module_::import("ovygram_runtime")
 			.attr("Manager")(
 				profile.wstring(), disabled, py::arg("defer_start") = true);
+#else // _WIN32
+		_private->manager = py::module_::import("ovygram_runtime")
+			.attr("Manager")(
+				profile.string(), disabled, py::arg("defer_start") = true);
+#endif // _WIN32
 		_private->threadState = PyEval_SaveThread();
 	} catch (const std::exception &error) {
 		failure = error.what();
@@ -140,7 +172,10 @@ PluginRuntime::PluginRuntime(
 }
 
 PluginRuntime::~PluginRuntime() {
-	setClient({});
+	try {
+		setClient({});
+	} catch (...) {
+	}
 	PyEval_RestoreThread(_private->threadState);
 	auto finalize = false;
 	try {

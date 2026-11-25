@@ -284,14 +284,25 @@ class Surface:
         self.height = int(height)
         self.on_close = on_close
         self.closed = False
-        self.nodes = {node.id: node for node in self.content.walk()}
+        self.nodes = {}
+        for node in self.content.walk():
+            if node.id in self.nodes:
+                raise ValueError("Один и тот же элемент добавлен в дерево дважды.")
+            self.nodes[node.id] = node
 
     def show(self):
+        if self.closed:
+            raise ObjectDestroyed("Окно уже закрыто.")
         runtime = self.owner.manager.runtime
         runtime.add_surface(self)
-        runtime.submit_ui(self.owner, "ui.show", object_id=self.id, kind=self.kind,
-                          title=self.title, width=self.width, height=self.height,
-                          tree=self.content.to_json(), **self._placement())
+        try:
+            runtime.submit_ui(self.owner, "ui.show", object_id=self.id, kind=self.kind,
+                              title=self.title, width=self.width, height=self.height,
+                              tree=self.content.to_json(), **self._placement())
+        except BaseException:
+            with runtime.lock:
+                runtime.surfaces.pop(self.id, None)
+            raise
         return self
 
     def _placement(self):
@@ -530,7 +541,7 @@ def _selector(selector):
 
 def _handle(value):
     handle = value.get("handle") if isinstance(value, dict) else value
-    if not isinstance(handle, str) or not handle.isdigit():
+    if not isinstance(handle, str) or not handle.isascii() or not handle.isdecimal():
         raise ValueError("Ожидается узел или handle из widget_tree().")
     return handle
 
@@ -547,7 +558,13 @@ class WidgetRule:
         if callback is not None:
             with runtime.lock:
                 runtime.widget_rules[self.id] = (owner, callback)
-        runtime.submit_ui(owner, method, rule_id=self.id, **parameters)
+        try:
+            runtime.submit_ui(owner, method, rule_id=self.id, **parameters)
+        except BaseException:
+            if callback is not None:
+                with runtime.lock:
+                    runtime.widget_rules.pop(self.id, None)
+            raise
 
     def remove(self):
         runtime = self.owner.manager.runtime
@@ -587,10 +604,22 @@ class Placement(WidgetRule):
         def available(handle):
             if self.removed or (handle in self._mounted and not self._mounted[handle].closed):
                 return
-            surface = Insert(handle, factory(handle), position=position,
-                             on_close=lambda: self._mounted.pop(handle, None))
+            content = factory(handle)
+            if self.removed:
+                return
+            surface = None
+
+            def on_closed():
+                if self._mounted.get(handle) is surface:
+                    self._mounted.pop(handle, None)
+
+            surface = Insert(handle, content, position=position, on_close=on_closed)
             self._mounted[handle] = surface
-            surface.show()
+            try:
+                surface.show()
+            except BaseException:
+                on_closed()
+                raise
 
         super().__init__(context(), "ui.widgets.rule", available,
                          action="available", position=position, selector=_selector(selector))
@@ -683,9 +712,12 @@ class ChatDecoration:
         self.account_id = account_id
         self.chat_id = chat_id
         self.footer_height = _footer_height(footer_height)
+        self.removed = False
         self.update(commands, background)
 
     def update(self, commands=(), background=None):
+        if self.removed or not self.owner.active:
+            raise ObjectDestroyed("Оформление чата уже удалено или плагин выгружен.")
         if background is not None and (not isinstance(background, str) or not background.startswith("#")):
             raise ValueError("background задаётся строкой #rrggbb или #aarrggbb.")
         self.owner.manager.runtime.submit_ui(
@@ -694,6 +726,9 @@ class ChatDecoration:
             footer_height=self.footer_height)
 
     def remove(self):
+        if self.removed:
+            return
+        self.removed = True
         if self.owner.active:
             self.owner.manager.runtime.submit_ui(self.owner, "ui.decoration.remove", decoration_id=self.id)
 
@@ -727,8 +762,12 @@ def on_compose_change(callback):
 async def editor_snapshot(chat, *, kind="message"):
     """Read the visible draft of chat, or its open attachment preview with kind='album'."""
     _choice(kind, ("message", "album"), "kind")
+    account_id = getattr(chat, "account_id", None)
+    chat_id = getattr(chat, "id", None)
+    if not account_id or chat_id is None:
+        raise TypeError("editor_snapshot принимает Chat из desktop.client.")
     return await context().manager.runtime.request(
-        "compose.snapshot", str(chat.account_id), chat_id=str(chat.id), kind=kind)
+        "compose.snapshot", str(account_id), chat_id=str(chat_id), kind=kind)
 
 
 async def _editor_action(snapshot, op, **params):
@@ -775,15 +814,19 @@ async def choose_attachments(snapshot):
 
 async def reorder_attachments(snapshot, order):
     order = list(order)
-    if (snapshot.get("kind") != "album" or not all(type(i) is int for i in order)
-            or sorted(order) != list(range(len(snapshot["files"])))):
+    files = snapshot.get("files") if isinstance(snapshot, dict) else None
+    if (not isinstance(snapshot, dict) or snapshot.get("kind") != "album"
+            or not isinstance(files, list) or not all(type(i) is int for i in order)
+            or sorted(order) != list(range(len(files)))):
         raise ValueError("Нужна перестановка всех индексов альбома.")
     return await _editor_action(snapshot, "album_order", order=order)
 
 
 async def set_attachment_caption(snapshot, index, caption):
-    if (snapshot.get("kind") != "album" or type(index) is not int
-            or not 0 <= index < len(snapshot["files"]) or not isinstance(caption, str)):
+    files = snapshot.get("files") if isinstance(snapshot, dict) else None
+    if (not isinstance(snapshot, dict) or snapshot.get("kind") != "album"
+            or not isinstance(files, list) or type(index) is not int
+            or not 0 <= index < len(files) or not isinstance(caption, str)):
         raise ValueError("Нужны индекс вложения и подпись.")
     return await _editor_action(snapshot, "album_caption", index=index, caption=caption)
 
@@ -817,9 +860,12 @@ class MessageDecoration:
         self.chat_id = str(message.chat_id)
         self.message_id = int(message.id)
         self.footer_height = _footer_height(footer_height)
+        self.removed = False
         self.update(commands, background)
 
     def update(self, commands=(), background=None):
+        if self.removed or not self.owner.active:
+            raise ObjectDestroyed("Оформление сообщения уже удалено или плагин выгружен.")
         if background is not None and (not isinstance(background, str) or not background.startswith("#")):
             raise ValueError("background задаётся строкой #rrggbb или #aarrggbb.")
         self.owner.manager.runtime.submit_ui(
@@ -829,6 +875,9 @@ class MessageDecoration:
             footer_height=self.footer_height)
 
     def remove(self):
+        if self.removed:
+            return
+        self.removed = True
         if self.owner.active:
             self.owner.manager.runtime.submit_ui(
                 self.owner, "ui.message_decoration.remove", decoration_id=self.id)
@@ -934,8 +983,8 @@ def add_menu_item(menu, text, callback, kinds=None):
     "chat" (basic group), "channel" (also supergroups). The item shows from
     the next time the menu opens. Returns a rule with remove()."""
     _choice(menu, _MENUS, "menu")
-    if not isinstance(text, str) or not 1 <= len(text.strip()) <= 64:
-        raise ValueError("Текст пункта меню: от 1 до 64 символов.")
+    if not isinstance(text, str) or not text.strip() or len(text.strip().encode("utf-16-le")) > 128:
+        raise ValueError("Текст пункта меню: от 1 до 64 единиц UTF-16.")
     if not callable(callback):
         raise TypeError("callback должен быть функцией.")
     if kinds is not None:

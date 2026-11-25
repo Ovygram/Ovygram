@@ -496,8 +496,13 @@ void Application::run() {
 #ifdef OVYGRAM_ENABLED
 	try {
 		_pluginRuntime = std::make_unique<PluginRuntime>(
+#ifdef _WIN32
 			std::filesystem::path(cExeDir().toStdWString()) / L"python",
 			std::filesystem::path(cWorkingDir().toStdWString()) / L"plugins",
+#else // _WIN32
+			std::filesystem::path(cExeDir().toUtf8().constData()) / "python",
+			std::filesystem::path(cWorkingDir().toUtf8().constData()) / "plugins",
+#endif // _WIN32
 			Launcher::Instance().pluginsDisabled());
 		_pluginClient = std::make_unique<Api::PluginClient>(_pluginRuntime.get());
 	} catch (const std::exception &error) {

@@ -1,5 +1,6 @@
 import asyncio
 from concurrent.futures import Future
+import math
 import uuid
 
 from desktop._runtime import context
@@ -30,8 +31,8 @@ def create_task(coroutine):
 
 
 def set_timer(delay, callback, *, repeat=False):
-    if delay <= 0:
-        raise ValueError("Интервал таймера должен быть положительным.")
+    if isinstance(delay, bool) or not isinstance(delay, (int, float)) or not math.isfinite(delay) or delay <= 0:
+        raise ValueError("Интервал таймера должен быть положительным конечным числом.")
 
     async def timer():
         while True:

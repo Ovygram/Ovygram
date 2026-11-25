@@ -21,7 +21,7 @@ import time
 from hook_utils import HookCancelled
 from ovygram_channel import Channel, ChannelClosed
 from ovygram_deps import python_command
-from ovygram_sandbox import SandboxError, confine, release, wrap
+from ovygram_sandbox import SandboxError, confine, python_read_only_mounts, release, wrap
 
 START_TIMEOUT = 30
 # Seconds the client waits for plugin code before it stops the host.
@@ -30,6 +30,10 @@ HOOK_TIMEOUT = 10
 MAX_ERROR = 4096
 MAX_LOG = 16384
 MASK_BITS = (1 << 17) - 1
+_WINDOWS_ENV_ALLOWLIST = (
+    "SystemRoot", "SYSTEMDRIVE", "WINDIR", "COMSPEC",
+    "NUMBER_OF_PROCESSORS", "OS", "PROCESSOR_ARCHITECTURE",
+)
 
 
 class HostError(RuntimeError):
@@ -79,10 +83,22 @@ class ProcessHost:
             python = str(Path(python).resolve())
         data = manager.root / "data"
         data.mkdir(exist_ok=True)
+        if sys.platform == "win32":
+            # Guard against a plugin replacing data/tmp with a file, symlink or junction.
+            temporary = data / "tmp"
+            if temporary.is_symlink() or (hasattr(temporary, "is_junction") and temporary.is_junction()):
+                temporary.unlink()
+            elif temporary.exists() and not temporary.is_dir():
+                temporary.unlink()
+            temporary.mkdir(exist_ok=True)
         environment = {**python_environment, "PYTHONUTF8": "1", "PYTHONNOUSERSITE": "1",
                        "PYTHONDONTWRITEBYTECODE": "1"}
         options = {"bridge": manager.bridge, "dependencies": manager.dependencies.active()}
-        read_only = [manager.python_dir, manager.packages, manager.dependencies.root]
+        read_only = [
+            *python_read_only_mounts(python, bundled, manager.python_dir),
+            manager.packages,
+            manager.dependencies.root,
+        ]
         try:
             sandboxed = {**environment, "HOME": str(data), "TMPDIR": "/tmp", "LANG": "C.UTF-8",
                          "PATH": "/usr/bin:/bin"}
@@ -99,11 +115,23 @@ class ProcessHost:
         command.append(json.dumps(options))
         if descriptors:
             environment = {}  # bubblewrap sets the environment of the host itself.
+        elif sys.platform == "win32" and report["active"]:
+            # Minimal explicit allowlist on Windows so user secrets/profile vars stay private.
+            system_root = os.environ.get("SystemRoot", r"C:\Windows")
+            safe_env = {key: os.environ[key] for key in _WINDOWS_ENV_ALLOWLIST if key in os.environ}
+            safe_env.setdefault("SystemRoot", system_root)
+            safe_env["PATH"] = os.pathsep.join((
+                str(Path(python).resolve().parent),
+                os.path.join(system_root, "System32"),
+                system_root,
+            ))
+            temporary = data / "tmp"
+            safe_env.update(TEMP=str(temporary), TMP=str(temporary))
+            environment = {**safe_env, **environment}
         else:
             environment = {**{key: value for key, value in os.environ.items()
                               if not key.startswith("PYTHON")}, **environment}
             if report["active"]:
-                # The profile of the user isn't writable for the host.
                 temporary = data / "tmp"
                 temporary.mkdir(exist_ok=True)
                 environment.update(TEMP=str(temporary), TMP=str(temporary))
@@ -186,7 +214,10 @@ class ProcessHost:
         """The host is gone or must go; on the main thread."""
         session, self.session = self.session, None
         if session is not None:
-            session.process.kill()
+            try:
+                session.process.kill()
+            except OSError:
+                pass
             self.stop(session)
         self.manager.host_exited(reason)
 
@@ -217,9 +248,13 @@ class ProcessHost:
         except Exception:
             # Also a malformed event: the host is no longer the SDK's code.
             pass
-        session.dead = True
-        session.process.kill()
-        session.inbox.put(None)
+        finally:
+            session.dead = True
+            try:
+                session.process.kill()
+            except OSError:
+                pass
+            session.inbox.put(None)
 
     def read_errors(self, session):
         manager = self.manager
@@ -296,6 +331,10 @@ class ProcessHost:
                         raise HookCancelled(text)
                     raise PluginError(text)
                 return message.get("result")
+            else:
+                reason = "Некорректный ответ процесса плагинов."
+                self.fail(reason)
+                raise HostError(reason)
 
     def answer(self, session, message):
         """A request of plugin code that needs the main thread of the client."""
@@ -306,7 +345,12 @@ class ProcessHost:
             self.manager.host_set_setting(**message["params"])
         except Exception as error:
             reply["error"] = str(error) or type(error).__name__
-        session.channel.send(reply)
+        try:
+            session.channel.send(reply)
+        except ChannelClosed:
+            reason = self.exit_reason(session)
+            self.fail(reason)
+            raise HostError(reason) from None
 
 
 class LocalClient:

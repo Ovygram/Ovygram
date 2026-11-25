@@ -1,6 +1,8 @@
 #include "ovygram/plugin_search.h"
 
+#include "core/application.h"
 #include "dialogs/dialogs_widget.h"
+#include "ovygram/plugin_install.h"
 #include "ovygram/plugin_widgets.h"
 #include "ovygram/protected_ui.h"
 
@@ -13,6 +15,7 @@
 #include <memory>
 #include <set>
 #include <stdexcept>
+#include <vector>
 
 namespace Ovygram::Search {
 namespace {
@@ -55,7 +58,18 @@ void Remove(const QString &id, bool targetDestroyed = false) {
 	const auto rule = found->second;
 	QObject::disconnect(rule.destroyed);
 	Get().rules.erase(found);
-	std::erase_if(Get().batches, [&](const auto &entry) { return entry.second.rule == id; });
+	auto cancelled = std::vector<std::function<void(const QJsonArray&)>>();
+	for (auto i = Get().batches.begin(); i != Get().batches.end();) {
+		if (i->second.rule == id) {
+			cancelled.push_back(std::move(i->second.reply));
+			i = Get().batches.erase(i);
+		} else {
+			++i;
+		}
+	}
+	for (const auto &reply : cancelled) {
+		reply({});
+	}
 	if (targetDestroyed) {
 		QTimer::singleShot(0, [id, rule] {
 			if (Get().send) Get().send({
@@ -86,7 +100,11 @@ void SetEventSender(std::function<void(QJsonObject)> send) {
 			QObject::disconnect(entry.second.destroyed);
 		}
 		Get().rules.clear();
+		auto batches = std::move(Get().batches);
 		Get().batches.clear();
+		for (const auto &[token, batch] : batches) {
+			batch.reply({});
+		}
 	}
 }
 
@@ -158,6 +176,12 @@ void Handle(const QJsonObject &command) {
 		Remove(id);
 	} else if (method == u"ui.search.more"_q) {
 		const auto &rule = found->second;
+		if (!rule.view
+			|| Core::App().passcodeLocked()
+			|| InstallationUiActive()
+			|| ProtectedFromPlugins(rule.view)) {
+			return;
+		}
 		Get().more.fire({ rule.view.data(), rule.account, rule.chat });
 	} else if (method == u"ui.search.result"_q) {
 		const auto token = command.value(u"token"_q).toString();
@@ -181,6 +205,10 @@ void Filter(const Scope &scope, const QJsonArray &rows, std::function<void(std::
 	};
 	auto page = std::make_shared<Page>();
 	page->visible.assign(rows.size(), true);
+	if (!Get().send) {
+		done(std::move(page->visible));
+		return;
+	}
 	auto events = std::vector<QJsonObject>();
 	for (const auto &[id, rule] : Get().rules) {
 		if (!rule.local || !Matches(rule, scope)) continue;

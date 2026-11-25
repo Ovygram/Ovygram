@@ -246,8 +246,16 @@ void Restore(std::vector<QPointer<QWidget>> hidden) {
 }
 
 void ApplyToAll() {
-	for (const auto widget : QApplication::allWidgets()) {
-		HideMatching(widget);
+	auto widgets = std::vector<QPointer<QWidget>>();
+	const auto all = QApplication::allWidgets();
+	widgets.reserve(all.size());
+	for (const auto widget : all) {
+		widgets.emplace_back(widget);
+	}
+	for (const auto &widget : widgets) {
+		if (widget) {
+			HideMatching(widget.data());
+		}
 	}
 }
 
@@ -338,7 +346,7 @@ void ReportMountTargets(QWidget *widget) {
 }
 
 bool Filter::eventFilter(QObject *watched, QEvent *e) {
-	if (InstallationUiActive() || ProtectedFromPlugins(watched)) return false;
+	if (InstallationUiActive() || Core::App().passcodeLocked() || ProtectedFromPlugins(watched)) return false;
 	const auto type = e->type();
 	auto &state = Get();
 	if (type == QEvent::ShortcutOverride && !state.keys.empty()) {
@@ -534,7 +542,7 @@ QJsonObject Describe(QWidget *widget, int depth, int maxDepth, int &count) {
 } // namespace
 
 QWidget *Resolve(const QJsonValue &handle) {
-	if (InstallationUiActive()) return nullptr;
+	if (InstallationUiActive() || Core::App().passcodeLocked()) return nullptr;
 	auto &handles = Get().handles;
 	const auto i = handles.find(handle.toString().toULongLong());
 	if (i == end(handles)) {
@@ -650,6 +658,9 @@ void Handle(const QJsonObject &command) {
 QJsonValue Request(const QJsonObject &command) {
 	const auto method = command.value(u"method"_q).toString();
 	if (method == u"widgets.tree"_q) {
+		if (Core::App().passcodeLocked() || InstallationUiActive()) {
+			return QJsonValue(QJsonValue::Null);
+		}
 		auto root = command.contains(u"root"_q)
 			&& !command.value(u"root"_q).isNull()
 			? Required(command.value(u"root"_q))
@@ -674,7 +685,7 @@ QJsonValue Request(const QJsonObject &command) {
 			count);
 	} else if (method == u"widgets.at_cursor"_q) {
 		const auto target = QApplication::widgetAt(QCursor::pos());
-		if (!target || Core::App().passcodeLocked() || ProtectedFromPlugins(target)) {
+		if (!target || Core::App().passcodeLocked() || InstallationUiActive() || ProtectedFromPlugins(target)) {
 			return QJsonValue(QJsonValue::Null);
 		}
 		auto count = 0;
@@ -710,7 +721,7 @@ void RemovePlugin(const QString &installationId) {
 }
 
 QString HandleFor(QWidget *widget) {
-	if (InstallationUiActive() || ProtectedFromPlugins(widget)) return QString();
+	if (InstallationUiActive() || Core::App().passcodeLocked() || ProtectedFromPlugins(widget)) return QString();
 	return QString::number(HandleOf(widget));
 }
 

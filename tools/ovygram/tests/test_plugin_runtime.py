@@ -1,9 +1,11 @@
+import base64
 import json
 import os
 from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 import zipfile
 
@@ -369,3 +371,100 @@ class SettingsPlugin(BasePlugin):
         self.assertTrue((legacy / "data" / installation_id / "notes.txt").exists())
         state = json.loads((legacy / "state.json").read_text(encoding="utf-8"))
         self.assertEqual(list(state["installations"]), [installation_id])
+
+    def test_crash_marker_auto_clears_after_stable_period_and_resets_on_load(self):
+        self.manager.MARKER_CLEAR_DELAY = 0.12
+        first = self.manager.install(str(self.copy("first.ovyplugin")))
+        second = self.manager.install(str(self.copy("second.ovyplugin")), separate=True)
+        self.manager.enable(first)
+        self.assertTrue(self.manager.marker.exists())
+        time.sleep(0.06)
+        self.manager.enable(second)
+        time.sleep(0.08)
+        self.assertTrue(self.manager.marker.exists())
+        deadline = time.monotonic() + 1.0
+        while self.manager.marker.exists() and time.monotonic() < deadline:
+            time.sleep(0.02)
+        self.assertFalse(self.manager.marker.exists())
+        self.manager.recovery = True
+        self.manager.marker.write_text("recover", encoding="utf-8")
+        self.manager._schedule_marker_clear()
+        time.sleep(0.16)
+        self.assertTrue(self.manager.marker.exists())
+
+    def test_zip_case_insensitive_file_dir_collision_rejected(self):
+        archive = self.root / "collision.ovyzip"
+        with zipfile.ZipFile(archive, "w") as package:
+            package.writestr("plugin.json", '{"id": "lifecycle", "entry": "main.py"}')
+            package.write(EXAMPLE, "main.py")
+            package.writestr("Sub", "file")
+            package.writestr("sub/nested.py", "x = 1\n")
+        with self.assertRaises(ValueError):
+            self.manager.install(str(archive))
+
+    def test_ui_image_embeds_in_plugin_dir_and_rejects_escapes_and_updates(self):
+        installation_id = self.manager.install(str(self.copy()))
+        self.manager.enable(installation_id)
+        data_dir = self.profile / "data" / installation_id
+        data_dir.mkdir(parents=True, exist_ok=True)
+        icon = data_dir / "icon.png"
+        raw = b"\x89PNG\r\n\x1a\npayload"
+        icon.write_bytes(raw)
+        outside = self.root / "secret.png"
+        outside.write_bytes(b"secret")
+        sent = []
+        self.manager.sender = sent.append
+        self.manager.host_submit({
+            "id": "1", "method": "ui.show", "installation_id": installation_id,
+            "tree": {"id": "n1", "type": "image", "path": str(icon)},
+        })
+        self.assertEqual(len(sent), 1)
+        node = sent[0]["tree"]
+        self.assertNotIn("path", node)
+        self.assertEqual(node["data"], base64.b64encode(raw).decode("ascii"))
+        for bad_path in (str(outside), str(data_dir / ".." / "secret.png"), r"\\host\share\secret.png"):
+            before = len(sent)
+            self.manager.host_submit({
+                "id": "2", "method": "ui.show", "installation_id": installation_id,
+                "tree": {"id": "n2", "type": "image", "path": bad_path},
+            })
+            self.assertEqual(len(sent), before, bad_path)
+            self.assertIn(installation_id, self.manager.errors)
+            self.manager.errors.pop(installation_id, None)
+        before = len(sent)
+        self.manager.host_submit({
+            "id": "3", "method": "ui.update", "installation_id": installation_id,
+            "props": {"path": str(icon)},
+        })
+        self.assertEqual(len(sent), before)
+        self.assertIn(installation_id, self.manager.errors)
+
+    def test_transient_dispatch_error_does_not_poison_plugin_error(self):
+        installation_id = self.manager.install(str(self.copy()))
+        self.manager.enable(installation_id)
+        reply = json.loads(self.manager.dispatch(json.dumps({
+            "action": "rollback", "installation_id": installation_id,
+        })))
+        self.assertIn("error", reply)
+        self.assertEqual(self.manager.snapshot()["plugins"][0]["error"], "")
+
+    def test_remove_succeeds_when_unload_raises(self):
+        source = self.root / "bad_unload.ovyplugin"
+        source.write_text('''from base_plugin import BasePlugin
+__id__ = "bad_unload"
+__name__ = "Bad Unload"
+__description__ = "Unload failure test"
+__author__ = "Test"
+__version__ = "1.0"
+__release__ = False
+__platform__ = "desktop"
+__desktop_sdk__ = 2
+class BadUnloadPlugin(BasePlugin):
+    def on_plugin_unload(self):
+        raise RuntimeError("unload failed")
+''', encoding="utf-8")
+        installation_id = self.manager.install(str(source))
+        self.manager.enable(installation_id)
+        self.manager.remove(installation_id)
+        self.assertNotIn(installation_id, self.manager.records)
+        self.assertNotIn(installation_id, self.manager.loaded)

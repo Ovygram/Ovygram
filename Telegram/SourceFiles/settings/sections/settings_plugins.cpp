@@ -17,10 +17,12 @@
 #include "ui/widgets/fields/input_field.h"
 #include "ui/wrap/slide_wrap.h"
 #include "ui/wrap/vertical_layout.h"
+#include "window/window_controller.h"
 #include "window/window_session_controller.h"
 #include "styles/style_layers.h"
 #include "styles/style_settings.h"
 
+#include <QtCore/QCoreApplication>
 #include <QtCore/QJsonArray>
 #include <QtCore/QJsonDocument>
 #include <QtCore/QJsonObject>
@@ -339,12 +341,46 @@ void PluginDetails::installUpdate() {
 void PluginDetails::addSettings(const QJsonArray &fields) {
 	Ovygram::AddPluginSettings(_content, fields,
 		[this](QJsonValue actionId, bool link) {
+			if (link) {
+				const auto installationId = _installationId;
+				auto &window = controller()->window();
+				const auto show = controller()->uiShow();
+				if (window.isLayerShown()) {
+					window.hideSettingsAndLayer(anim::type::instant);
+				} else {
+					controller()->clearSectionStack({
+						Window::SectionShow::Way::ClearStack,
+						anim::type::instant,
+					});
+				}
+				QTimer::singleShot(0, QCoreApplication::instance(), [=] {
+					if (const auto runtime = Core::App().pluginRuntime()) {
+						try {
+							const auto response = runtime->dispatch(
+								QJsonDocument(QJsonObject{
+									{ u"action"_q, u"settings_action"_q },
+									{ u"installation_id"_q, installationId },
+									{ u"action_id"_q, actionId },
+								}).toJson(QJsonDocument::Compact).toStdString());
+							const auto object = QJsonDocument::fromJson(
+								QByteArray::fromStdString(response)).object();
+							if (!object.contains(u"result"_q) && show && show->valid()) {
+								show->showToast(object.value(u"error"_q).toString(
+									u"Не удалось выполнить действие."_q));
+							}
+						} catch (const std::exception &exception) {
+							if (show && show->valid()) {
+								show->showToast(QString::fromUtf8(exception.what()));
+							}
+						}
+					}
+				});
+				return;
+			}
 			(void)Request({ { u"action"_q, u"settings_action"_q },
 				{ u"installation_id"_q, _installationId },
 				{ u"action_id"_q, actionId } }, _notice);
-			if (!link) {
-				QTimer::singleShot(0, this, [this] { refresh(); });
-			}
+			QTimer::singleShot(0, this, [this] { refresh(); });
 		},
 		[this](QJsonObject values) {
 			if (!Request({
@@ -377,6 +413,7 @@ private:
 	rpl::variable<QString> _notice;
 	bool _polling = false;
 	bool _manualCheckPending = false;
+	bool _shownOnce = false;
 };
 
 Plugins::Plugins(
@@ -408,11 +445,17 @@ rpl::producer<QString> Plugins::title() {
 
 void Plugins::showFinished() {
 	Section<Plugins>::showFinished();
-	refresh();
+	if (std::exchange(_shownOnce, true)) {
+		refresh();
+	}
 }
 
 void Plugins::refresh() {
-	_snapshot = Request({ { u"action"_q, u"snapshot"_q } }, _notice).toObject();
+	const auto result = Request({ { u"action"_q, u"snapshot"_q } }, _notice);
+	if (!result.isObject()) {
+		return;
+	}
+	_snapshot = result.toObject();
 	const auto distribution = _snapshot.value(u"distribution"_q).toObject();
 	_checkUpdates->setDisabled(distribution.value(u"checking"_q).toBool());
 	if (_manualCheckPending && !distribution.value(u"checking"_q).toBool()

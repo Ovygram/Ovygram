@@ -3018,21 +3018,31 @@ QWidget *Widget::pluginSearchTarget() const {
 	return _inner->pluginSearchTarget();
 }
 
+#ifdef OVYGRAM_ENABLED
 Ovygram::Search::Scope Widget::pluginSearchScope() {
 	const auto peer = searchInPeer();
 	return { this, QString::number(session().uniqueId()),
 		peer ? QString::number(peer->id.value) : QString() };
 }
+#endif // OVYGRAM_ENABLED
 
 namespace {
 
-Ovygram::Search::Query PluginQuery(Widget *widget) {
 #ifdef OVYGRAM_ENABLED
+Ovygram::Search::Query PluginQuery(Widget *widget) {
 	return Ovygram::Search::Parameters(widget->pluginSearchScope());
-#else
-	return {};
-#endif
 }
+#else // OVYGRAM_ENABLED
+struct DisabledPluginQuery {
+	int minDate = 0;
+	int maxDate = 0;
+	QString media;
+	bool conflict = false;
+};
+DisabledPluginQuery PluginQuery(Widget *) {
+	return {};
+}
+#endif // OVYGRAM_ENABLED
 
 MTPMessagesFilter MediaSearchFilter(const QString &kind) {
 	if (kind == u"photo"_q) return MTP_inputMessagesFilterPhotos();

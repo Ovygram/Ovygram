@@ -449,7 +449,7 @@ void BuildSectionButtons(SectionBuilder &builder) {
 	builder.addButton({
 		.id = u"main/plugins"_q,
 		.title = rpl::single(u"Плагины"_q),
-		.icon = { &st::menuIconManage },
+		.icon = { &st::menuIconCustomize },
 		.onClick = [=] { showOther(PluginsId()); },
 		.keywords = { u"plugins"_q, u"плагины"_q },
 	});

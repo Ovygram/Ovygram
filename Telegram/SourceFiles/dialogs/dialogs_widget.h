@@ -8,7 +8,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #pragma once
 
 #include "api/api_peer_search.h"
+#ifdef OVYGRAM_ENABLED
 #include "ovygram/plugin_search.h"
+#endif // OVYGRAM_ENABLED
 #include "base/timer.h"
 #include "dialogs/dialogs_key.h"
 #include "window/section_widget.h"
@@ -137,7 +139,9 @@ public:
 	void scrollToEntry(const RowDescriptor &entry);
 
 	void searchMessages(SearchState state);
+#ifdef OVYGRAM_ENABLED
 	[[nodiscard]] Ovygram::Search::Scope pluginSearchScope();
+#endif // OVYGRAM_ENABLED
 	[[nodiscard]] QWidget *pluginSearchTarget() const;
 
 	[[nodiscard]] RowDescriptor resolveChatNext(RowDescriptor from = {}) const;

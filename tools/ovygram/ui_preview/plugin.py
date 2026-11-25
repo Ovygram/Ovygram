@@ -6,7 +6,6 @@ from pathlib import Path
 import queue
 import select
 import shutil
-import stat
 import sys
 from tempfile import TemporaryDirectory
 
@@ -36,26 +35,6 @@ def stage_dependencies(manager, requirements, folder):
     manager.dependencies.save()
 
 
-def stage_images(node, roots, assets):
-    if node.get("type") == "image":
-        path = Path(node["path"]).resolve(strict=True)
-        if not any(path.is_relative_to(root) for root in roots):
-            raise ValueError("Используйте изображения из пакета или каталога данных плагина.")
-        descriptor = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
-        with os.fdopen(descriptor, "rb") as source:
-            actual = Path(os.readlink(f"/proc/self/fd/{descriptor}"))
-            if not stat.S_ISREG(os.fstat(descriptor).st_mode) or not any(
-                    actual.is_relative_to(root) for root in roots):
-                raise ValueError("Изображение должно быть обычным файлом плагина.")
-            with TemporaryDirectory(prefix="image-", dir=assets, delete=False) as folder:
-                staged = Path(folder) / path.name
-                with staged.open("wb") as destination:
-                    shutil.copyfileobj(source, destination)
-            node["path"] = str(staged)
-    for child in node.get("children", ()):
-        stage_images(child, roots, assets)
-
-
 def run(path, selected_menu, selected_setting, dependencies):
     with TemporaryDirectory(prefix="ovygram-ui-preview-") as temporary:
         manager = Manager(Path(temporary) / "profile", defer_start=True,
@@ -66,9 +45,6 @@ def run(path, selected_menu, selected_setting, dependencies):
             manager.set_client_ready(True)
             identity = manager.install(path)
             version = manager.records[identity]["current"]
-            assets = Path(temporary) / "images"
-            assets.mkdir()
-            image_roots = (manager.directory(version), manager.root / "data" / identity)
             stage_dependencies(manager, version["metadata"]["requirements"], dependencies)
             manager.enable(identity)
             fields = manager.settings(identity)
@@ -85,8 +61,6 @@ def run(path, selected_menu, selected_setting, dependencies):
                             if rule_id == command["rule_id"]:
                                 del main_menu[label]
                     elif method in {"ui.show", "ui.update", "ui.close", "appearance.palette", "ui.clipboard"}:
-                        if method == "ui.show":
-                            stage_images(command["tree"], image_roots, assets)
                         send(command)
                     elif method == "python_ui":
                         manager.forward("execute_ui", None, call_id=command["call_id"])

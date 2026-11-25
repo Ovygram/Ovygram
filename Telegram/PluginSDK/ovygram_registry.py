@@ -15,6 +15,7 @@ import os
 from pathlib import Path
 import re
 import sys
+import threading
 import unicodedata
 import urllib.parse
 import urllib.request
@@ -25,6 +26,64 @@ TRUSTED = frozenset(("verified", "official"))
 STATUSES = TRUSTED | {"unverified", "revoked", "blocked"}
 UNAVAILABLE = "Не удалось проверить плагин"
 MAX_CLOCK_SKEW = timedelta(seconds=60)
+_EVP_PKEY_ED25519 = 1087
+_CRYPTO_LOCK = threading.Lock()
+_CRYPTO_CACHE = {}
+
+
+def _load_crypto():
+    library = None
+    if sys.platform == "win32":
+        import _ssl
+        # Installed CPython keeps OpenSSL in DLLs; the embedded runtime keeps
+        # it at its root. In both layouts it is beside the TLS extension.
+        library = str(Path(_ssl.__file__).resolve().with_name("libcrypto-3.dll"))
+    cache_key = (sys.platform, library, ctypes.CDLL)
+    with _CRYPTO_LOCK:
+        cached = _CRYPTO_CACHE.get(cache_key)
+        if cached is not None:
+            return cached
+        crypto = None
+        if sys.platform == "win32":
+            crypto = ctypes.CDLL(library)
+        else:
+            candidates = ["libcrypto.so.3", "libcrypto.so.1.1", None]
+            found = ctypes.util.find_library("crypto")
+            if found:
+                candidates.append(found)
+            for candidate in candidates:
+                try:
+                    loaded = ctypes.CDLL(candidate)
+                except OSError:
+                    continue
+                if hasattr(loaded, "EVP_PKEY_new_raw_public_key_ex") or hasattr(
+                        loaded, "EVP_PKEY_new_raw_public_key"):
+                    crypto = loaded
+                    break
+        if crypto is None:
+            raise ValueError("OpenSSL libcrypto недоступна.")
+        has_ex = hasattr(crypto, "EVP_PKEY_new_raw_public_key_ex")
+        if has_ex:
+            crypto.EVP_PKEY_new_raw_public_key_ex.argtypes = [
+                ctypes.c_void_p, ctypes.c_char_p, ctypes.c_char_p,
+                ctypes.c_char_p, ctypes.c_size_t]
+            crypto.EVP_PKEY_new_raw_public_key_ex.restype = ctypes.c_void_p
+        else:
+            crypto.EVP_PKEY_new_raw_public_key.argtypes = [
+                ctypes.c_int, ctypes.c_void_p, ctypes.c_char_p, ctypes.c_size_t]
+            crypto.EVP_PKEY_new_raw_public_key.restype = ctypes.c_void_p
+        crypto.EVP_MD_CTX_new.restype = ctypes.c_void_p
+        crypto.EVP_DigestVerifyInit.argtypes = [
+            ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p,
+            ctypes.c_void_p, ctypes.c_void_p]
+        crypto.EVP_DigestVerify.argtypes = [
+            ctypes.c_void_p, ctypes.c_char_p, ctypes.c_size_t,
+            ctypes.c_char_p, ctypes.c_size_t]
+        crypto.EVP_MD_CTX_free.argtypes = [ctypes.c_void_p]
+        crypto.EVP_PKEY_free.argtypes = [ctypes.c_void_p]
+        result = (crypto, has_ex)
+        _CRYPTO_CACHE[cache_key] = result
+        return result
 
 
 def canonical(document):
@@ -36,27 +95,9 @@ def canonical(document):
 def verify_ed25519(key, signature, payload):
     if len(key) != 32 or len(signature) != 64:
         raise ValueError("Некорректная подпись реестра.")
-    if sys.platform == "win32":
-        import _ssl
-        # Installed CPython keeps OpenSSL in DLLs; the embedded runtime keeps
-        # it at its root. In both layouts it is beside the TLS extension.
-        library = str(Path(_ssl.__file__).resolve().with_name("libcrypto-3.dll"))
-    else:
-        library = ctypes.util.find_library("crypto")
-        if not library:
-            raise ValueError("OpenSSL libcrypto недоступна.")
-    crypto = ctypes.CDLL(library)
-    crypto.EVP_PKEY_new_raw_public_key_ex.argtypes = [ctypes.c_void_p, ctypes.c_char_p,
-                                                   ctypes.c_char_p, ctypes.c_char_p, ctypes.c_size_t]
-    crypto.EVP_PKEY_new_raw_public_key_ex.restype = ctypes.c_void_p
-    crypto.EVP_MD_CTX_new.restype = ctypes.c_void_p
-    crypto.EVP_DigestVerifyInit.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p,
-                                          ctypes.c_void_p, ctypes.c_void_p]
-    crypto.EVP_DigestVerify.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_size_t,
-                                      ctypes.c_char_p, ctypes.c_size_t]
-    crypto.EVP_MD_CTX_free.argtypes = [ctypes.c_void_p]
-    crypto.EVP_PKEY_free.argtypes = [ctypes.c_void_p]
-    public = crypto.EVP_PKEY_new_raw_public_key_ex(None, b"ED25519", None, key, len(key))
+    crypto, has_ex = _load_crypto()
+    public = (crypto.EVP_PKEY_new_raw_public_key_ex(None, b"ED25519", None, key, len(key))
+              if has_ex else crypto.EVP_PKEY_new_raw_public_key(_EVP_PKEY_ED25519, None, key, len(key)))
     context = crypto.EVP_MD_CTX_new()
     try:
         if not public or not context or crypto.EVP_DigestVerifyInit(
@@ -229,6 +270,17 @@ CONFUSABLES = str.maketrans({"о": "o", "ο": "o", "ѵ": "v", "у": "y", "ү": "
                             "м": "m", "ｍ": "m", "0": "o"})
 
 
+def _levenshtein(word, target):
+    row = list(range(len(target) + 1))
+    for index, character in enumerate(word, 1):
+        current = [index]
+        for column, expected in enumerate(target, 1):
+            current.append(min(current[-1] + 1, row[column] + 1,
+                               row[column - 1] + (character != expected)))
+        row = current
+    return row[-1]
+
+
 def protected_author(author, status):
     if status in TRUSTED:
         return False
@@ -237,16 +289,13 @@ def protected_author(author, status):
                          if unicodedata.category(character)[0] not in ("C", "M"))
     if "ovygram" in normalized:
         return True
-    for word in re.findall(r"[^\W_]+", normalized):
-        if not 5 <= len(word) <= 9:
-            continue
-        row = list(range(8))
-        for index, character in enumerate(word, 1):
-            current = [index]
-            for column, expected in enumerate("ovygram", 1):
-                current.append(min(current[-1] + 1, row[column] + 1,
-                                   row[column - 1] + (character != expected)))
-            row = current
-        if row[-1] <= 2:
+    collapsed = re.sub(r"[\W_]+", "", normalized)
+    if "ovygram" in collapsed:
+        return True
+    words = re.findall(r"[^\W_]+", normalized)
+    for word in words:
+        if 5 <= len(word) <= 9 and _levenshtein(word, "ovygram") <= 2:
             return True
+    if len(words) > 1 and 5 <= len(collapsed) <= 9 and _levenshtein(collapsed, "ovygram") <= 1:
+        return True
     return False

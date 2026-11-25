@@ -1,6 +1,6 @@
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 from .models import Chat, Message
 from .ui import WidgetRule
 
@@ -16,7 +16,8 @@ class Action:
     title: str
     link: str
     def __call__(self, invocation: Invocation | None = None) -> Any: ...
-    def add_menu(self, menu: str, *, kinds: list[str] | None = None) -> WidgetRule: ...
+    def add_menu(self, menu: Literal["main", "chat", "profile", "message"], *,
+                 kinds: Iterable[Literal["user", "chat", "channel"]] | None = None) -> WidgetRule: ...
     async def configure_shortcut(self) -> bool: ...
     def remove(self) -> None: ...
 

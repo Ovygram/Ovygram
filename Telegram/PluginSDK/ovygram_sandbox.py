@@ -75,7 +75,8 @@ def apply_scope():
     if ruleset < 0:
         raise SandboxError("Landlock: " + os.strerror(ctypes.get_errno()))
     try:
-        if libc.prctl(_PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0 or libc.syscall(
+        if libc.prctl(ctypes.c_int(_PR_SET_NO_NEW_PRIVS), ctypes.c_ulong(1),
+                      ctypes.c_ulong(0), ctypes.c_ulong(0), ctypes.c_ulong(0)) != 0 or libc.syscall(
                 ctypes.c_long(_LANDLOCK_RESTRICT_SELF), ctypes.c_int(ruleset), ctypes.c_uint(0)) != 0:
             raise SandboxError("Landlock: " + os.strerror(ctypes.get_errno()))
     finally:
@@ -160,6 +161,37 @@ _SYSTEM = (
 )
 
 
+_SYSTEM_PREFIXES = ("/usr", "/bin", "/sbin", "/lib", "/lib64", "/lib32", "/nix")
+
+
+def python_read_only_mounts(python, bundled, python_dir):
+    """Read-only directories required to execute Python and the SDK inside bwrap."""
+    from pathlib import Path
+    sdk_dir = Path(__file__).resolve().parent
+    mounts = [sdk_dir]
+    if bundled:
+        mounts.insert(0, Path(python_dir).resolve())
+    elif sys.platform.startswith("linux"):
+        resolved = Path(python).resolve()
+        candidates = [resolved.parent.parent]
+        for attr in ("base_prefix", "prefix"):
+            value = getattr(sys, attr, None)
+            if value:
+                candidates.append(Path(value).resolve())
+        for candidate in candidates:
+            if not candidate.is_dir():
+                continue
+            text = str(candidate)
+            if text == "/" or any(text == root or text.startswith(root + "/") for root in _SYSTEM_PREFIXES):
+                continue
+            mounts.append(candidate)
+    result = []
+    for path in mounts:
+        if path not in result:
+            result.append(path)
+    return result
+
+
 def wrap(command, environment, read_only=(), writable=(), directory=None, *, allow_network=True):
     """(argv, file descriptors to pass, report) that run command restricted.
 
@@ -194,10 +226,18 @@ def wrap(command, environment, read_only=(), writable=(), directory=None, *, all
         elif os.path.exists(path):
             arguments += ["--ro-bind", path, path]
     arguments += ["--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp"]
+    seen_ro = set()
     for path in read_only:
-        arguments += ["--ro-bind", str(path), str(path)]
+        text = str(path)
+        if text not in seen_ro:
+            seen_ro.add(text)
+            arguments += ["--ro-bind", text, text]
+    seen_rw = set()
     for path in writable:
-        arguments += ["--bind", str(path), str(path)]
+        text = str(path)
+        if text not in seen_rw:
+            seen_rw.add(text)
+            arguments += ["--bind", text, text]
     for key, value in environment.items():
         arguments += ["--setenv", key, value]
     if directory is not None:

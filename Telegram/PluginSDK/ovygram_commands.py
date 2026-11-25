@@ -112,8 +112,9 @@ def usage(args):
 def split(text, rest_index=None):
     """(finished tokens, the token at the end, where it starts).
 
-    A value with spaces is written in double quotes. The argument number
-    rest_index takes everything that is left, as it is typed."""
+    A value with spaces or quotes is written in double quotes with backslash
+    escapes. The argument number rest_index takes everything that is left,
+    as it is typed."""
     done = []
     position = 0
     while True:
@@ -123,12 +124,23 @@ def split(text, rest_index=None):
         if rest_index is not None and len(done) == rest_index:
             return done, text[start:], start
         if text.startswith('"', position):
-            end = text.find('"', position + 1)
-            if end < 0:
-                return done, text[position + 1:], start
-            token = text[position + 1:end]
-            position = end + 1
-            if position >= len(text):
+            position += 1
+            chars = []
+            closed = False
+            while position < len(text):
+                ch = text[position]
+                if ch == "\\" and position + 1 < len(text) and text[position + 1] in ('"', "\\"):
+                    chars.append(text[position + 1])
+                    position += 2
+                    continue
+                if ch == '"':
+                    position += 1
+                    closed = True
+                    break
+                chars.append(ch)
+                position += 1
+            token = "".join(chars)
+            if not closed or position >= len(text):
                 return done, token, start
             done.append(token)
             continue
@@ -167,7 +179,10 @@ def convert(arg, raw):
 
 
 def quoted(value):
-    return f'"{value}"' if any(char.isspace() for char in value) or not value else value
+    if not value or any(char.isspace() or char in ('"', "\\") for char in value):
+        escaped = value.replace("\\", "\\\\").replace('"', '\\"')
+        return f'"{escaped}"'
+    return value
 
 
 class Engine:
@@ -211,7 +226,8 @@ class Engine:
 
     def titles(self, kind):
         """[(title, installation_id, plugin_id, command)] of the commands of
-        a chat kind. A name several plugins use is written "plugin:name"."""
+        a chat kind. A name several plugins use is written "plugin:name", or
+        "plugin[id]:name" when two installations share plugin_id."""
         entries = []
         for installation_id, (plugin_id, commands) in self.tables.items():
             for command in commands:
@@ -219,12 +235,23 @@ class Engine:
                     for name in (command["name"], *command["aliases"]):
                         entries.append((name, installation_id, plugin_id, command))
         count = {}
-        for name, *_ in entries:
-            count[name.casefold()] = count.get(name.casefold(), 0) + 1
-        return sorted(
-            ((name if count[name.casefold()] == 1 else f"{plugin_id}:{name}", installation_id,
-              plugin_id, command) for name, installation_id, plugin_id, command in entries),
-            key=lambda entry: entry[0].casefold())
+        pair_count = {}
+        for name, _, plugin_id, _ in entries:
+            key = name.casefold()
+            count[key] = count.get(key, 0) + 1
+            pair = (plugin_id.casefold(), key)
+            pair_count[pair] = pair_count.get(pair, 0) + 1
+        result = []
+        for name, installation_id, plugin_id, command in entries:
+            key = name.casefold()
+            if count[key] == 1:
+                title = name
+            elif pair_count[(plugin_id.casefold(), key)] == 1:
+                title = f"{plugin_id}:{name}"
+            else:
+                title = f"{plugin_id}[{installation_id[:8]}]:{name}"
+            result.append((title, installation_id, plugin_id, command))
+        return sorted(result, key=lambda entry: entry[0].casefold())
 
     def resolve(self, name, kind):
         for title, installation_id, plugin_id, command in self.titles(kind):

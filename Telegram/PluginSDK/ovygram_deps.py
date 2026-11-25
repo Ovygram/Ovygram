@@ -101,16 +101,35 @@ def python_command(python_dir):
     the interpreter of this build, or the system one of the same version."""
     python_dir = Path(python_dir)
     executable = python_dir / ("python.exe" if os.name == "nt" else "python")
-    stdlib = python_dir / "python313.zip"
+    version_tag = f"{sys.version_info.major}{sys.version_info.minor}"
+    stdlib = python_dir / f"python{version_tag}.zip"
+    if not stdlib.is_file():
+        stdlib = python_dir / "python313.zip"
     if executable.is_file() and stdlib.is_file():
         # The bundled interpreter finds its library only through these.
         return str(executable), {"PYTHONHOME": str(python_dir), "PYTHONPATH": os.pathsep.join(
             (str(stdlib), str(python_dir)))}, True
     version = f"{sys.version_info.major}.{sys.version_info.minor}"
-    python = shutil.which(f"python{version}") or shutil.which("python3")
-    if python is None:
-        raise DependencyError(f"Не найден системный Python {version}.")
-    return python, {}, False
+    candidates = []
+    if sys.executable:
+        current = Path(sys.executable)
+        if current.name.lower().startswith("python") and current.is_file():
+            candidates.append(str(current))
+    if sys.base_prefix:
+        prefix = Path(sys.base_prefix)
+        if os.name == "nt":
+            candidates.append(str(prefix / "python.exe"))
+        else:
+            candidates.extend([str(prefix / "bin" / f"python{version}"), str(prefix / "bin" / "python3")])
+    for name in (f"python{version}", "python3"):
+        found = shutil.which(name)
+        if found:
+            candidates.append(found)
+    for candidate in candidates:
+        path = Path(candidate)
+        if path.is_file():
+            return str(path), {}, False
+    raise DependencyError(f"Не найден системный Python {version}.")
 
 
 class Dependencies:
@@ -215,6 +234,7 @@ class Dependencies:
         """Resolves requirements (of every enabled plugin) in the background.
         done(error) is called later from poll() on the main thread; error is
         None or a message for the user."""
+        self.poll()
         with self.lock:
             if self.job is not None and not self.job[0].done():
                 raise DependencyError(
@@ -267,16 +287,20 @@ class Dependencies:
         except BaseException as error:
             done(str(error) or type(error).__name__)
             return
-        current = self.state["packages"]
-        live = all(packages.get(name) == version for name, version in current.items())
-        if live:
-            previous = self.state.get("active")
-            self.state.update(active=target.name, requirements=requirements, packages=packages,
-                              pending=None, pending_requirements=[], pending_packages={})
-            self.save()
-            self.activate(target, replace=self.root / previous if previous else None)
-        else:
-            self.state.update(pending=target.name, pending_requirements=requirements,
-                              pending_packages=packages)
-            self.save()
+        try:
+            current = self.state["packages"]
+            live = all(packages.get(name) == version for name, version in current.items())
+            if live:
+                previous = self.state.get("active")
+                self.state.update(active=target.name, requirements=requirements, packages=packages,
+                                  pending=None, pending_requirements=[], pending_packages={})
+                self.save()
+                self.activate(target, replace=self.root / previous if previous else None)
+            else:
+                self.state.update(pending=target.name, pending_requirements=requirements,
+                                  pending_packages=packages)
+                self.save()
+        except BaseException as error:
+            done(str(error) or type(error).__name__)
+            return
         done(None)

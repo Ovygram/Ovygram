@@ -51,7 +51,7 @@ class HelperTests(unittest.TestCase):
         settings = {"port": 3000, "user": "user", "password": "password", "routes": ["api"]}
         with self.assertRaisesRegex(ValueError, "индикатора"):
             self.helpers.command("owner", "offer", {**settings, "label": "unsafe\nname"})
-        self.helpers.command("owner", "offer", {**settings, "label": "PROXY"})
-        self.assertEqual(self.helpers.offers["owner"]["label"], "PROXY")
+        self.helpers.command("owner", "offer", {**settings, "label": "Proxy Tunnel"})
+        self.assertEqual(self.helpers.offers["owner"]["label"], "Proxy Tunnel")
         self.helpers.stop("owner")
         self.assertEqual(self.helpers.offers, {})

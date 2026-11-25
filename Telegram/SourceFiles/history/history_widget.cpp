@@ -5,9 +5,9 @@ the official desktop application for the Telegram messaging service.
 For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
-#include "api/api_plugins.h"
 #include "history/history_widget.h"
 #ifdef OVYGRAM_ENABLED
+#include "api/api_plugins.h"
 #include "ovygram/plugin_elements.h"
 #include <QtCore/QJsonArray>
 #endif
@@ -11315,12 +11315,14 @@ void HistoryWidget::updateTopBarSelection(bool keepFocus) {
 	}
 
 	auto selectedState = _list->getSelectionState();
+#ifdef OVYGRAM_ENABLED
 	if (_history) {
 		const auto client = Core::App().pluginClient();
 		if (client && client->observes(Api::PluginEventBit::Selection)) {
 			Api::PluginSelectionChanged(*_history, this, getSelectedItems());
 		}
 	}
+#endif // OVYGRAM_ENABLED
 	_nonEmptySelection = (selectedState.count > 0)
 		|| selectedState.textSelected;
 	_topBar->showSelected(selectedState);

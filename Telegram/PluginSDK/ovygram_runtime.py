@@ -22,6 +22,7 @@ import os
 from pathlib import Path, PurePosixPath
 import re
 import shutil
+import stat
 import sys
 import threading
 import uuid
@@ -158,7 +159,66 @@ def checked_settings(fields):
     return fields
 
 
+MAX_UI_IMAGE_BYTES = 16 * 1024 * 1024
+MAX_UI_NODES = 2048
+
+
+def _load_ui_image(raw_path, roots):
+    if not isinstance(raw_path, str) or not raw_path or "\x00" in raw_path:
+        raise ValueError("Некорректный путь изображения.")
+    if raw_path.startswith(("\\\\", "//", "\\?")):
+        raise ValueError("Сетевые пути изображений запрещены.")
+    path = Path(raw_path).resolve(strict=True)
+    if str(path).startswith(("\\\\", "//")) or not any(path.is_relative_to(root) for root in roots):
+        raise ValueError("Используйте изображения из пакета или каталога данных плагина.")
+    flags = (os.O_RDONLY | getattr(os, "O_NONBLOCK", 0)
+             | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0))
+    descriptor = os.open(path, flags)
+    try:
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            raise ValueError("Изображение должно быть обычным файлом плагина.")
+        if sys.platform.startswith("linux"):
+            actual = Path(os.readlink(f"/proc/self/fd/{descriptor}"))
+            if not any(actual.is_relative_to(root) for root in roots):
+                raise ValueError("Изображение должно быть обычным файлом плагина.")
+        with os.fdopen(descriptor, "rb") as source:
+            descriptor = None
+            payload = source.read(MAX_UI_IMAGE_BYTES + 1)
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+    if not payload or len(payload) > MAX_UI_IMAGE_BYTES:
+        raise ValueError("Изображение пустое или превышает допустимый размер (16 МиБ).")
+    return base64.b64encode(payload).decode("ascii")
+
+
+def _embed_ui_images(tree, roots):
+    if not isinstance(tree, dict):
+        return tree
+    cloned = copy.deepcopy(tree)
+    stack = [cloned]
+    visited = 0
+    while stack:
+        node = stack.pop()
+        visited += 1
+        if visited > MAX_UI_NODES:
+            raise ValueError("Слишком большое дерево интерфейса.")
+        if not isinstance(node, dict):
+            continue
+        if node.get("type") == "image":
+            if "path" not in node:
+                raise ValueError("Для ui.Image требуется путь к файлу плагина.")
+            node["data"] = _load_ui_image(node["path"], roots)
+            node.pop("path", None)
+        children = node.get("children")
+        if isinstance(children, list):
+            stack.extend(children)
+    return cloned
+
+
 class Manager:
+    MARKER_CLEAR_DELAY = 10.0
+
     def __init__(self, root, disabled=False, registry=None, host=ProcessHost, defer_start=False):
         self.root = Path(root).resolve()
         self.root.mkdir(parents=True, exist_ok=True)
@@ -170,6 +230,8 @@ class Manager:
         self.recovery = self.marker.exists()
         self.restart_required = False
         self.owner = threading.get_ident()
+        self._state_lock = threading.RLock()
+        self._marker_timer = None
         self._loaded = {}  # installation_id -> module namespace in the host.
         self.errors = {}
         self.loading = None  # The installation whose on_plugin_load runs.
@@ -200,6 +262,36 @@ class Manager:
         self.recover_updates()
         if not defer_start:
             self._start_enabled()
+
+    def _cancel_marker_timer(self):
+        with self._state_lock:
+            timer, self._marker_timer = self._marker_timer, None
+        if timer is not None:
+            timer.cancel()
+
+    def _schedule_marker_clear(self):
+        with self._state_lock:
+            previous, self._marker_timer = self._marker_timer, None
+            if previous is not None:
+                previous.cancel()
+            if (self.recovery or self.disabled or self.closing
+                    or self.loading is not None or not self._loaded):
+                return
+            timer = threading.Timer(self.MARKER_CLEAR_DELAY, self._clear_marker_if_stable)
+            timer.daemon = True
+            self._marker_timer = timer
+            timer.start()
+
+    def _clear_marker_if_stable(self):
+        with self._state_lock:
+            if (self.recovery or self.disabled or self.closing
+                    or self.loading is not None or not self._loaded):
+                return
+            self._marker_timer = None
+            try:
+                self.marker.unlink(missing_ok=True)
+            except OSError as error:
+                self.logger.warning("Не удалось снять маркер запуска плагинов: %s", error)
 
     def _start_enabled(self):
         if not self._startup_pending:
@@ -252,12 +344,33 @@ class Manager:
     def running(self, installation_id):
         """Whether the host may speak for the installation: only for a plugin
         that runs in it, not for every installed one."""
-        return isinstance(installation_id, str) and (
-            installation_id in self._loaded or installation_id == self.loading)
+        with self._state_lock:
+            return isinstance(installation_id, str) and (
+                installation_id in self._loaded or installation_id == self.loading)
 
     def host_submit(self, command):
-        if not isinstance(command, dict) or not self.running(command.get("installation_id")):
+        installation_id = command.get("installation_id") if isinstance(command, dict) else None
+        if not self.running(installation_id):
             return
+        method = command.get("method")
+        if method == "ui.show":
+            with self._state_lock:
+                record = self.records.get(installation_id)
+                current = dict(record["current"]) if record is not None else None
+            if current is None:
+                return
+            try:
+                roots = (self.directory(current).resolve(),
+                         (self.root / "data" / installation_id).resolve())
+                command = {**command, "tree": _embed_ui_images(command.get("tree"), roots)}
+            except (OSError, ValueError) as error:
+                self.host_error(installation_id, str(error))
+                return
+        elif method == "ui.update":
+            props = command.get("props")
+            if isinstance(props, dict) and ("path" in props or "data" in props):
+                self.host_error(installation_id, "Изменение источника изображения не поддерживается.")
+                return
         if self.sender is not None:
             self.sender(command)
             return
@@ -267,6 +380,7 @@ class Manager:
         except (ImportError, RuntimeError) as error:
             self.logger.warning("Команда плагина не доставлена: %s", error)
 
+
     def host_error(self, installation_id, message):
         if self.running(installation_id):
             self.plugin_error(installation_id, message)
@@ -275,7 +389,8 @@ class Manager:
         """An error text written by the plugin side: one bounded paragraph,
         which the manager shows as a message of the plugin."""
         text = " ".join(message.split())[:MAX_PLUGIN_ERROR] or "Ошибка плагина."
-        self.errors[installation_id] = self.reported[installation_id] = text
+        with self._state_lock:
+            self.errors[installation_id] = self.reported[installation_id] = text
 
     def host_set_setting(self, installation_id, key, value, account_id=None):
         if not self.running(installation_id):
@@ -284,12 +399,18 @@ class Manager:
 
     def host_commands(self, installation_id, commands):
         """The commands a plugin declares for the message field."""
-        if not self.running(installation_id):
-            return
+        with self._state_lock:
+            if not self.running(installation_id):
+                return
+            record = self.records.get(installation_id)
+            if record is None:
+                return
+            plugin_id = record["plugin_id"]
         try:
-            self.commands.set(installation_id, self.records[installation_id]["plugin_id"], commands)
+            self.commands.set(installation_id, plugin_id, commands)
         except ValueError as error:
-            self.errors[installation_id] = str(error)
+            with self._state_lock:
+                self.errors[installation_id] = str(error)
             self.logger.error("%s: %s", self.label(installation_id), error)
 
     def host_suggestions(self, token, items):
@@ -365,20 +486,24 @@ class Manager:
 
     def host_exited(self, reason):
         """The host process died or was stopped; on the main thread."""
-        affected = set(self._loaded)
-        if self.loading is not None:
-            affected.add(self.loading)
+        self._cancel_marker_timer()
+        with self._state_lock:
+            affected = set(self._loaded)
+            if self.loading is not None:
+                affected.add(self.loading)
+            for installation_id in sorted(affected):
+                self.errors[installation_id] = reason
+            self._loaded.clear()
+            if not self.closing:
+                self.recovery = True
         for installation_id in sorted(affected):
-            self.errors[installation_id] = reason
             self.notify({"id": uuid.uuid4().hex, "method": "ui.close_plugin",
                          "installation_id": installation_id})
         for owner in list(self.helpers.children):
             self.helpers.stop(owner)
-        self._loaded.clear()
         self.commands.clear()
         self.hook_mask = 0
         if not self.closing:
-            self.recovery = True
             self.logger.error("%s", reason)
 
     def read_state(self):
@@ -387,7 +512,7 @@ class Manager:
         if isinstance(state, dict) and "version" not in state:
             state = self.migrate(state)
         records = state.get("installations") if isinstance(state, dict) else None
-        if state.get("version") != STATE_VERSION or not isinstance(records, dict) or any(
+        if not isinstance(state, dict) or state.get("version") != STATE_VERSION or not isinstance(records, dict) or any(
             not INSTALLATION_ID.fullmatch(installation_id) or not isinstance(record, dict)
             or not {"plugin_id", "current", "previous", "enabled", "settings"} <= record.keys()
             for installation_id, record in records.items()
@@ -456,7 +581,8 @@ class Manager:
         return state
 
     def label(self, installation_id):
-        record = self.records.get(installation_id)
+        with self._state_lock:
+            record = self.records.get(installation_id)
         return f"{record['plugin_id']}[{installation_id[:8]}]" if record else installation_id
 
     def check_thread(self):
@@ -566,20 +692,23 @@ class Manager:
             if path.resolve() != path or not path.is_file() or path.read_bytes() != data:
                 raise ValueError(f"Файл {name} плагина изменён после установки. Установите его заново.")
         for path in directory.rglob("*"):
-            if path.is_symlink() or (path.is_file() and path.relative_to(directory).as_posix() not in expected
-                                    and path.suffix.lower() in (".py", ".pyc", ".pyo", ".so", ".dll", ".pyd", ".ovyplugin")):
-                raise ValueError("В каталоге плагина появился посторонний исполняемый файл.")
+            if path.is_symlink() or (
+                    path.is_file() and path.relative_to(directory).as_posix() not in expected):
+                raise ValueError("В каталоге плагина появился посторонний файл.")
         return expected.get(version["entry"])
 
     def report_error(self, installation_id, message):
-        self.errors[installation_id] = message
+        with self._state_lock:
+            self.errors[installation_id] = message
         self.logger.exception("%s: %s", self.label(installation_id), message)
 
     def load(self, installation_id):
         record = self.records[installation_id]
         version = record["current"]
         namespace = "_ovygram_" + version["directory"]
+        self._cancel_marker_timer()
         self.marker.write_text(installation_id, encoding="utf-8")
+        succeeded = False
         try:
             if version.get("blocked") or self.distribution.registry.cached(version)["status"] == "blocked":
                 raise ValueError("Опасный плагин / вирус: запуск запрещён.")
@@ -606,15 +735,18 @@ class Manager:
                 raise ValueError("Метаданные изменились. Импортируйте новую версию из файла.")
             data = self.root / "data" / installation_id
             # The host runs exactly the bytes checked above, not the file.
-            self.loading = installation_id
+            with self._state_lock:
+                self.loading = installation_id
             self.host.call(
                 "load", installation_id=installation_id, plugin_id=record["plugin_id"],
                 namespace=namespace, directory=str(directory), entry=entry,
                 source=base64.b64encode(source).decode("ascii"), name=version["metadata"]["name"],
                 data_directory=str(data), settings=record["settings"],
                 account_settings=record.get("account_settings", {}))
-            self._loaded[installation_id] = namespace
-            self.errors.pop(installation_id, None)
+            with self._state_lock:
+                self._loaded[installation_id] = namespace
+                self.errors.pop(installation_id, None)
+            succeeded = True
             return True
         except BaseException as error:
             self.commands.remove(installation_id)
@@ -623,38 +755,52 @@ class Manager:
                 # The host has logged the traceback of the plugin.
                 self.plugin_error(installation_id, message)
             elif isinstance(error, HostError):
-                self.errors[installation_id] = message
+                with self._state_lock:
+                    self.errors[installation_id] = message
             else:
                 self.report_error(installation_id, message)
             return False
         finally:
-            self.loading = None
+            with self._state_lock:
+                self.loading = None
+            if succeeded:
+                self._schedule_marker_clear()
+            elif not (self.recovery or self.disabled or self.closing):
+                if self._loaded:
+                    self._schedule_marker_clear()
+                else:
+                    self.marker.unlink(missing_ok=True)
 
     def unload(self, installation_id):
-        if installation_id not in self._loaded:
+        with self._state_lock:
+            loaded = installation_id in self._loaded
+        if not loaded:
             return
         try:
             if self.host.running:
                 # Raises when on_plugin_unload fails; the host has reported it.
                 self.host.call("unload", installation_id=installation_id)
         finally:
-            self._loaded.pop(installation_id, None)
+            with self._state_lock:
+                self._loaded.pop(installation_id, None)
             self.helpers.stop(installation_id)
             self.commands.remove(installation_id)
 
     def change_record(self, installation_id, record):
-        previous = self.records.get(installation_id)
-        if record is None:
-            del self.records[installation_id]
-        else:
-            self.records[installation_id] = record
+        with self._state_lock:
+            previous = self.records.get(installation_id)
+            if record is None:
+                del self.records[installation_id]
+            else:
+                self.records[installation_id] = record
         try:
             self.save()
         except BaseException:
-            if previous is None:
-                self.records.pop(installation_id, None)
-            else:
-                self.records[installation_id] = previous
+            with self._state_lock:
+                if previous is None:
+                    self.records.pop(installation_id, None)
+                else:
+                    self.records[installation_id] = previous
             raise
 
     @staticmethod
@@ -751,7 +897,8 @@ class Manager:
             raise
         if previous:
             self.discard(previous["previous"])
-        self.errors.pop(installation_id, None)
+        with self._state_lock:
+            self.errors.pop(installation_id, None)
         return installation_id
 
     def activate_update(self, installation_id, package):
@@ -771,13 +918,22 @@ class Manager:
                                installation_id, trust=package["trust"])
             if old["enabled"]:
                 self.enable(installation_id)
-                if installation_id not in self._loaded:
+                requirements = package["metadata"].get("requirements", [])
+                pending_deps = (
+                    self.dependencies.status()["installing"] == installation_id
+                    or self.dependencies.waiting_for_restart(requirements)
+                )
+                if installation_id not in self._loaded and not pending_deps:
                     raise RuntimeError("Обновление не запущено. Сохранена предыдущая версия.")
             self.finish_update(installation_id)
         except BaseException:
             failed = self.records[installation_id]
             if installation_id in self._loaded:
-                self.unload(installation_id)
+                try:
+                    self.unload(installation_id)
+                except Exception as unload_error:
+                    self.logger.warning("Не удалось выгрузить неудачное обновление %s: %s",
+                                        installation_id, unload_error)
             self.change_record(installation_id, old)
             if failed["current"]["directory"] != old["current"]["directory"]:
                 self.discard(failed["current"])
@@ -804,7 +960,8 @@ class Manager:
         if not self.dependencies.satisfied(requirements):
             if self.dependencies.waiting_for_restart(requirements):
                 self.change_record(installation_id, {**record, "enabled": True})
-                self.errors[installation_id] = "Зависимости установлены. Перезапустите клиент."
+                with self._state_lock:
+                    self.errors[installation_id] = "Зависимости установлены. Перезапустите клиент."
                 return
             self.install_dependencies(installation_id)
             return
@@ -832,14 +989,17 @@ class Manager:
             elif not current["enabled"]:
                 return  # Disabled meanwhile: the libraries stay for later.
             elif self.dependencies.satisfied(record["current"]["metadata"]["requirements"]):
-                self.errors.pop(installation_id, None)
+                with self._state_lock:
+                    self.errors.pop(installation_id, None)
                 if not (self.disabled or self.recovery or self.restart_required):
                     self.load(installation_id)
             else:
-                self.errors[installation_id] = "Зависимости установлены. Перезапустите клиент."
+                with self._state_lock:
+                    self.errors[installation_id] = "Зависимости установлены. Перезапустите клиент."
 
         self.dependencies.install(installation_id, sorted(requirements), done)
-        self.errors.pop(installation_id, None)
+        with self._state_lock:
+            self.errors.pop(installation_id, None)
         self.change_record(installation_id, {**record, "enabled": True})
 
     def disable(self, installation_id):
@@ -853,8 +1013,13 @@ class Manager:
             raise ValueError("Предыдущая версия отсутствует.")
         self.check_integrity(record["previous"])
         trust = self.distribution.registry.cached(record["previous"])
-        if trust["status"] == "blocked" or record["previous"].get("blocked"):
-            raise ValueError("Предыдущая версия заблокирована.")
+        if trust["status"] in ("blocked", "revoked") or record["previous"].get("blocked"):
+            raise ValueError("Предыдущая версия заблокирована или отозвана.")
+        if trust["status"] in TRUSTED and any(
+                identity != installation_id and self.distribution.registry.cached(
+                    self.records[identity]["current"])["status"] in TRUSTED
+                for identity in self.installations_of(record["plugin_id"])):
+            raise ValueError("Два проверенных экземпляра с одинаковым ID запрещены.")
         if record["current"].get("blocked") or self.distribution.registry.cached(
                 record["current"])["status"] == "revoked":
             raise ValueError("Для безопасного отката сначала проверьте обновления через сервер.")
@@ -864,7 +1029,8 @@ class Manager:
             **record, "current": record["previous"], "previous": record["current"],
             "enabled": False,
         })
-        self.errors.pop(installation_id, None)
+        with self._state_lock:
+            self.errors.pop(installation_id, None)
 
     def remove(self, installation_id, keep_data=False):
         record = self.records[installation_id]
@@ -874,15 +1040,23 @@ class Manager:
             (saved / "settings.json").write_text(json.dumps({
                 "plugin_id": record["plugin_id"], "settings": record["settings"],
                 "account_settings": record.get("account_settings", {})}, ensure_ascii=False), encoding="utf-8")
-        self.disable(installation_id)
+        try:
+            self.disable(installation_id)
+        except Exception as error:
+            self.logger.warning("Ошибка выгрузки при удалении %s: %s", installation_id, error)
+        if installation_id in self.distribution.offers:
+            self.distribution.offers.pop(installation_id, None)
+            self.distribution_state["offers"] = copy.deepcopy(self.distribution.offers)
         self.save_proxy_routes({route: owner for route, owner in self.proxy_routes.items()
                                 if owner != installation_id})
         self.change_record(installation_id, None)
         self.discard(record["current"])
         self.discard(record["previous"])
-        self.errors.pop(installation_id, None)
+        with self._state_lock:
+            self.errors.pop(installation_id, None)
+            self.reported.pop(installation_id, None)
         data = self.root / "data" / installation_id
-        if not keep_data and data.is_dir() and data.resolve().parent == self.root / "data":
+        if not keep_data and not data.is_symlink() and data.is_dir() and data.resolve().parent == self.root / "data":
             shutil.rmtree(data)
 
     def resume(self):
@@ -896,7 +1070,7 @@ class Manager:
     @staticmethod
     def account_key(account_id):
         result = str(account_id)
-        if not result.isdecimal():
+        if not result.isascii() or not result.isdecimal():
             raise ValueError("Некорректный ID аккаунта.")
         return result
 
@@ -973,6 +1147,10 @@ class Manager:
 
     def snapshot(self):
         dependencies = self.dependencies.status()
+        with self._state_lock:
+            errors = dict(self.errors)
+            reported = dict(self.reported)
+            loaded = set(self._loaded)
         return {
             "sdk_version": SDK_VERSION,
             "disabled": self.disabled,
@@ -985,12 +1163,12 @@ class Manager:
             "plugins": [
                 {**self.describe(installation_id),
                  "installing": dependencies["installing"] == installation_id,
-                 "loaded": installation_id in self._loaded,
+                 "loaded": installation_id in loaded,
                  "previous": record["previous"] is not None,
                  "instances": len(self.installations_of(record["plugin_id"])),
-                 "error": self.errors.get(installation_id, ""),
-                 "error_from_plugin": bool(self.errors.get(installation_id)) and (
-                     self.errors.get(installation_id) == self.reported.get(installation_id))}
+                 "error": errors.get(installation_id, ""),
+                 "error_from_plugin": bool(errors.get(installation_id)) and (
+                     errors.get(installation_id) == reported.get(installation_id))}
                 for installation_id, record in sorted(
                     self.records.items(), key=lambda item: (item[1]["plugin_id"], item[0]))
             ],
@@ -1047,7 +1225,7 @@ class Manager:
         except BaseException as error:
             installation_id = action.get("installation_id", "")
             message = str(error) or type(error).__name__
-            if installation_id in self.records and installation_id not in self.errors:
+            if name in ("enable", "load", "disable") and installation_id in self.records and installation_id not in self.errors:
                 self.report_error(installation_id, message)
             else:
                 self.logger.exception("%s: %s", name, message)
@@ -1070,7 +1248,9 @@ class Manager:
 
     def shutdown(self):
         self.check_thread()
-        self.closing = True
+        with self._state_lock:
+            self.closing = True
+        self._cancel_marker_timer()
         self.distribution.close()
         # Unloads every plugin in the reverse order and stops their tasks.
         try:
@@ -1078,7 +1258,8 @@ class Manager:
         finally:
             for owner in list(self.helpers.children):
                 self.helpers.stop(owner)
-        self._loaded.clear()
+        with self._state_lock:
+            self._loaded.clear()
         # The marker detects crashes: a clean exit removes it, also after a
         # failed unload. Recovery mode and --disable-plugins keep it, so the
         # next start still asks before loading plugins.

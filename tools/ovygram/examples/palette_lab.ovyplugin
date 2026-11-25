@@ -27,7 +27,7 @@ BUTTONS = {
     "chip": "Telegram",
     "link": "Назначить маршруты",
     "choice": "По умолчанию",
-    "selected_choice": "PROXY",
+    "selected_choice": "Прокси-туннель",
     "install": "Импортировать плагин",
     "subtle": "Проверить обновления",
     "install_secondary": "Установить с предупреждением",

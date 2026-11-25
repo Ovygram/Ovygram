@@ -92,10 +92,11 @@ public:
 protected:
 	int resizeGetHeight(int newWidth) override {
 		const auto padding = st::boxRowPadding;
+		const auto vertical = style::ConvertScale(kBarPadding);
 		_content->resizeToWidth(
 			std::max(newWidth - padding.left() - padding.right(), 1));
-		_content->moveToLeft(padding.left(), kBarPadding, newWidth);
-		return _content->height() + 2 * kBarPadding;
+		_content->moveToLeft(padding.left(), vertical, newWidth);
+		return _content->height() + 2 * vertical;
 	}
 
 	void paintEvent(QPaintEvent *e) override {
@@ -132,6 +133,7 @@ struct PluginUi::Object {
 	QString chatId;
 	PluginUiTree tree;
 	bool silent = false;
+	bool panelHiddenByProtection = false;
 };
 
 PluginUi::PluginUi(EventSender send)
@@ -146,24 +148,40 @@ PluginUi::PluginUi(EventSender send)
 	Native::SetEventSender(_send);
 	// A canvas over a widget that contains a protected surface would cover
 	// it: such overlays stay hidden while the surface exists. A dialog of a
-	// plugin is a layer above everything, so it is closed.
+	// plugin is a layer above everything, so it is closed. Floating windows
+	// are hidden until the protected screen is gone.
 	ProtectedSurfacesChanged() | rpl::on_next([=] {
 		PanelButtons::UpdateProtectedSurfaces();
+		const auto protectedActive = ProtectedSurfaceExists()
+			|| Core::App().passcodeLocked();
 		auto boxes = std::vector<QPointer<Ui::BoxContent>>();
 		for (const auto &[id, object] : _objects) {
 			if (const auto row = object->inserted.data()) {
-				row->setVisible(!ProtectedFromPlugins(row->parentWidget())
+				row->setVisible(!protectedActive
+					&& !ProtectedFromPlugins(row->parentWidget())
 					&& !CouldCoverProtected(row, u"geometry"_q));
 			}
 			if (const auto overlay = object->overlay.get()) {
-				overlay->setVisible(
-					!ProtectedFromPlugins(overlay->parentWidget()));
+				overlay->setVisible(!protectedActive
+					&& !ProtectedFromPlugins(overlay->parentWidget())
+					&& !CouldCoverProtected(overlay, u"geometry"_q));
+			}
+			if (const auto panel = object->panel.get()) {
+				if (protectedActive) {
+					if (!panel->isHidden()) {
+						panel->hide();
+						object->panelHiddenByProtection = true;
+					}
+				} else if (object->panelHiddenByProtection) {
+					object->panelHiddenByProtection = false;
+					panel->show();
+				}
 			}
 			if (object->box) {
 				boxes.push_back(object->box);
 			}
 		}
-		if (ProtectedSurfaceExists()) {
+		if (protectedActive) {
 			// Closing a box removes its object from the map.
 			for (const auto &box : boxes) {
 				if (box) {
@@ -270,6 +288,9 @@ void PluginUi::handle(const QJsonObject &command) {
 	} else if (method.startsWith(u"ui.widgets."_q) || method.startsWith(u"ui.keys."_q)) {
 		Widgets::Handle(command);
 	} else if (method == u"ui.clipboard"_q) {
+		if (ProtectedSurfaceExists() || Core::App().passcodeLocked()) {
+			throw std::runtime_error("Clipboard is unavailable while a protected screen is open.");
+		}
 		QGuiApplication::clipboard()->setText(command.value(u"text"_q).toString());
 	} else {
 		throw std::runtime_error("Unknown UI command.");
@@ -289,17 +310,18 @@ void PluginUi::show(const QJsonObject &command) {
 	const auto tree = command.value(u"tree"_q).toObject();
 	const auto kind = command.value(u"kind"_q).toString();
 	if (kind == u"dialog"_q) {
-		if (ProtectedSurfaceExists()) {
+		if (ProtectedSurfaceExists() || Core::App().passcodeLocked()) {
 			// It would be drawn over the plugin manager with Telegram's own
 			// components and could pass for a window of Ovygram.
 			throw std::runtime_error(
-				"Dialogs are unavailable while Ovygram's plugin manager is open.");
+				"Dialogs are unavailable while a protected screen is open.");
 		}
 		const auto window = Core::App().activePrimaryWindow();
 		if (!window) {
 			throw std::runtime_error("No active Telegram window.");
 		}
 		const auto width = command.value(u"width"_q).toInt();
+		const auto maxContentWidth = command.value(u"max_content_width"_q).toInt();
 		// Built before the box, so an invalid tree throws before showing.
 		const auto content = std::make_shared<object_ptr<Ui::RpWidget>>(
 			build(*object, nullptr, tree));
@@ -317,9 +339,13 @@ void PluginUi::show(const QJsonObject &command) {
 					std::max(available, 1)));
 			}
 			box->addTopButton(st::settingsPluginClose, [=] { box->closeBox(); });
-			const auto raw = content->data();
+			auto row = std::move(*content);
+			if (maxContentWidth > 0) {
+				row = PluginUiTree::CenterContent(box, std::move(row), 0, maxContentWidth);
+			}
+			const auto raw = row.data();
 			raw->setParent(box);
-			box->addRow(std::move(*content), style::al_justify);
+			box->addRow(std::move(row), style::al_justify);
 			raw->show();
 			PluginUiTree::AddDialogButtons(box, std::move(*action));
 			if (const auto i = _objects.find(objectId); i != end(_objects)) {
@@ -332,13 +358,17 @@ void PluginUi::show(const QJsonObject &command) {
 		_objects.emplace(objectId, std::move(owned));
 		window->uiShow()->showBox(std::move(box));
 	} else if (kind == u"window"_q) {
+		if (ProtectedSurfaceExists() || Core::App().passcodeLocked()) {
+			throw std::runtime_error(
+				"Windows are unavailable while a protected screen is open.");
+		}
 		object->panel = std::make_unique<Ui::SeparatePanel>();
 		const auto panel = object->panel.get();
 		panel->setWindowFlag(Qt::WindowStaysOnTopHint, false);
 		panel->setTitle(rpl::single(title));
 		panel->setInnerSize(QSize(
-			std::clamp(command.value(u"width"_q).toInt(420), 200, 2000),
-			std::clamp(command.value(u"height"_q).toInt(480), 120, 2000)),
+			style::ConvertScale(std::clamp(command.value(u"width"_q).toInt(420), 200, 2000)),
+			style::ConvertScale(std::clamp(command.value(u"height"_q).toInt(480), 120, 2000))),
 			true);
 		// Content taller than the window scrolls. ScrollArea isn't an
 		// RpWidget, so it fills a plain container that the panel shows.
@@ -411,9 +441,14 @@ void PluginUi::show(const QJsonObject &command) {
 		_objects.emplace(objectId, std::move(owned));
 		row->show();
 	} else if (kind == u"overlay"_q) {
+		if (ProtectedSurfaceExists() || Core::App().passcodeLocked()) {
+			throw std::runtime_error(
+				"Overlays are unavailable while a protected screen is open.");
+		}
 		const auto target = Widgets::Resolve(command.value(u"target"_q));
-		if (!target) {
-			throw std::runtime_error("The overlay target no longer exists.");
+		if (!target || ProtectedFromPlugins(target)
+			|| CouldCoverProtected(target, u"geometry"_q)) {
+			throw std::runtime_error("The overlay target is unavailable.");
 		} else if (tree.value(u"type"_q).toString() != u"canvas"_q) {
 			throw std::runtime_error("An overlay must be a single Canvas.");
 		}
@@ -446,6 +481,10 @@ void PluginUi::show(const QJsonObject &command) {
 		_objects.emplace(objectId, std::move(owned));
 		relayoutChats();
 	} else if (kind == u"section"_q) {
+		if (ProtectedSurfaceExists() || Core::App().passcodeLocked()) {
+			throw std::runtime_error(
+				"Sections are unavailable while a protected screen is open.");
+		}
 		const auto window = Core::App().activePrimaryWindow();
 		const auto controller = window ? window->sessionController() : nullptr;
 		if (!controller) {
@@ -491,18 +530,26 @@ int PluginUi::layoutChatBars(
 			return !chat;
 		});
 		_chats.emplace_back(container);
-		// A bar lives until the plugin closes it: take it out of a chat
-		// that is destroyed. QWidget emits destroyed() before it deletes
-		// its children.
-		connect(container, &QObject::destroyed, this, [=] {
-			for (const auto &[id, object] : _objects) {
+		// A bar lives until the plugin closes it: detach it before ~QWidget
+		// destroys child widgets (QObject::destroyed fires too late).
+		const auto guard = QPointer<PluginUi>(this);
+		auto detach = [=] {
+			if (!guard) {
+				return;
+			}
+			for (const auto &[id, object] : guard->_objects) {
 				const auto bar = object->bar.get();
 				if (bar && bar->parentWidget() == container) {
 					bar->hide();
 					bar->setParent(nullptr);
 				}
 			}
-		});
+		};
+		if (const auto rp = dynamic_cast<Ui::RpWidget*>(container)) {
+			rp->lifetime().add(std::move(detach));
+		} else {
+			connect(container, &QObject::destroyed, this, std::move(detach));
+		}
 	}
 	const auto accountId = peer
 		? QString::number(peer->session().uniqueId())
@@ -550,7 +597,11 @@ void PluginUi::relayoutChatsNow() {
 	std::erase_if(_chats, [](const QPointer<QWidget> &chat) {
 		return !chat;
 	});
-	for (const auto &chat : _chats) {
+	const auto snapshot = _chats;
+	for (const auto &chat : snapshot) {
+		if (!chat) {
+			continue;
+		}
 		// The chat recomputes its layout, and LayoutChatBars, on resize.
 		auto event = QResizeEvent(chat->size(), chat->size());
 		QCoreApplication::sendEvent(chat.data(), &event);

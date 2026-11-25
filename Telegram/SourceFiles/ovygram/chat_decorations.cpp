@@ -9,6 +9,7 @@
 #include "main/main_domain.h"
 #include "data/data_session.h"
 #include "history/history.h"
+#include "ui/style/style_core.h"
 
 #include <QtCore/QJsonArray>
 #include <QtGui/QColor>
@@ -16,6 +17,7 @@
 #include <QtWidgets/QApplication>
 #include <QtWidgets/QWidget>
 
+#include <algorithm>
 #include <cstdlib>
 #include <map>
 #include <typeinfo>
@@ -28,6 +30,8 @@
 
 namespace Ovygram {
 namespace {
+
+constexpr auto kMaxTotalFooterHeight = 512;
 
 struct Decoration {
 	QString installationId;
@@ -89,9 +93,10 @@ int ChatFooterHeight(PeerData *peer) {
 	const auto accountId = QString::number(peer->session().uniqueId());
 	const auto chatId = QString::number(peer->id.value);
 	auto height = 0;
+	const auto cap = style::ConvertScale(kMaxTotalFooterHeight);
 	for (const auto &[id, decoration] : rules) {
-		if (decoration.accountId == accountId && decoration.chatId == chatId) {
-			height += decoration.footerHeight;
+		if (decoration.accountId == accountId && decoration.chatId == chatId && decoration.footerHeight > 0) {
+			height = std::min(cap, height + style::ConvertScale(decoration.footerHeight));
 		}
 	}
 	return height;
@@ -106,7 +111,9 @@ void PaintChatRow(QPainter &p, PeerData *peer, QRect row, bool active) {
 	const auto chatId = QString::number(peer->id.value);
 	p.save();
 	p.setRenderHint(QPainter::Antialiasing);
-	auto nextFooter = row.height() - ChatFooterHeight(peer);
+	const auto totalFooter = ChatFooterHeight(peer);
+	auto nextFooter = row.y() + row.height() - totalFooter;
+	const auto footerEnd = row.y() + row.height();
 	for (const auto &[id, decoration] : decorations) {
 		if (decoration.accountId != accountId
 			|| (decoration.chatId != chatId && decoration.chatId != u"*"_q)) {
@@ -114,12 +121,16 @@ void PaintChatRow(QPainter &p, PeerData *peer, QRect row, bool active) {
 		}
 		// The active row has its own strong background; keep it readable.
 		auto area = row;
-		if (decoration.footerHeight) {
-			area = QRect(area.x(), nextFooter, area.width(), decoration.footerHeight);
-			nextFooter += decoration.footerHeight;
+		if (decoration.footerHeight > 0) {
+			const auto scaled = std::min(style::ConvertScale(decoration.footerHeight), footerEnd - nextFooter);
+			if (scaled <= 0) {
+				continue;
+			}
+			area = QRect(area.x(), nextFooter, area.width(), scaled);
+			nextFooter += scaled;
 		}
 		p.save();
-		if (decoration.footerHeight) p.setClipRect(area, Qt::IntersectClip);
+		p.setClipRect(area, Qt::IntersectClip);
 		if (decoration.background.isValid() && !active) {
 			p.fillRect(area, decoration.background);
 		}
@@ -158,7 +169,7 @@ void Handle(const QJsonObject &command) {
 			|| (decoration.footerHeight && decoration.chatId == u"*"_q)) {
 			throw std::runtime_error("A footer requires one target and height 1..256.");
 		}
-		if (decoration.footerHeight && existing == end(decorations) && decorations.size() >= 4096) {
+		if (existing == end(decorations) && decorations.size() >= 4096) {
 			throw std::runtime_error("Too many decorations.");
 		}
 		const auto background = command.value(u"background"_q);

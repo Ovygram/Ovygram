@@ -3,11 +3,16 @@
 
 #include <QtGui/QPainter>
 
-#include <stdexcept>
+#include <algorithm>
 #include <cmath>
+#include <stdexcept>
 
 namespace Ovygram {
 namespace {
+
+constexpr auto kMaxCoordinate = 16384.;
+constexpr auto kMaxLineWidth = 64.;
+constexpr auto kMaxPaintTextLength = 1024;
 
 double Resolve(double value, int size) {
 	return (value < 0) ? (size + value) : value;
@@ -32,24 +37,28 @@ std::vector<PaintOp> ParsePaintOps(const QJsonArray &commands, int limit) {
 		const auto command = value.toObject();
 		const auto name = command.value(u"op"_q).toString();
 		const auto number = [&](const char *key, double fallback = 0.) {
-			const auto result = command.value(QLatin1String(key)).toDouble(fallback);
-			if (!std::isfinite(result)) {
+			const auto value = command.value(QLatin1String(key)).toDouble(fallback);
+			if (!std::isfinite(value)) {
 				throw std::runtime_error("Draw coordinates must be finite numbers.");
 			}
-			return result;
+			return value;
 		};
+		auto text = command.value(u"text"_q).toString();
+		if (text.size() > kMaxPaintTextLength) {
+			text.truncate(kMaxPaintTextLength);
+		}
 		auto op = PaintOp{
-			.x = number("x"),
-			.y = number("y"),
-			.width = number("width"),
-			.height = number("height"),
-			.x2 = number("x2"),
-			.y2 = number("y2"),
-			.radius = number("radius"),
-			.lineWidth = std::max(number("width", 1.), 1.),
+			.x = std::clamp(number("x"), -kMaxCoordinate, kMaxCoordinate),
+			.y = std::clamp(number("y"), -kMaxCoordinate, kMaxCoordinate),
+			.width = std::clamp(number("width"), 0., kMaxCoordinate),
+			.height = std::clamp(number("height"), 0., kMaxCoordinate),
+			.x2 = std::clamp(number("x2"), -kMaxCoordinate, kMaxCoordinate),
+			.y2 = std::clamp(number("y2"), -kMaxCoordinate, kMaxCoordinate),
+			.radius = std::clamp(number("radius"), 0., kMaxCoordinate),
+			.lineWidth = std::clamp(number("width", 1.), 1., kMaxLineWidth),
 			.size = int(std::clamp(number("size", 13.), 6., 96.)),
 			.color = ParsePaintColor(command.value(u"color"_q)),
-			.text = command.value(u"text"_q).toString(),
+			.text = std::move(text),
 		};
 		if (name == u"rect"_q) {
 			op.type = PaintOp::Type::Rect;
@@ -57,8 +66,8 @@ std::vector<PaintOp> ParsePaintOps(const QJsonArray &commands, int limit) {
 			op.type = PaintOp::Type::Ellipse;
 		} else if (name == u"line"_q) {
 			op.type = PaintOp::Type::Line;
-			op.x = number("x1");
-			op.y = number("y1");
+			op.x = std::clamp(number("x1"), -kMaxCoordinate, kMaxCoordinate);
+			op.y = std::clamp(number("y1"), -kMaxCoordinate, kMaxCoordinate);
 		} else if (name == u"text"_q) {
 			op.type = PaintOp::Type::Text;
 		} else {
@@ -70,6 +79,11 @@ std::vector<PaintOp> ParsePaintOps(const QJsonArray &commands, int limit) {
 }
 
 void PaintOps(QPainter &p, const std::vector<PaintOp> &ops, QRect row) {
+	if (ops.empty() || row.isEmpty()) {
+		return;
+	}
+	p.save();
+	p.setClipRect(row, Qt::IntersectClip);
 	for (const auto &op : ops) {
 		const auto x = row.x() + Resolve(op.x, row.width());
 		const auto y = row.y() + Resolve(op.y, row.height());
@@ -102,6 +116,7 @@ void PaintOps(QPainter &p, const std::vector<PaintOp> &ops, QRect row) {
 		} break;
 		}
 	}
+	p.restore();
 }
 
 } // namespace Ovygram

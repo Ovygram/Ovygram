@@ -131,8 +131,19 @@ void PluginMedia::pick(
 		[=](FileDialog::OpenResult &&result) {
 			PickerOpen = false;
 			if (!guard || !pending()) return;
-			if (!weak || Core::App().passcodeLocked()) {
+			if (!weak || Core::App().passcodeLocked()
+				|| ProtectedSurfaceExists() || InstallationUiActive()) {
 				fail(u"Аккаунт закрыт или приложение заблокировано."_q);
+				return;
+			}
+			const auto currentOwned = std::count_if(
+				guard->_grants.begin(),
+				guard->_grants.end(),
+				[&](const auto &entry) {
+					return entry.second->owner == installationId;
+				});
+			if (currentOwned >= 4 || guard->_grants.size() >= 32) {
+				fail(u"Слишком много активных передач файлов."_q);
 				return;
 			}
 			auto grant = std::make_unique<Grant>();
@@ -159,7 +170,7 @@ void PluginMedia::pick(
 				{ u"token"_q, token }, { u"name"_q, filename },
 				{ u"size"_q, grant->size },
 			};
-			_grants[token] = std::move(grant);
+			guard->_grants[token] = std::move(grant);
 			reply(descriptor);
 		}, [=] {
 			PickerOpen = false;

@@ -74,9 +74,7 @@ void Run(const QString &id, quint64 generation, const QString &source, const QSt
 	const auto i = state.entries.find(id);
 	if (i == end(state.entries) || i->second.generation != generation
 		|| !state.send || Core::App().passcodeLocked() || InstallationUiActive()) return;
-	// The link handler is called by the confirmation itself. Other entry
-	// points must stay inactive while protected controls are on screen.
-	if (source != u"link"_q && ProtectedSurfaceExists()) return;
+	if (ProtectedSurfaceExists()) return;
 	const auto window = Core::App().activePrimaryWindow();
 	const auto controller = window ? window->sessionController() : nullptr;
 	const auto active = controller ? QString::number(controller->session().uniqueId()) : QString();
@@ -159,12 +157,19 @@ void Configure(const QString &id, quint64 generation) {
 	controller->window().activate();
 	controller->show(Box([=](not_null<Ui::GenericBox*> box) {
 		ProtectSurface(box);
+		box->setWidth(style::ConvertScale(380));
 		box->setTitle(rpl::single(u"Сочетание клавиш плагина"_q));
-		box->addRow(object_ptr<Ui::FlatLabel>(box, label, st::defaultFlatLabel));
-		const auto field = box->addRow(object_ptr<Ui::FlatLabel>(box, current, st::defaultFlatLabel));
+		box->addTopButton(st::settingsPluginClose, [=] { box->closeBox(); });
+		box->addRow(object_ptr<Ui::FlatLabel>(box, label, st::boxLabel));
+		const auto field = box->addRow(object_ptr<Ui::FlatLabel>(box, current, st::boxLabel));
 		// Recording is explicitly started in native UI and stops when the
 		// box closes or loses focus. Plugins receive only action activation.
 		const auto recorder = box->lifetime().make_state<std::unique_ptr<base::GlobalShortcutManager>>();
+		box->lifetime().add([=] {
+			if (*recorder) {
+				(*recorder)->stopRecording();
+			}
+		});
 		QObject::connect(qApp, &QGuiApplication::applicationStateChanged, box.get(), [=](Qt::ApplicationState s) {
 			if (s != Qt::ApplicationActive && *recorder) {
 				(*recorder)->stopRecording();
@@ -180,7 +185,11 @@ void Configure(const QString &id, quint64 generation) {
 				field->setText(u"Глобальные сочетания недоступны"_q);
 				return;
 			}
-			if (!*recorder) *recorder = base::CreateGlobalShortcutManager();
+			if (!*recorder) {
+				*recorder = base::CreateGlobalShortcutManager();
+			} else {
+				(*recorder)->stopRecording();
+			}
 			field->setText(u"Нажмите и отпустите сочетание клавиш"_q);
 			(*recorder)->startRecording(nullptr, crl::guard(box, [=](base::GlobalShortcut value) {
 				if (Core::App().passcodeLocked() || !box->window()->isActiveWindow()) return;
@@ -328,12 +337,24 @@ void OpenLink(Window::SessionController *controller, const QString &owner, const
 		controller->show(Box([=](not_null<Ui::GenericBox*> box) {
 			ProtectSurface(box);
 			box->setTitle(rpl::single(u"Вызов действия плагина"_q));
-			box->addRow(object_ptr<Ui::FlatLabel>(box, label, st::defaultFlatLabel));
+			box->addTopButton(st::settingsPluginClose, [=] { box->closeBox(); });
+			box->addRow(object_ptr<Ui::FlatLabel>(box, label, st::boxLabel));
+			const auto confirmed = std::make_shared<bool>(false);
+			QObject::connect(box.get(), &QObject::destroyed, qApp, [=] {
+				if (!*confirmed) {
+					return;
+				}
+				QTimer::singleShot(0, qApp, [=] {
+					if (const auto strong = session.get()) {
+						Run(id, generation, u"link"_q, QString::number(strong->uniqueId()));
+					}
+				});
+			});
+			box->addLeftButton(rpl::single(u"Отмена"_q), [=] { box->closeBox(); }, st::settingsPluginDialog);
 			box->addButton(rpl::single(u"Выполнить"_q), [=] {
-				if (const auto strong = session.get()) Run(id, generation, u"link"_q, QString::number(strong->uniqueId()));
+				*confirmed = true;
 				box->closeBox();
 			}, st::settingsPluginDialog);
-			box->addButton(rpl::single(u"Отмена"_q), [=] { box->closeBox(); }, st::settingsPluginDialog);
 		}));
 		return;
 	}

@@ -141,7 +141,7 @@ class ConnectionState::Widget::ProxyIcon final : public Ui::RpWidget {
 public:
 	ProxyIcon(QWidget *parent);
 
-	void setToggled(bool toggled, bool proxy);
+	void setToggled(bool toggled);
 	void setOpacity(float64 opacity);
 
 protected:
@@ -154,7 +154,6 @@ private:
 	QPixmap _cacheOn;
 	QPixmap _cacheOff;
 	bool _toggled = true;
-	bool _proxy = false;
 
 };
 
@@ -196,10 +195,9 @@ void ConnectionState::Widget::ProxyIcon::refreshCacheImages() {
 	_cacheOff = prepareCache(st::connectingProxyOff);
 }
 
-void ConnectionState::Widget::ProxyIcon::setToggled(bool toggled, bool proxy) {
-	if (_toggled != toggled || _proxy != proxy) {
+void ConnectionState::Widget::ProxyIcon::setToggled(bool toggled) {
+	if (_toggled != toggled) {
 		_toggled = toggled;
-		_proxy = proxy;
 		update();
 	}
 }
@@ -217,27 +215,7 @@ void ConnectionState::Widget::ProxyIcon::setOpacity(float64 opacity) {
 void ConnectionState::Widget::ProxyIcon::paintEvent(QPaintEvent *e) {
 	auto p = QPainter(this);
 	p.setOpacity(_opacity);
-	if (!_proxy) {
-		p.drawPixmap(0, 0, _toggled ? _cacheOn : _cacheOff);
-		return;
-	}
-	PainterHighQualityEnabler hq(p);
-	p.fillRect(rect(), st::windowBg);
-	const auto center = QRectF(rect()).center();
-	const auto radius = std::min(width(), height()) * 0.43;
-	p.setPen(Qt::NoPen);
-	p.setBrush(st::windowBgActive);
-	p.drawEllipse(center, radius, radius);
-	auto mark = QPainterPath();
-	mark.moveTo(center + QPointF(-radius * .46, -radius * .31));
-	mark.lineTo(center + QPointF(0, radius * .43));
-	mark.lineTo(center + QPointF(radius * .46, -radius * .31));
-	auto pen = QPen(st::windowFgActive->c, std::max(radius * .20, 1.));
-	pen.setCapStyle(Qt::RoundCap);
-	pen.setJoinStyle(Qt::RoundJoin);
-	p.setPen(pen);
-	p.setBrush(Qt::NoBrush);
-	p.drawPath(mark);
+	p.drawPixmap(0, 0, _toggled ? _cacheOn : _cacheOff);
 }
 
 bool ConnectionState::State::operator==(const State &other) const {
@@ -671,7 +649,7 @@ void ConnectionState::Widget::updateRetryGeometry() {
 
 void ConnectionState::Widget::setLayout(const Layout &layout) {
 	_currentLayout = layout;
-	_proxyIcon->setToggled(_currentLayout.proxyEnabled, _currentLayout.pluginProxy.startsWith(u"PROXY ·"_q));
+	_proxyIcon->setToggled(_currentLayout.proxyEnabled);
 	refreshRetryLink(_currentLayout.hasRetry);
 	setToolTip(_currentLayout.pluginProxy);
 	setAccessibleName(_currentLayout.pluginProxy.isEmpty() ? _currentLayout.text : _currentLayout.pluginProxy);

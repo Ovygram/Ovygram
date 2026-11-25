@@ -38,7 +38,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "apiwrap.h"
 #include "api/api_updates.h"
 #include "settings/settings_intro.h"
+#ifdef OVYGRAM_ENABLED
 #include "ovygram/protected_ui.h"
+#endif // OVYGRAM_ENABLED
 #include "base/options.h"
 #include "wallet/wallet_panel.h"
 #include "window/notifications_manager.h"
@@ -185,7 +187,9 @@ void MainWindow::setupPasscodeLock() {
 	auto animated = (_main || _intro);
 	auto oldContentCache = animated ? grabForSlideAnimation() : QPixmap();
 	_passcodeLock.create(bodyWidget(), &controller());
+#ifdef OVYGRAM_ENABLED
 	Ovygram::ProtectSurface(_passcodeLock.get());
+#endif // OVYGRAM_ENABLED
 	updateControlsGeometry();
 
 	ui_hideSettingsAndLayer(anim::type::instant);
@@ -210,6 +214,9 @@ void MainWindow::setupSetupEmailLock() {
 	auto animated = (_main || _intro || _passcodeLock);
 	auto oldContentCache = animated ? grabForSlideAnimation() : QPixmap();
 	_setupEmailLock.create(bodyWidget(), &controller());
+#ifdef OVYGRAM_ENABLED
+	Ovygram::ProtectSurface(_setupEmailLock.get());
+#endif // OVYGRAM_ENABLED
 	updateControlsGeometry();
 
 	ui_hideSettingsAndLayer(anim::type::instant);

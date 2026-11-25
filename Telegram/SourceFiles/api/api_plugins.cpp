@@ -272,7 +272,10 @@ PluginClient::~PluginClient() {
 	PluginProxyIndicator = QString();
 	Ovygram::SetPluginUpdateDismissCallback({});
 	Ovygram::SetPluginUpdateNotification({});
-	_runtime->setClient({});
+	try {
+		_runtime->setClient({});
+	} catch (...) {
+	}
 	while (!_pending.empty()) {
 		cancel(_pending.begin()->first);
 	}
@@ -392,32 +395,42 @@ void PluginClient::fail(
 }
 
 void PluginClient::setProxyRoute(const QString &route, const QJsonObject &offer) {
+	const auto web = (route == u"pages"_q || route == u"mini_apps"_q);
+	const auto validRoute = (route == u"default"_q
+		|| route == u"api"_q
+		|| route == u"files"_q
+		|| web);
+	if (!validRoute) {
+		throw std::runtime_error("Unknown proxy route.");
+	}
 	auto proxy = std::optional<MTP::ProxyData>();
+	auto token = QString();
+	auto label = QString();
 	if (!offer.isEmpty()) {
-		const auto web = (route == u"pages"_q || route == u"mini_apps"_q);
 		const auto port = offer.value(u"port"_q).toInt();
-		if (port < 1024 || port > 65535 || !offer.value(u"routes"_q).toArray().contains(route)
-			|| offer.value(u"protocol"_q).toString() != (web ? u"http"_q : u"socks5"_q)) {
+		const auto user = offer.value(u"user"_q).toString();
+		const auto password = offer.value(u"password"_q).toString();
+		if (port < 1024 || port > 65535
+			|| !offer.value(u"routes"_q).toArray().contains(route)
+			|| offer.value(u"protocol"_q).toString() != (web ? u"http"_q : u"socks5"_q)
+			|| (web && (user.isEmpty() || password.isEmpty()))) {
 			throw std::runtime_error("Invalid local proxy offer.");
 		}
 		proxy.emplace();
 		proxy->type = web ? MTP::ProxyData::Type::Http : MTP::ProxyData::Type::Socks5;
 		proxy->host = u"127.0.0.1"_q;
 		proxy->port = port;
-		proxy->user = offer.value(u"user"_q).toString();
-		proxy->password = offer.value(u"password"_q).toString();
-		_activeProxyTokens[route] = offer.value(u"token"_q).toString();
-		const auto label = offer.value(u"label"_q).toString();
-		_activeProxyLabels[route] = label.isEmpty() ? u"Прокси плагина"_q : label;
-	} else {
-		_activeProxyTokens.erase(route);
-		_activeProxyLabels.erase(route);
+		proxy->user = user;
+		proxy->password = password;
+		token = offer.value(u"token"_q).toString();
+		const auto rawLabel = offer.value(u"label"_q).toString();
+		label = rawLabel.isEmpty() ? u"Прокси плагина"_q : rawLabel;
 	}
 	if (route == u"default"_q) {
 		Core::App().setPluginProxy(proxy);
 	} else if (route == u"api"_q || route == u"files"_q) {
 		Core::App().setPluginSessionProxy(route == u"files"_q, proxy);
-	} else if (route == u"pages"_q || route == u"mini_apps"_q) {
+	} else if (web) {
 		const auto category = (route == u"pages"_q)
 			? Webview::ProxyScope::Page : Webview::ProxyScope::MiniApp;
 		auto local = Webview::LocalProxy();
@@ -427,6 +440,13 @@ void PluginClient::setProxyRoute(const QString &route, const QJsonObject &offer)
 			local.password = proxy->password.toStdString();
 		}
 		Webview::SetLocalProxy(category, std::move(local));
+	}
+	if (proxy) {
+		_activeProxyTokens[route] = std::move(token);
+		_activeProxyLabels[route] = std::move(label);
+	} else {
+		_activeProxyTokens.erase(route);
+		_activeProxyLabels.erase(route);
 	}
 	updateProxyIndicator();
 }
@@ -447,12 +467,16 @@ QJsonArray PluginClient::proxyOffers() {
 	const auto offers = dispatch({ { u"action"_q, u"proxy_offers"_q } }).toArray();
 	const auto active = _activeProxyTokens;
 	for (const auto &[route, token] : active) {
-		if (route == u"default"_q && !Core::App().settings().proxy().temporaryProxy()) {
-			setProxyRoute(route, {});
-		} else if (std::none_of(offers.begin(), offers.end(), [&](const QJsonValue &value) {
-			return value.toObject().value(u"token"_q).toString() == token;
-		})) {
-			setProxyRoute(route, {});
+		try {
+			if (route == u"default"_q && !Core::App().settings().proxy().temporaryProxy()) {
+				setProxyRoute(route, {});
+			} else if (std::none_of(offers.begin(), offers.end(), [&](const QJsonValue &value) {
+				return value.toObject().value(u"token"_q).toString() == token;
+			})) {
+				setProxyRoute(route, {});
+			}
+		} catch (const std::exception &error) {
+			LOG(("Ovygram proxy clear (%1): %2").arg(route, QString::fromUtf8(error.what())));
 		}
 	}
 	const auto saved = dispatch({ { u"action"_q, u"proxy_routes"_q } }).toObject();
@@ -465,7 +489,11 @@ QJsonArray PluginClient::proxyOffers() {
 			if (offer.value(u"restore"_q).toBool()
 				&& offer.value(u"owner"_q).toString() == owner
 				&& offer.value(u"routes"_q).toArray().contains(route)) {
-				setProxyRoute(route, offer);
+				try {
+					setProxyRoute(route, offer);
+				} catch (const std::exception &error) {
+					LOG(("Ovygram proxy restore (%1): %2").arg(route, QString::fromUtf8(error.what())));
+				}
 				break;
 			}
 		}
@@ -474,11 +502,14 @@ QJsonArray PluginClient::proxyOffers() {
 }
 
 void PluginClient::showPluginProxies(Fn<void()> onClosed) {
-	Ui::show(Box([=, this](not_null<Ui::GenericBox*> box) {
+	const auto guard = QPointer(this);
+	Ui::show(Box([=](not_null<Ui::GenericBox*> box) {
 		Ovygram::ProtectSurface(box);
-		if (onClosed) {
-			connect(box.get(), &QObject::destroyed, this, [=, this] {
-				QTimer::singleShot(0, this, onClosed);
+		if (onClosed && guard) {
+			connect(box.get(), &QObject::destroyed, guard.data(), [=] {
+				if (guard) {
+					QTimer::singleShot(0, guard.data(), onClosed);
+				}
 			});
 		}
 		const auto window = Core::App().activePrimaryWindow();
@@ -486,11 +517,14 @@ void PluginClient::showPluginProxies(Fn<void()> onClosed) {
 		const auto width = window
 			? std::min(preferredWidth, std::max(window->widget()->width() - style::ConvertScale(32), 1))
 			: preferredWidth;
-		Ovygram::SetupPluginProxyBox(box, width, [=, this] {
+		Ovygram::SetupPluginProxyBox(box, width, [=] {
 			auto result = Ovygram::ProxyViewState();
-			result.offers = proxyOffers();
-			result.saved = dispatch({ { u"action"_q, u"proxy_routes"_q } }).toObject();
-			for (const auto &[route, token] : _activeProxyTokens) {
+			if (!guard) {
+				return result;
+			}
+			result.offers = guard->proxyOffers();
+			result.saved = guard->dispatch({ { u"action"_q, u"proxy_routes"_q } }).toObject();
+			for (const auto &[route, token] : guard->_activeProxyTokens) {
 				const auto offer = std::find_if(result.offers.begin(), result.offers.end(),
 					[&](const QJsonValue &value) {
 						return value.toObject().value(u"token"_q).toString() == token;
@@ -500,8 +534,19 @@ void PluginClient::showPluginProxies(Fn<void()> onClosed) {
 				}
 			}
 			return result;
-		}, [=, this](const QString &route, const QJsonObject &offer) {
-			auto saved = dispatch({ { u"action"_q, u"proxy_routes"_q } }).toObject();
+		}, [=](const QString &route, const QJsonObject &offer) {
+			if (!guard) {
+				return;
+			}
+			if (route.isEmpty()) {
+				const auto active = guard->_activeProxyTokens;
+				for (const auto &[key, token] : active) {
+					guard->setProxyRoute(key, {});
+				}
+			} else {
+				guard->setProxyRoute(route, offer);
+			}
+			auto saved = guard->dispatch({ { u"action"_q, u"proxy_routes"_q } }).toObject();
 			if (route.isEmpty()) {
 				saved = QJsonObject();
 			} else if (offer.isEmpty()) {
@@ -509,15 +554,7 @@ void PluginClient::showPluginProxies(Fn<void()> onClosed) {
 			} else {
 				saved.insert(route, offer.value(u"owner"_q));
 			}
-			dispatch({ { u"action"_q, u"save_proxy_routes"_q }, { u"routes"_q, saved } });
-			if (route.isEmpty()) {
-				const auto active = _activeProxyTokens;
-				for (const auto &[key, token] : active) {
-					setProxyRoute(key, {});
-				}
-			} else {
-				setProxyRoute(route, offer);
-			}
+			guard->dispatch({ { u"action"_q, u"save_proxy_routes"_q }, { u"routes"_q, saved } });
 		});
 	}), Ui::LayerOption::KeepOther);
 }
@@ -534,6 +571,7 @@ void PluginClient::receive(const QByteArray &request) {
 			&& method != u"ui.action.remove"_q
 			&& (method.startsWith(u"ui."_q) || method.startsWith(u"native."_q)
 				|| method.startsWith(u"widgets."_q) || method.startsWith(u"compose."_q)
+				|| method.startsWith(u"actions."_q)
 				|| method == u"python_ui"_q || method == u"appearance.palette"_q)) {
 			throw std::runtime_error("Plugin UI access is suspended during installation.");
 		}
@@ -637,10 +675,16 @@ void PluginClient::receive(const QByteArray &request) {
 			}));
 			return;
 		} else if (method == u"actions.configure"_q) {
+			if (Core::App().passcodeLocked()) {
+				throw std::runtime_error("Actions are unavailable while locked.");
+			}
 			reply(id, Ovygram::Actions::ConfigureOwned(command.value(u"installation_id"_q).toString(),
 				command.value(u"rule_id"_q).toString()));
 			return;
 		} else if (method == u"actions.register"_q) {
+			if (Core::App().passcodeLocked()) {
+				throw std::runtime_error("Actions are unavailable while locked.");
+			}
 			Ovygram::Actions::Register(command);
 			reply(id, true);
 			return;
@@ -960,7 +1004,8 @@ bool PluginClient::beforeRpc(
 		MTP::details::SerializedRequest &request,
 		MTP::ResponseHandler &callbacks) {
 	const auto owner = session(instance);
-	if (!owner || !(_runtime->hookMask() & 7U)) {
+	const auto mask = _runtime->hookMask();
+	if (!owner || !(mask & 7U)) {
 		return true;
 	}
 	const auto accountId = AccountId(*owner);
@@ -980,7 +1025,11 @@ bool PluginClient::beforeRpc(
 		});
 		return false;
 	};
-	auto requestData = QString();
+	const auto offset = MTP::details::SerializedRequest::kMessageBodyPosition;
+	const auto data = QByteArray(
+		reinterpret_cast<const char*>(request->constData() + offset),
+		(*request)[MTP::details::SerializedRequest::kMessageLengthPosition]);
+	auto requestData = QString::fromLatin1(data.toBase64());
 	auto stack = QJsonArray();
 	for (const auto &[id, pending] : _pending) {
 		if (pending.requestId == requestId) {
@@ -988,58 +1037,58 @@ bool PluginClient::beforeRpc(
 			break;
 		}
 	}
-	try {
-		const auto offset = MTP::details::SerializedRequest::kMessageBodyPosition;
-		const auto data = QByteArray(
-			reinterpret_cast<const char*>(request->constData() + offset),
-			(*request)[MTP::details::SerializedRequest::kMessageLengthPosition]);
-		requestData = QString::fromLatin1(data.toBase64());
-		const auto result = dispatch({
-			{ u"action"_q, u"native_hook"_q },
-			{ u"request"_q, QJsonObject{
-				{ u"point"_q, u"before_rpc"_q },
-				{ u"account_id"_q, accountId },
-				{ u"request_id"_q, requestId },
-				{ u"hook_stack"_q, stack },
-				{ u"data"_q, QString::fromLatin1(data.toBase64()) },
-			} },
-		}).toObject();
-		const auto changed = Decode(result.value(u"data"_q));
-		auto replacement = MTP::details::SerializedRequest::Prepare(changed.size() / sizeof(mtpPrime));
-		replacement->resize(offset + changed.size() / sizeof(mtpPrime));
-		memcpy(replacement->data() + offset, changed.constData(), changed.size());
-		auto localTexts = std::vector<std::pair<uint64, TextWithEntities>>();
-		for (const auto &entry : result.value(u"local_texts"_q).toArray()) {
-			const auto object = entry.toObject();
-			const auto buffer = Buffer(Decode(object.value(u"text"_q)));
-			auto from = buffer.constData();
-			auto text = MTPTextWithEntities();
-			if (!text.read(from, from + buffer.size()) || from != buffer.constData() + buffer.size()) {
-				throw std::runtime_error("Invalid modified message text.");
+	if (mask & 3U) {
+		try {
+			const auto result = dispatch({
+				{ u"action"_q, u"native_hook"_q },
+				{ u"request"_q, QJsonObject{
+					{ u"point"_q, u"before_rpc"_q },
+					{ u"account_id"_q, accountId },
+					{ u"request_id"_q, requestId },
+					{ u"hook_stack"_q, stack },
+					{ u"data"_q, requestData },
+				} },
+			}).toObject();
+			const auto changed = Decode(result.value(u"data"_q));
+			auto replacement = MTP::details::SerializedRequest::Prepare(changed.size() / sizeof(mtpPrime));
+			replacement->resize(offset + changed.size() / sizeof(mtpPrime));
+			memcpy(replacement->data() + offset, changed.constData(), changed.size());
+			auto localTexts = std::vector<std::pair<uint64, TextWithEntities>>();
+			for (const auto &entry : result.value(u"local_texts"_q).toArray()) {
+				const auto object = entry.toObject();
+				const auto buffer = Buffer(Decode(object.value(u"text"_q)));
+				auto from = buffer.constData();
+				auto text = MTPTextWithEntities();
+				if (!text.read(from, from + buffer.size()) || from != buffer.constData() + buffer.size()) {
+					throw std::runtime_error("Invalid modified message text.");
+				}
+				localTexts.emplace_back(
+					uint64(object.value(u"random_id"_q).toString().toLongLong()),
+					ParseTextWithEntities(owner, text));
 			}
-			localTexts.emplace_back(
-				uint64(object.value(u"random_id"_q).toString().toLongLong()),
-				ParseTextWithEntities(owner, text));
-		}
-		request = std::move(replacement);
-		requestData = QString::fromLatin1(changed.toBase64());
-		for (auto &[randomId, text] : localTexts) {
-			if (const auto item = owner->data().message(owner->data().messageIdByRandomId(randomId))) {
-				// Registration keeps an existing entry, and a short sent
-				// update restores the message text from that entry.
-				owner->data().unregisterMessageSentData(randomId);
-				owner->data().registerMessageSentData(randomId, item->history()->peer->id, text.text);
-				item->setText(std::move(text));
-				// setText() repaints only a message that had text before,
-				// and a media message may have had no caption.
-				owner->data().requestItemTextRefresh(item);
-				item->history()->updateChatListEntry();
+			request = std::move(replacement);
+			requestData = QString::fromLatin1(changed.toBase64());
+			for (auto &[randomId, text] : localTexts) {
+				if (const auto item = owner->data().message(owner->data().messageIdByRandomId(randomId))) {
+					// Registration keeps an existing entry, and a short sent
+					// update restores the message text from that entry.
+					owner->data().unregisterMessageSentData(randomId);
+					owner->data().registerMessageSentData(randomId, item->history()->peer->id, text.text);
+					item->setText(std::move(text));
+					// setText() repaints only a message that had text before,
+					// and a media message may have had no caption.
+					owner->data().requestItemTextRefresh(item);
+					item->history()->updateChatListEntry();
+				}
 			}
+		} catch (const HookCancellation &error) {
+			return reject(u"PLUGIN_CANCELLED"_q, QString::fromUtf8(error.what()));
+		} catch (const std::exception &error) {
+			return reject(u"PLUGIN_HOOK"_q, QString::fromUtf8(error.what()));
 		}
-	} catch (const HookCancellation &error) {
-		return reject(u"PLUGIN_CANCELLED"_q, QString::fromUtf8(error.what()));
-	} catch (const std::exception &error) {
-		return reject(u"PLUGIN_HOOK"_q, QString::fromUtf8(error.what()));
+	}
+	if (!(mask & (1U << 2))) {
+		return true;
 	}
 	const auto original = std::make_shared<MTP::ResponseHandler>(std::move(callbacks));
 	const auto guard = QPointer(this);
@@ -1056,11 +1105,16 @@ bool PluginClient::beforeRpc(
 		*handled = true;
 		auto changed = response;
 		auto error = std::optional<MTP::Error>();
-		if (!afterRpc(accountId, requestId, requestData, stack, changed, error)) {
+		if (!afterRpc(accountId, requestId, requestData, stack, changed, error) && !error) {
 			error = MTP::Error::Local(u"PLUGIN_HOOK"_q, u"Ошибка обработки ответа плагином."_q);
 		}
 		if (error) {
-			return original->fail ? original->fail(*error, changed) : false;
+			if (original->fail) {
+				original->fail(*error, changed);
+			}
+			// Already dispatched to original->fail; returning false would make
+			// MTP emit a bogus second fail(RESPONSE_PARSE_FAILED).
+			return true;
 		}
 		return original->done ? original->done(changed) : true;
 	};
@@ -1078,7 +1132,7 @@ bool PluginClient::beforeRpc(
 		*handled = true;
 		auto changed = response;
 		auto changedError = std::optional<MTP::Error>(error);
-		if (!afterRpc(accountId, requestId, requestData, stack, changed, changedError)) {
+		if (!afterRpc(accountId, requestId, requestData, stack, changed, changedError) && !changedError) {
 			changedError = MTP::Error::Local(u"PLUGIN_HOOK"_q, u"Ошибка обработки ответа плагином."_q);
 		}
 		if (changedError) {
@@ -1140,7 +1194,9 @@ bool PluginClient::afterRpc(
 		}
 		return true;
 	} catch (const HookCancellation &failure) {
-		notifyHookError(QString::fromUtf8(failure.what()));
+		const auto text = QString::fromUtf8(failure.what());
+		notifyHookError(text);
+		error = MTP::Error::Local(u"PLUGIN_CANCELLED"_q, text);
 		return false;
 	} catch (const std::exception &failure) {
 		// A broken hook must not break Telegram: keep the server answer.
@@ -1211,14 +1267,17 @@ void PluginClient::observeSentMessage(
 void PluginClient::observeUpdate(Main::Session &session, const MTPUpdate &update) {
 	const auto mask = _runtime->hookMask();
 	if (!mask) return;
+	const auto has = [&](PluginEventBit bit) {
+		return (mask & (1U << static_cast<unsigned>(bit))) != 0;
+	};
 	switch (update.type()) {
 	case mtpc_updateMessageReactions:
-		if (!observes(PluginEventBit::Reaction)) return;
+		if (!has(PluginEventBit::Reaction)) return;
 		break;
 	case mtpc_updateEditForumTopic:
 	case mtpc_updatePinnedForumTopic:
 	case mtpc_updatePinnedForumTopics:
-		if (!observes(PluginEventBit::Topic)) return;
+		if (!has(PluginEventBit::Topic)) return;
 		break;
 	case mtpc_updateReadHistoryInbox:
 	case mtpc_updateReadHistoryOutbox:
@@ -1230,7 +1289,7 @@ void PluginClient::observeUpdate(Main::Session &session, const MTPUpdate &update
 	case mtpc_updateReadChannelDiscussionOutbox:
 	case mtpc_updateReadMonoForumInbox:
 	case mtpc_updateReadMonoForumOutbox:
-		if (!observes(PluginEventBit::Read)) return;
+		if (!has(PluginEventBit::Read)) return;
 		break;
 	case mtpc_updateNewMessage:
 	case mtpc_updateNewChannelMessage:
@@ -1238,7 +1297,7 @@ void PluginClient::observeUpdate(Main::Session &session, const MTPUpdate &update
 	case mtpc_updateEditChannelMessage:
 	case mtpc_updateDeleteMessages:
 	case mtpc_updateDeleteChannelMessages:
-		if (!(mask & ((1U << 4) | (1U << 5) | (1U << 6))) && !observes(PluginEventBit::Topic)) return;
+		if (!(mask & ((1U << 4) | (1U << 5) | (1U << 6))) && !has(PluginEventBit::Topic)) return;
 		break;
 	default:
 		return;
@@ -1324,7 +1383,11 @@ void PluginClient::postLocalEvent(PluginEventBit bit, QJsonObject event) {
 
 void PluginSelectionChanged(History &history, QWidget *window, const MessageIdsList &ids) {
 	const auto client = Core::App().pluginClient();
-	if (!client || !client->observes(PluginEventBit::Selection) || Core::App().passcodeLocked()) return;
+	if (!client || !window || !window->window()
+		|| !client->observes(PluginEventBit::Selection)
+		|| Core::App().passcodeLocked()) {
+		return;
+	}
 	const auto handle = Ovygram::Widgets::HandleFor(window->window());
 	if (handle.isEmpty()) return;
 	auto rows = QJsonArray();

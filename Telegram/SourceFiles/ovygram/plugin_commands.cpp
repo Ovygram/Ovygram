@@ -19,6 +19,7 @@
 #include <QtCore/QPointer>
 #include <QtGui/QKeyEvent>
 #include <QtGui/QMouseEvent>
+#include <QtGui/QWheelEvent>
 #include <QtWidgets/QTextEdit>
 
 #include <stdexcept>
@@ -109,7 +110,10 @@ protected:
 		auto top = int(st::lineWidth);
 		for (auto i = 0; i != rows; ++i, top += height) {
 			const auto &row = _rows[_offset + i];
-			if (_offset + i == _selected || i == _hovered) {
+			const auto highlighted = (_hovered >= 0)
+				? (i == _hovered)
+				: (_offset + i == _selected);
+			if (highlighted) {
 				p.fillRect(0, top, width(), height, st::windowBgOver);
 			}
 			const auto baseline = top
@@ -167,6 +171,24 @@ protected:
 		if (e->button() == Qt::LeftButton && row >= 0) {
 			_chosen(_offset + row);
 		}
+	}
+
+	void wheelEvent(QWheelEvent *e) override {
+		const auto maxOffset = std::max(int(_rows.size()) - kVisibleRows, 0);
+		if (maxOffset <= 0) {
+			return;
+		}
+		const auto delta = e->angleDelta().y();
+		if (!delta) {
+			return;
+		}
+		const auto step = (delta > 0) ? -1 : 1;
+		const auto next = std::clamp(_offset + step, 0, maxOffset);
+		if (next != _offset) {
+			_offset = next;
+			update();
+		}
+		e->accept();
 	}
 
 private:
@@ -259,6 +281,9 @@ public:
 		not_null<QWidget*> wrap,
 		not_null<Ui::InputField*> field,
 		Fn<PeerData*()> peer);
+	~Controller() override {
+		delete _panel.data();
+	}
 
 	[[nodiscard]] Ui::InputField *field() const {
 		return _field;
@@ -387,7 +412,8 @@ void Controller::changed() {
 	const auto &text = _field->getLastText();
 	if ((!_active && !text.startsWith('/'))
 		|| !_field->rawTextEdit()->hasFocus()
-		|| InstallationUiActive()) {
+		|| InstallationUiActive()
+		|| Core::App().passcodeLocked()) {
 		hide();
 		return;
 	}
@@ -448,19 +474,30 @@ void Controller::apply(const QJsonObject &view) {
 		hide();
 		return;
 	}
+	const auto panelParent = _wrap->parentWidget();
+	if (!panelParent) {
+		hide();
+		return;
+	}
 	_active = true;
 	_hasItems = !view.value(u"items"_q).toArray().isEmpty();
 	if (!_panel) {
-		_panel = Ui::CreateChild<Panel>(_wrap->parentWidget(), [=](int index) {
+		const auto guard = QPointer<Controller>(this);
+		_panel = Ui::CreateChild<Panel>(panelParent, [=](int index) {
+			if (!guard) {
+				return;
+			}
 			try {
-				applyResult(Request({
+				guard->applyResult(Request({
 					{ u"action"_q, u"commands_pick"_q },
 					{ u"index"_q, index },
 				}));
 			} catch (const std::exception &) {
-				hide();
+				guard->hide();
 			}
-			_field->setFocus();
+			if (guard) {
+				guard->_field->setFocus();
+			}
 		});
 	}
 	_panel->setView(view);
@@ -475,14 +512,16 @@ void Controller::place() {
 	if (!_panel || !_wrap || !_active) {
 		return;
 	}
-	const auto height = _panel->desiredHeight();
+	const auto desired = _panel->desiredHeight();
+	const auto available = std::max(_wrap->y(), 0);
+	const auto height = std::min(desired, available);
 	if (height <= st::lineWidth) {
 		_panel->hide();
 		return;
 	}
 	_panel->setGeometry(
 		_wrap->x(),
-		_wrap->y() - height,
+		std::max(0, _wrap->y() - height),
 		_wrap->width(),
 		height);
 	_panel->show();
@@ -518,7 +557,7 @@ bool Controller::submit() {
 	}
 	const auto text = _field->getLastText();
 	const auto current = text.startsWith('/') ? context(true) : QJsonObject();
-	if (current.isEmpty() || InstallationUiActive()) {
+	if (current.isEmpty() || InstallationUiActive() || Core::App().passcodeLocked()) {
 		return false;
 	}
 	auto result = QJsonObject();

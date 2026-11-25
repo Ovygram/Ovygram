@@ -155,27 +155,34 @@ async def pick_file(account):
     if selected is None:
         return None
     partial = None
+    stream = None
     try:
-        directory = get_plugin_data_dir(account_id) / "imports"
-        directory.mkdir(exist_ok=True)
+        directory = await asyncio.to_thread(lambda: get_plugin_data_dir(account_id) / "imports")
+        await asyncio.to_thread(directory.mkdir, exist_ok=True)
         name = safe_file_name(selected["name"], "file")
         target = directory / (uuid.uuid4().hex + "-" + name)
         staging = target.with_suffix(target.suffix + ".part")
-        with staging.open("xb") as stream:
-            partial = staging
-            remaining = selected["size"]
-            while remaining:
-                payload = await _request("media.read", account_id, token=selected["token"])
-                chunk = base64.b64decode(payload, validate=True)
-                if not 0 < len(chunk) <= remaining:
-                    raise ValueError("Неполная копия выбранного файла.")
-                stream.write(chunk)
-                remaining -= len(chunk)
-        partial.replace(target)
+        stream = await asyncio.to_thread(staging.open, "xb")
+        partial = staging
+        remaining = selected["size"]
+        while remaining:
+            payload = await _request("media.read", account_id, token=selected["token"])
+            chunk = base64.b64decode(payload, validate=True)
+            if not 0 < len(chunk) <= remaining:
+                raise ValueError("Неполная копия выбранного файла.")
+            await asyncio.to_thread(stream.write, chunk)
+            remaining -= len(chunk)
+        await asyncio.to_thread(stream.flush)
+        await asyncio.to_thread(stream.close)
+        stream = None
+        await asyncio.to_thread(partial.replace, target)
+        partial = None
         return target
     finally:
+        if stream is not None:
+            await asyncio.to_thread(stream.close)
         if partial is not None:
-            partial.unlink(missing_ok=True)
+            await asyncio.to_thread(partial.unlink, missing_ok=True)
         try:
             await _request("media.release", account_id, token=selected["token"])
         except (RpcError, RuntimeError):
@@ -215,7 +222,7 @@ async def download_file(attachment, destination, *, progress=None):
     if not isinstance(attachment, Attachment):
         raise TypeError("Ожидается Attachment с явным account_id.")
     target = Path(destination).resolve()
-    target.parent.mkdir(parents=True, exist_ok=True)
+    await asyncio.to_thread(target.parent.mkdir, parents=True, exist_ok=True)
     partial = target.with_name(target.name + ".part-" + uuid.uuid4().hex)
     stream = await asyncio.to_thread(partial.open, "xb")
     complete = False
@@ -234,8 +241,11 @@ async def download_file(attachment, destination, *, progress=None):
                 chat = await get_chat(attachment.account_id, attachment.message_chat_id)
                 message = await get_message(chat, attachment.message_id)
                 updated = message.attachment if message is not None else None
+                same_thumb = (getattr(updated.location, "thumb_size", None)
+                              == getattr(attachment.location, "thumb_size", None)) if updated is not None else False
+                size_ok = (updated is not None and (attachment.size <= 0 or updated.size == attachment.size))
                 if (updated is None or updated.location.id != attachment.location.id
-                        or updated.size != attachment.size):
+                        or not same_thumb or not size_ok):
                     raise RuntimeError("Вложение сообщения изменилось.") from error
                 attachment = updated
                 refreshed = True
@@ -248,18 +258,18 @@ async def download_file(attachment, destination, *, progress=None):
             await asyncio.to_thread(stream.write, data)
             offset += len(data)
             await _progress(progress, attachment.account_id, offset, attachment.size)
-            if len(data) < PART_SIZE:
+            if attachment.size <= 0 and len(data) < PART_SIZE:
                 break
         if attachment.size > 0 and offset != attachment.size:
             raise RuntimeError("Скачан неполный файл.")
         await asyncio.to_thread(stream.flush)
         await asyncio.to_thread(os.fsync, stream.fileno())
         await asyncio.to_thread(stream.close)
-        partial.replace(target)
+        await asyncio.to_thread(partial.replace, target)
         complete = True
     finally:
         if not stream.closed:
             await asyncio.to_thread(stream.close)
         if not complete:
-            partial.unlink(missing_ok=True)
+            await asyncio.to_thread(partial.unlink, missing_ok=True)
     return target

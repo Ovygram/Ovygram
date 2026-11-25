@@ -299,11 +299,12 @@ int Prepare(QWidget *owner, PeerData *peer, int availableWidth, int rowHeight) {
 	std::sort(items.begin(), items.end(), [](const auto &a, const auto &b) {
 		return std::tuple(-a.second.priority, a.second.sequence) < std::tuple(-b.second.priority, b.second.sequence);
 	});
+	const auto spacing = style::ConvertScale(kSpacing);
 	auto used = 0;
 	for (const auto &[id, item] : items) {
 		auto &button = host->buttons[id];
 		if (!button) {
-			button = new Ui::RoundButton(owner, rpl::single(item.text), st::settingsPluginPrimary);
+			button = new Ui::RoundButton(owner, rpl::single(item.text), st::settingsPluginProxySelector);
 			button->setTextTransform(Ui::RoundButtonTextTransform::NoTransform);
 			button->setClickedCallback([owner, id] { Clicked(owner, id); });
 		}
@@ -311,8 +312,8 @@ int Prepare(QWidget *owner, PeerData *peer, int availableWidth, int rowHeight) {
 		button->setToolTip(item.tooltip);
 		button->setAccessibleName(item.tooltip.isEmpty() ? item.text : item.tooltip);
 		button->setDisabled(!item.enabled);
-		button->setFullWidth(std::max(item.width, button->height()));
-		const auto required = button->width() + kSpacing;
+		button->setFullWidth(std::max(style::ConvertScale(item.width), button->height()));
+		const auto required = button->width() + spacing;
 		if (button->height() > rowHeight || required > availableWidth - used) {
 			host->overflow.push_back(id);
 			continue;
@@ -322,7 +323,7 @@ int Prepare(QWidget *owner, PeerData *peer, int availableWidth, int rowHeight) {
 	}
 	if (host->overflow.empty()) return used;
 	if (!host->more) {
-		host->more = new Ui::RoundButton(owner, rpl::single(u"…"_q), st::settingsPluginPrimary);
+		host->more = new Ui::RoundButton(owner, rpl::single(u"…"_q), st::settingsPluginProxySelector);
 		host->more->setFullWidth(host->more->height());
 		host->more->setAccessibleName(u"Другие действия плагинов"_q);
 		host->more->setFocusPolicy(Qt::StrongFocus);
@@ -354,11 +355,11 @@ int Prepare(QWidget *owner, PeerData *peer, int availableWidth, int rowHeight) {
 			host->menu->popup(host->more->mapToGlobal(QPoint(0, host->more->height())));
 		});
 	}
-	const auto required = host->more->width() + kSpacing;
+	const auto required = host->more->width() + spacing;
 	if (required > availableWidth || host->more->height() > rowHeight) return used;
 	while (required > availableWidth - used && !host->placed.empty()) {
 		const auto id = host->placed.back();
-		used -= host->buttons[id]->width() + kSpacing;
+		used -= host->buttons[id]->width() + spacing;
 		host->placed.pop_back();
 	}
 	host->overflow.clear();
@@ -374,12 +375,13 @@ int Prepare(QWidget *owner, PeerData *peer, int availableWidth, int rowHeight) {
 void Place(QWidget *owner, int left, int top, int rowHeight) {
 	const auto host = Find(owner);
 	if (!host) return;
+	const auto spacing = style::ConvertScale(kSpacing);
 	for (const auto &id : host->placed) {
 		const auto button = host->buttons[id];
 		if (!button) continue;
 		button->moveToLeft(left, top + (rowHeight - button->height()) / 2, owner->width());
 		button->show();
-		left += button->width() + kSpacing;
+		left += button->width() + spacing;
 	}
 	if (host->showMore) {
 		host->more->moveToLeft(left, top + (rowHeight - host->more->height()) / 2, owner->width());

@@ -44,7 +44,9 @@ constexpr auto kHostFile = "ovygram_host.so";
 	// its symbols in the global scope, so RTLD_GLOBAL is required here.
 	const auto result = dlopen(host.c_str(), RTLD_NOW | RTLD_GLOBAL);
 	if (!result) {
-		throw std::runtime_error(std::string("Python host failed to load: ") + dlerror());
+		const auto error = dlerror();
+		throw std::runtime_error(
+			std::string("Python host failed to load: ") + (error ? error : "unknown error"));
 	}
 	return result;
 }
@@ -154,7 +156,10 @@ PluginRuntime::PluginRuntime(
 }
 
 PluginRuntime::~PluginRuntime() {
-	setClient({});
+	try {
+		setClient({});
+	} catch (...) {
+	}
 }
 
 void PluginRuntime::setClient(

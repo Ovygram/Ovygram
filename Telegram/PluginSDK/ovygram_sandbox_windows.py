@@ -198,7 +198,10 @@ def confine(process):
 
 
 def release(job):
-    ctypes.WinDLL("kernel32").CloseHandle(wintypes.HANDLE(job))
+    kernel = ctypes.WinDLL("kernel32")
+    kernel.CloseHandle.argtypes = (wintypes.HANDLE,)
+    kernel.CloseHandle.restype = wintypes.BOOL
+    kernel.CloseHandle(wintypes.HANDLE(job))
 
 
 def terminate_helper_job(job):
@@ -222,8 +225,8 @@ def terminate_helper_job(job):
 
 def grant_helper_read(directory):
     # Only the private staging directory holding the verified executable.
-    icacls = os.path.join(os.environ["SystemRoot"], "System32", "icacls.exe")
-    subprocess.run([icacls, str(directory), "/grant", "*S-1-5-12:(OI)(CI)(RX)"],
+    icacls = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32", "icacls.exe")
+    subprocess.run([icacls, str(directory), "/grant", "*S-1-5-12:(OI)(CI)(RX)", "/T", "/L", "/Q"],
                    stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                    creationflags=CREATE_NO_WINDOW, check=True)
 

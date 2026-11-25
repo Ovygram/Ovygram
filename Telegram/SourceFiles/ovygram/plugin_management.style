@@ -6,10 +6,9 @@ settingsPluginSwitch: Toggle(defaultToggle) {
 	untoggledFg: menuIconFg;
 }
 settingsPluginSettingRow: SettingsButton(defaultSettingsButton) {
+	padding: margins(16px, 10px, 16px, 10px);
 	toggle: settingsPluginSwitch;
-	toggleOver: Toggle(settingsPluginSwitch) {
-		untoggledFg: menuIconFgOver;
-	}
+	toggleOver: settingsPluginSwitch;
 	toggleSkip: 20px;
 }
 settingsPluginSave: SettingsButton(settingsPluginSettingRow) {
@@ -19,7 +18,7 @@ settingsPluginSave: SettingsButton(settingsPluginSettingRow) {
 settingsPluginSelector: Checkbox(defaultBoxCheckbox) {
 	textPosition: point(15px, 1px);
 }
-settingsPluginSelectorMargin: margins(22px, 5px, 10px, 5px);
+settingsPluginSelectorMargin: margins(16px, 5px, 16px, 5px);
 
 settingsPluginCardMargin: margins(16px, 4px, 16px, 8px);
 settingsPluginCardRadius: 10px;
@@ -146,7 +145,7 @@ settingsPluginInstallBadgePadding: margins(8px, 3px, 8px, 3px);
 // Shared styles for Ovygram-owned actions. Inherited colors follow the theme.
 settingsPluginActionRadius: 8px;
 settingsPluginRowRadius: 6px;
-settingsPluginLegacyCardActionRadius: 6;
+settingsPluginLegacyCardActionRadius: 6px;
 settingsPluginProxyRadius: 7px;
 settingsPluginChoiceHeight: 18px;
 settingsPluginChipHeight: 24px;
@@ -163,7 +162,7 @@ settingsPluginDialog: RoundButton(defaultBoxButton) {
 }
 settingsPluginDialogDanger: RoundButton(settingsPluginDialog) {
 	textFg: attentionButtonFg;
-	textFgOver: attentionButtonFg;
+	textFgOver: attentionButtonFgOver;
 }
 settingsPluginInstallButton: RoundButton(settingsPluginPrimary) {
 	radius: settingsPluginActionRadius;
@@ -180,7 +179,7 @@ settingsPluginProxySelector: RoundButton(settingsPluginLight) {
 }
 settingsPluginProxyReset: RoundButton(settingsPluginProxySelector) {
 	textFg: windowSubTextFg;
-	textFgOver: windowSubTextFg;
+	textFgOver: windowFgOver;
 }
 settingsPluginPopupText: windowFg;
 settingsPluginPopupTextHover: windowFgOver;
@@ -207,12 +206,12 @@ settingsPluginPanelPopup: PopupMenu(popupMenuWithIcons) {
 settingsPluginClose: IconButton(boxTitleClose) {
 }
 settingsPluginBack: IconButton(defaultIconButton) {
-	width: 60px;
-	height: 54px;
+	width: 48px;
+	height: 48px;
 	icon: icon {{ "info/info_back", boxTitleCloseFg }};
 	iconOver: icon {{ "info/info_back", boxTitleCloseFgOver }};
-	iconPosition: point(11px, -1px);
-	rippleAreaPosition: point(6px, 6px);
+	iconPosition: point(-1px, -1px);
+	rippleAreaPosition: point(3px, 3px);
 	rippleAreaSize: 42px;
 	ripple: defaultRippleAnimationBgOver;
 }

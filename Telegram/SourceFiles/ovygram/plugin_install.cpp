@@ -10,6 +10,7 @@
 #include "ui/widgets/buttons.h"
 #include "window/window_controller.h"
 
+#include <QtCore/QCoreApplication>
 #include <QtCore/QJsonArray>
 #include <QtCore/QJsonDocument>
 #include <QtCore/QJsonObject>
@@ -69,7 +70,7 @@ public:
 			_token = Request({ { u"action"_q, u"prepare_install"_q }, { u"path"_q, path } }).toString();
 			_timer->start(200);
 		} catch (const std::exception &error) {
-			AddPluginInstallLabel(_rows, QString::fromUtf8(error.what()));
+			showError(QString::fromUtf8(error.what()));
 		}
 	}
 
@@ -81,12 +82,25 @@ public:
 			}
 		}
 		--ActiveInstallers;
-		if (_done) _done();
+		if (auto done = std::move(_done)) {
+			QTimer::singleShot(0, QCoreApplication::instance(), std::move(done));
+		}
 	}
 
 private:
 	void cancel() {
 		_cancel = SetPluginInstallAction(_box.data(), QString(), nullptr);
+	}
+
+	void showError(const QString &text) {
+		if (!_errorLabel) {
+			auto label = object_ptr<Ui::FlatLabel>(_rows, text, st::settingsPluginBody);
+			label->setSelectable(true);
+			_errorLabel = _rows->add(std::move(label), st::settingsPluginTextMargin, style::al_justify);
+		} else {
+			_errorLabel->setText(text);
+		}
+		_rows->resizeToWidth(_rows->widthNoMargins());
 	}
 
 	void poll() {
@@ -95,6 +109,7 @@ private:
 			const auto state = info.value(u"state"_q).toString();
 			if (state == u"pending"_q) return;
 			_timer->stop();
+			_errorLabel = nullptr;
 			Clear(_rows);
 			if (state != u"ready"_q) {
 				AddPluginInstallLabel(_rows, info.value(u"error"_q).toString());
@@ -111,7 +126,7 @@ private:
 			}
 		} catch (const std::exception &error) {
 			_timer->stop();
-			AddPluginInstallLabel(_rows, QString::fromUtf8(error.what()));
+			showError(QString::fromUtf8(error.what()));
 		}
 		_rows->resizeToWidth(_rows->widthNoMargins());
 	}
@@ -123,6 +138,7 @@ private:
 			|| IsTrustedPlugin(old.value(u"trust"_q).toObject().value(u"status"_q).toString())) && !IsTrustedPlugin(status);
 		const auto unavailable = status == u"verification_unavailable"_q;
 		if ((loss || unavailable) && !_warned) {
+			_errorLabel = nullptr;
 			Clear(_rows);
 			AddPluginInstallCard(_rows, _info.value(u"metadata"_q).toObject(), trust);
 			if (loss) AddPluginInstallLabel(_rows, u"Вы заменяете проверенный плагин непроверенной версией. Автор и безопасность "
@@ -144,13 +160,13 @@ private:
 			_token.clear();
 			_box->closeBox();
 		} catch (const std::exception &error) {
-			AddPluginInstallLabel(_rows, QString::fromUtf8(error.what()));
-			_rows->resizeToWidth(_rows->widthNoMargins());
+			showError(QString::fromUtf8(error.what()));
 		}
 	}
 
 	QPointer<Ui::GenericBox> _box;
 	QPointer<Ui::RoundButton> _cancel;
+	QPointer<Ui::FlatLabel> _errorLabel;
 	QString _token;
 	QString _installationId;
 	Fn<void()> _done;
@@ -168,7 +184,10 @@ bool InstallationUiActive() {
 }
 
 void ShowPluginInstall(const QString &path, const QString &installationId, Fn<void()> done) {
-	if (InstallationUiActive()) return;
+	if (InstallationUiActive()) {
+		if (done) done();
+		return;
+	}
 	const auto window = Core::App().activePrimaryWindow();
 	if (!window) {
 		if (done) done();

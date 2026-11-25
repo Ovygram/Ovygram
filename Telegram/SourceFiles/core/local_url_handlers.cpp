@@ -6,7 +6,9 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "core/local_url_handlers.h"
+#ifdef OVYGRAM_ENABLED
 #include "ovygram/plugin_actions.h"
+#endif // OVYGRAM_ENABLED
 
 #include "core/deep_links/deep_links_router.h"
 #include "api/api_confirm_phone.h"
@@ -1894,6 +1896,7 @@ bool TryRouterForLocalUrl(
 
 const std::vector<LocalUrlHandler> &LocalUrlHandlers() {
 	static auto Result = std::vector<LocalUrlHandler>{
+#ifdef OVYGRAM_ENABLED
 		{
 			u"^ovyaction/?\\?installation=([a-f0-9]{32})&name=([a-z][a-z0-9_.-]{0,47})$"_q,
 			[](Window::SessionController *controller, const Match &match, const QVariant &) {
@@ -1902,6 +1905,7 @@ const std::vector<LocalUrlHandler> &LocalUrlHandlers() {
 				return true;
 			}
 		},
+#endif // OVYGRAM_ENABLED
 		{
 			u"^join/?\\?invite=([a-zA-Z0-9\\.\\_\\-]+)(&|$)"_q,
 			JoinGroupByHash

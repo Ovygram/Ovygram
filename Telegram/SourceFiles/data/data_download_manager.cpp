@@ -5,7 +5,9 @@ the official desktop application for the Telegram messaging service.
 For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
+#ifdef OVYGRAM_ENABLED
 #include "api/api_plugins.h"
+#endif // OVYGRAM_ENABLED
 #include "data/data_download_manager.h"
 
 #include "data/data_session.h"
@@ -275,7 +277,9 @@ void DownloadManager::addLoading(DownloadObject object) {
 	});
 	_loading.emplace(item);
 	_loadingDocuments.emplace(object.document);
+#ifdef OVYGRAM_ENABLED
 	Api::PluginDownloadEvent(item, false, size);
+#endif // OVYGRAM_ENABLED
 	_loadingProgress = DownloadProgress{
 		.ready = _loadingProgress.current().ready,
 		.total = _loadingProgress.current().total + size,
@@ -311,7 +315,9 @@ void DownloadManager::addLoadingExternal(
 		.externalCancel = std::move(cancel),
 		.total = total,
 	});
+#ifdef OVYGRAM_ENABLED
 	Api::PluginDownloadEvent(item, false, total);
+#endif // OVYGRAM_ENABLED
 	_loading.emplace(item);
 	_loadingProgress = DownloadProgress{
 		.ready = _loadingProgress.current().ready,
@@ -500,7 +506,9 @@ void DownloadManager::addLoaded(
 		.object = std::make_unique<DownloadObject>(object),
 	});
 	_loaded.emplace(item);
+#ifdef OVYGRAM_ENABLED
 	Api::PluginDownloadEvent(item, true, size);
+#endif // OVYGRAM_ENABLED
 	_loadedAdded.fire(&data.downloaded.back());
 
 	writePostponed(&item->history()->session());

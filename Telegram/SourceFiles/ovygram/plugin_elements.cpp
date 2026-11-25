@@ -65,11 +65,11 @@ struct State {
 	std::map<QString, Rules> rules;
 	std::function<void(QJsonObject)> send;
 	Filter filter;
-	std::optional<QByteArray> palette;
-	// The plugin colors, while a protected surface shows the original ones.
-	std::optional<QByteArray> suspendedPalette;
+	std::optional<QByteArray> basePalette;
+	std::map<QString, std::vector<std::pair<QByteArray, QColor>>> paletteOverrides;
+	bool paletteSuspended = false;
+	bool applyingPalette = false;
 	rpl::lifetime protection;
-	std::set<QString> paletteOwners;
 };
 
 State &Get() {
@@ -146,7 +146,7 @@ void ApplyAll(const QString &name) {
 }
 
 bool Filter::eventFilter(QObject *watched, QEvent *e) {
-	if (InstallationUiActive() || InsideProtected(watched)) return false;
+	if (InstallationUiActive() || Core::App().passcodeLocked() || InsideProtected(watched)) return false;
 	const auto type = e->type();
 	if (type == QEvent::Show) {
 		const auto element = Find(watched);
@@ -260,6 +260,9 @@ void WatchField(not_null<Ui::InputField*> field) {
 		if (state.composeWatchers.empty()
 			|| !state.send
 			|| state.editing
+			|| InstallationUiActive()
+			|| Core::App().passcodeLocked()
+			|| ProtectedSurfaceExists()
 			|| !field->rawTextEdit()->hasFocus()) {
 			return;
 		}
@@ -380,33 +383,70 @@ QJsonValue EditorRequest(const QJsonObject &command) {
 	return QJsonValue(QJsonValue::Null);
 }
 
-// Protected surfaces are drawn in the colors of the user's theme: a plugin
-// palette could hide a warning or recolor a trust badge.
-void SuspendColors(bool suspended) {
-	auto &state = Get();
-	if (!state.palette || suspended == state.suspendedPalette.has_value()) {
+void ApplyStoredColors(State &state) {
+	if (!state.basePalette) {
 		return;
-	} else if (suspended) {
-		state.suspendedPalette = style::main_palette::save();
-		style::main_palette::load(*state.palette);
-	} else {
-		style::main_palette::load(*state.suspendedPalette);
-		state.suspendedPalette.reset();
+	}
+	const auto guard = gsl::finally([&] { state.applyingPalette = false; });
+	state.applyingPalette = true;
+	style::main_palette::load(*state.basePalette);
+	if (!state.paletteSuspended) {
+		for (const auto &[owner, entries] : state.paletteOverrides) {
+			for (const auto &[name, color] : entries) {
+				style::main_palette::setColor(
+					QLatin1String(name.constData(), name.size()),
+					uchar(color.red()),
+					uchar(color.green()),
+					uchar(color.blue()),
+					uchar(color.alpha()));
+			}
+		}
 	}
 	style::NotifyPaletteChanged();
 }
 
+// Protected surfaces are drawn in the colors of the user's theme: a plugin
+// palette could hide a warning or recolor a trust badge.
+void SuspendColors(bool suspended) {
+	auto &state = Get();
+	if (suspended == state.paletteSuspended) {
+		return;
+	}
+	state.paletteSuspended = suspended;
+	if (!state.paletteOverrides.empty()) {
+		ApplyStoredColors(state);
+	}
+}
+
+void EnsurePaletteListeners(State &state) {
+	if (state.protection) {
+		return;
+	}
+	ProtectedSurfacesChanged() | rpl::on_next([] {
+		SuspendColors(ProtectedSurfaceExists() || Core::App().passcodeLocked());
+	}, state.protection);
+	style::PaletteChanged() | rpl::on_next([] {
+		auto &state = Get();
+		if (state.applyingPalette || !state.basePalette) {
+			return;
+		}
+		// User switched themes while plugin overrides exist: record the new
+		// base theme instead of later rolling back to an old theme snapshot.
+		state.basePalette = style::main_palette::save();
+		if (!state.paletteSuspended && !state.paletteOverrides.empty()) {
+			ApplyStoredColors(state);
+		}
+	}, state.protection);
+}
+
 void SetColors(const QString &installationId, const QJsonObject &colors) {
 	auto &state = Get();
-	if (ProtectedSurfaceExists()) {
+	if (ProtectedSurfaceExists() || Core::App().passcodeLocked()) {
 		// Its texts and warnings keep the colors of the user's theme.
 		throw std::runtime_error(
-			"Colors can't be changed while Ovygram's plugin manager is open.");
-	} else if (!state.protection) {
-		ProtectedSurfacesChanged() | rpl::on_next([] {
-			SuspendColors(ProtectedSurfaceExists());
-		}, state.protection);
+			"Colors can't be changed while a protected screen is open.");
 	}
+	EnsurePaletteListeners(state);
 	auto parsed = std::vector<std::pair<QByteArray, QColor>>();
 	for (auto i = colors.begin(); i != colors.end(); ++i) {
 		const auto color = QColor(i.value().toString());
@@ -415,7 +455,7 @@ void SetColors(const QString &installationId, const QJsonObject &colors) {
 		}
 		parsed.emplace_back(i.key().toLatin1(), color);
 	}
-	// All or nothing: an unknown name undoes the colors set before it.
+	// Validate every key before mutating state.
 	const auto before = style::main_palette::save();
 	for (const auto &[name, color] : parsed) {
 		const auto result = style::main_palette::setColor(
@@ -430,25 +470,30 @@ void SetColors(const QString &installationId, const QJsonObject &colors) {
 				"Unknown palette color: " + name.toStdString());
 		}
 	}
-	if (!state.palette) {
-		state.palette = before;
+	if (!state.basePalette) {
+		state.basePalette = before;
 	}
-	state.paletteOwners.insert(installationId);
-	style::NotifyPaletteChanged();
+	state.paletteOverrides[installationId] = std::move(parsed);
+	ApplyStoredColors(state);
 }
 
 void ResetColors(const QString &installationId) {
 	auto &state = Get();
-	if (!state.paletteOwners.erase(installationId) || !state.paletteOwners.empty()) {
+	if (!state.paletteOverrides.erase(installationId)) {
 		return;
 	}
-	if (state.palette) {
-		if (!state.suspendedPalette) {
-			style::main_palette::load(*state.palette);
-			style::NotifyPaletteChanged();
+	if (!state.basePalette) {
+		return;
+	}
+	if (state.paletteOverrides.empty()) {
+		const auto wasSuspended = state.paletteSuspended;
+		state.paletteSuspended = false;
+		if (!wasSuspended) {
+			ApplyStoredColors(state);
 		}
-		state.palette.reset();
-		state.suspendedPalette.reset();
+		state.basePalette.reset();
+	} else if (!state.paletteSuspended) {
+		ApplyStoredColors(state);
 	}
 }
 
@@ -473,6 +518,9 @@ void RegisterElements(
 
 void RegisterEditor(Ui::InputField *field, QString kind, std::function<PeerData*()> peer,
 		std::function<QJsonObject()> snapshot, std::function<bool(const QJsonObject&)> action) {
+	if (!field) {
+		return;
+	}
 	Get().editors.emplace(field, Editor{ std::move(kind), std::move(peer), std::move(snapshot), std::move(action) });
 	QObject::connect(field, &QObject::destroyed, [field] { Get().editors.erase(field); });
 }
@@ -517,16 +565,25 @@ void Handle(const QJsonObject &command) {
 			clicks.erase(installationId);
 		}
 	} else if (method == u"ui.compose.set"_q) {
+		if (Core::App().passcodeLocked() || ProtectedSurfaceExists() || InstallationUiActive()) {
+			throw std::runtime_error("Compose access is suspended while a protected surface is open.");
+		}
 		const auto field = ComposeField();
 		const auto text = command.value(u"text"_q).toString();
 		field->setTextWithTags({ text, {} });
 		field->setCursorPosition(text.size());
 		field->setFocus();
 	} else if (method == u"ui.compose.insert"_q) {
+		if (Core::App().passcodeLocked() || ProtectedSurfaceExists() || InstallationUiActive()) {
+			throw std::runtime_error("Compose access is suspended while a protected surface is open.");
+		}
 		const auto field = ComposeField();
 		field->insertTag(command.value(u"text"_q).toString());
 		field->setFocus();
 	} else if (method == u"ui.compose.replace"_q) {
+		if (Core::App().passcodeLocked() || ProtectedSurfaceExists() || InstallationUiActive()) {
+			throw std::runtime_error("Compose access is suspended while a protected surface is open.");
+		}
 		const auto field = ComposeField();
 		const auto edit = field->rawTextEdit();
 		auto cursor = edit->textCursor();
@@ -543,12 +600,17 @@ void Handle(const QJsonObject &command) {
 		cursor.setPosition(till, QTextCursor::KeepAnchor);
 		cursor.insertText(text);
 		if (command.value(u"select"_q).toBool()) {
+			const auto insertedEnd = cursor.position();
 			cursor.setPosition(from);
-			cursor.setPosition(from + int(text.size()), QTextCursor::KeepAnchor);
+			cursor.setPosition(insertedEnd, QTextCursor::KeepAnchor);
 		}
 		edit->setTextCursor(cursor);
 	} else if (method == u"ui.compose.watch"_q) {
 		const auto ruleId = command.value(u"rule_id"_q).toString();
+		if (const auto i = Get().composeWatchers.find(ruleId);
+			i != end(Get().composeWatchers) && i->second != installationId) {
+			throw std::runtime_error("Compose watcher belongs to another installation.");
+		}
 		if (command.value(u"enabled"_q).toBool()) {
 			Get().composeWatchers[ruleId] = installationId;
 		} else {
@@ -568,6 +630,9 @@ void Handle(const QJsonObject &command) {
 QJsonValue Request(const QJsonObject &command) {
 	const auto method = command.value(u"method"_q).toString();
 	if (method == u"compose.snapshot"_q || method == u"compose.apply"_q) return EditorRequest(command);
+	if (Core::App().passcodeLocked() || ProtectedSurfaceExists() || InstallationUiActive()) {
+		return QJsonValue(QJsonValue::Null);
+	}
 	const auto field = dynamic_cast<Ui::InputField*>(
 		FindShown(u"compose.field"_q));
 	if (method == u"compose.get_text"_q) {

@@ -77,7 +77,8 @@ void Handle(const QJsonObject &command) {
 		|| (existing != state.rules.end() && existing->second.owner != owner)) {
 		throw std::runtime_error("Invalid list rule owner.");
 	}
-	if (command.value(u"method"_q).toString() == u"ui.list_visibility.remove"_q) {
+	const auto method = command.value(u"method"_q).toString();
+	if (method == u"ui.list_visibility.remove"_q) {
 		if (existing != state.rules.end()) {
 			const auto &rule = existing->second;
 			const auto scope = Scope{ rule.list, rule.account, rule.chat };
@@ -85,6 +86,9 @@ void Handle(const QJsonObject &command) {
 			state.changes.fire_copy(scope);
 		}
 		return;
+	}
+	if (method != u"ui.list_visibility.add"_q) {
+		throw std::runtime_error("Unknown list visibility command.");
 	}
 	const auto kind = command.value(u"list"_q).toString();
 	if (kind != u"members"_q && kind != u"media"_q) {

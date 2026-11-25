@@ -10,15 +10,19 @@
 #include "main/main_account.h"
 #include "main/main_domain.h"
 #include "main/main_session.h"
+#include "ui/style/style_core.h"
 
 #include <QtGui/QPainter>
 
+#include <algorithm>
 #include <map>
 #include <stdexcept>
 #include <vector>
 
 namespace Ovygram {
 namespace {
+
+constexpr auto kMaxTotalFooterHeight = 512;
 
 struct Decoration {
 	QString installationId;
@@ -61,9 +65,10 @@ int MessageFooterHeight(not_null<HistoryItem*> item) {
 	const auto accountId = QString::number(peer->session().uniqueId());
 	const auto chatId = QString::number(peer->id.value);
 	auto height = 0;
+	const auto cap = style::ConvertScale(kMaxTotalFooterHeight);
 	for (const auto &[id, decoration] : rules) {
-		if (decoration.accountId == accountId && decoration.messageId == item->id && decoration.chatId == chatId) {
-			height += decoration.footerHeight;
+		if (decoration.accountId == accountId && decoration.messageId == item->id && decoration.chatId == chatId && decoration.footerHeight > 0) {
+			height = std::min(cap, height + style::ConvertScale(decoration.footerHeight));
 		}
 	}
 	return height;
@@ -77,7 +82,9 @@ void PaintMessage(QPainter &p, not_null<HistoryItem*> item, QRect bubble, int fo
 	const auto accountId = QString::number(item->history()->session().uniqueId());
 	const auto chatId = QString::number(item->history()->peer->id.value);
 	auto painted = false;
+	const auto totalFooter = MessageFooterHeight(item);
 	auto nextFooter = footerTop;
+	const auto footerEnd = footerTop + totalFooter;
 	for (const auto &[id, decoration] : decorations) {
 		if (decoration.messageId != item->id
 			|| decoration.chatId != chatId
@@ -90,12 +97,16 @@ void PaintMessage(QPainter &p, not_null<HistoryItem*> item, QRect bubble, int fo
 			painted = true;
 		}
 		auto area = bubble;
-		if (decoration.footerHeight) {
-			area = QRect(area.x(), nextFooter, area.width(), decoration.footerHeight);
-			nextFooter += decoration.footerHeight;
+		if (decoration.footerHeight > 0) {
+			const auto scaled = std::min(style::ConvertScale(decoration.footerHeight), footerEnd - nextFooter);
+			if (scaled <= 0) {
+				continue;
+			}
+			area = QRect(area.x(), nextFooter, area.width(), scaled);
+			nextFooter += scaled;
 		}
 		p.save();
-		if (decoration.footerHeight) p.setClipRect(area, Qt::IntersectClip);
+		p.setClipRect(area, Qt::IntersectClip);
 		if (decoration.background.isValid()) {
 			p.setPen(Qt::NoPen);
 			p.setBrush(decoration.background);
@@ -141,7 +152,7 @@ void Handle(const QJsonObject &command) {
 			|| (decoration.footerHeight && decoration.chatId == u"*"_q)) {
 			throw std::runtime_error("A footer requires one target and height 1..256.");
 		}
-		if (decoration.footerHeight && existing == end(decorations) && decorations.size() >= 4096) {
+		if (existing == end(decorations) && decorations.size() >= 4096) {
 			throw std::runtime_error("Too many decorations.");
 		}
 		const auto background = command.value(u"background"_q);

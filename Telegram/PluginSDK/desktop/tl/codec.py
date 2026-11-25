@@ -44,7 +44,12 @@ class TLObject:
         return f"{self._tl['name']}({values})"
 
     def __eq__(self, other):
-        return type(self) is type(other) and encode(self) == encode(other)
+        if type(self) is not type(other):
+            return False
+        try:
+            return encode(self) == encode(other)
+        except (TypeError, ValueError):
+            return False
 
     def clone(self, **changes):
         result = copy.deepcopy(self)

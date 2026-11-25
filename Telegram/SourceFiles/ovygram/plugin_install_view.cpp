@@ -14,6 +14,7 @@
 #include <QtCore/QJsonArray>
 
 #include <algorithm>
+#include <map>
 
 namespace Ovygram {
 namespace {
@@ -32,12 +33,26 @@ QString Version(const QJsonObject &metadata) {
 }
 
 const style::FlatLabel &TechnicalTextStyle() {
-	static auto style = [] {
-		auto result = st::settingsPluginInstallBadge;
-		result.style.font = result.style.font->monospace();
-		return result;
-	}();
-	return style;
+	static auto styles = std::map<int, style::FlatLabel>();
+	const auto scale = style::Scale();
+	const auto [entry, inserted] = styles.emplace(scale, st::settingsPluginInstallBadge);
+	if (inserted) {
+		entry->second.style.font = entry->second.style.font->monospace();
+		entry->second.style.lineHeight = entry->second.style.font->height + style::ConvertScale(4);
+	}
+	return entry->second;
+}
+
+void StyleSecondaryButton(not_null<Ui::RoundButton*> button, bool onCard) {
+	const auto apply = [=] {
+		auto border = st::windowFg->c;
+		border.setAlphaF(st::settingsPluginInstallOutlineAlpha / 100.);
+		button->setBrushOverride((onCard ? st::windowBg : st::windowBgOver)->b);
+		button->setPenOverride(QPen(border, st::lineWidth));
+		button->setRippleOverride(st::lightButtonBgRipple->c);
+	};
+	apply();
+	style::PaletteChanged() | rpl::on_next(apply, button->lifetime());
 }
 
 class InstallLine final : public Ui::RpWidget {
@@ -91,25 +106,51 @@ public:
 	: Ui::SettingsButton(parent, rpl::single(u"Подробности файла"_q), st::settingsPluginInstallDetails) {
 	}
 
+	void setExpanded(bool expanded) {
+		if (_expanded != expanded) {
+			_expanded = expanded;
+			update();
+		}
+	}
+
 protected:
 	void paintEvent(QPaintEvent *) override {
 		auto painter = Painter(this);
 		const auto over = (isOver() || isDown()) && !isDisabled();
 		if (over) {
 			const auto quality = PainterHighQualityEnabler(painter);
-			const auto radius = st::settingsPluginCardRadius;
 			painter.setPen(Qt::NoPen);
 			painter.setBrush(st::settingsPluginRowPressed);
-			painter.drawRoundedRect(rect().adjusted(0, -radius, 0, 0), radius, radius);
+			if (_expanded) {
+				painter.fillRect(rect(), st::settingsPluginRowPressed);
+			} else {
+				const auto radius = st::settingsPluginCardRadius;
+				painter.drawRoundedRect(rect().adjusted(0, -radius, 0, 0), radius, radius);
+			}
 		}
 		paintRipple(painter, 0, 0);
 		paintText(painter, over, width());
 		const auto &icon = st::settingsPluginInstallDetailsIcon;
 		const auto &arrow = st::settingsPluginLinkArrow;
 		icon.paint(painter, st().iconLeft, (height() - icon.height()) / 2, width());
-		arrow.paint(painter, width() - st::settingsPluginTextMargin.right() - arrow.width(),
-			(height() - arrow.height()) / 2, width());
+		const auto arrowX = width() - st::settingsPluginTextMargin.right() - arrow.width();
+		const auto arrowY = (height() - arrow.height()) / 2;
+		if (_expanded) {
+			painter.save();
+			const auto cx = (style::RightToLeft() ? (width() - arrowX - arrow.width()) : arrowX)
+				+ arrow.width() / 2.;
+			const auto cy = arrowY + arrow.height() / 2.;
+			painter.translate(cx, cy);
+			painter.rotate(90.);
+			arrow.paint(painter, -arrow.width() / 2, -arrow.height() / 2, width());
+			painter.restore();
+		} else {
+			arrow.paint(painter, arrowX, arrowY, width());
+		}
 	}
+
+private:
+	bool _expanded = false;
 };
 
 void AddSeparator(not_null<Ui::RpWidget*> widget) {
@@ -122,8 +163,14 @@ void AddSeparator(not_null<Ui::RpWidget*> widget) {
 
 object_ptr<Ui::VerticalLayout> VersionBadge(QWidget *parent, const QString &version) {
 	auto badge = object_ptr<Ui::VerticalLayout>(parent);
-	badge->add(object_ptr<Ui::FlatLabel>(badge, version, TechnicalTextStyle()),
-		st::settingsPluginInstallBadgePadding)->setTextColorOverride(st::settingsPluginLabelAccent->c);
+	const auto label = badge->add(
+		object_ptr<Ui::FlatLabel>(badge, version, TechnicalTextStyle()),
+		st::settingsPluginInstallBadgePadding);
+	const auto updateColor = [=] {
+		label->setTextColorOverride(st::settingsPluginLabelAccent->c);
+	};
+	updateColor();
+	style::PaletteChanged() | rpl::on_next(updateColor, label->lifetime());
 	const auto widget = badge.data();
 	widget->paintRequest() | rpl::on_next([=] {
 		auto painter = QPainter(widget);
@@ -142,7 +189,7 @@ void AddInstalledRow(
 		not_null<Ui::VerticalLayout*> rows,
 		const QJsonObject &old,
 		const QString &targetVersion,
-		const style::RoundButton &buttonStyle,
+		bool secondaryButton,
 		Fn<void()> update) {
 	const auto card = AddPluginCard(rows);
 	auto line = object_ptr<InstallLine>(card);
@@ -154,7 +201,12 @@ void AddInstalledRow(
 		delta->text, u"%1   %2 →"_q.arg(id, previous), TechnicalTextStyle()));
 	current->setSelectable(true);
 	auto target = object_ptr<Ui::FlatLabel>(delta, targetVersion, TechnicalTextStyle());
-	target->setTextColorOverride(PluginTrustColor(u"verified"_q));
+	const auto rawTarget = target.data();
+	const auto updateTargetColor = [=] {
+		rawTarget->setTextColorOverride(PluginTrustColor(u"verified"_q));
+	};
+	updateTargetColor();
+	style::PaletteChanged() | rpl::on_next(updateTargetColor, rawTarget->lifetime());
 	delta->setTrailing(std::move(target));
 	line->text->add(std::move(delta), style::al_justify);
 	line->text->add(object_ptr<Ui::FlatLabel>(line->text,
@@ -162,8 +214,13 @@ void AddInstalledRow(
 		style::al_justify);
 	if (update) {
 		auto button = object_ptr<Ui::RoundButton>(
-			line, rpl::single(u"Обновить"_q), buttonStyle);
+			line,
+			rpl::single(u"Обновить"_q),
+			secondaryButton ? st::settingsPluginInstallSecondary : st::settingsPluginInstallButton);
 		button->setTextTransform(Ui::RoundButtonTextTransform::NoTransform);
+		if (secondaryButton) {
+			StyleSecondaryButton(button.data(), true);
+		}
 		button->setClickedCallback([update = std::move(update)] {
 			const auto invoke = update;
 			invoke();
@@ -208,11 +265,7 @@ Ui::RoundButton *SetPluginInstallAction(
 			secondary ? st::settingsPluginInstallSecondary : st::settingsPluginInstallButton);
 		button->setTextTransform(Ui::RoundButtonTextTransform::NoTransform);
 		if (secondary) {
-			auto border = st::windowFg->c;
-			border.setAlphaF(st::settingsPluginInstallOutlineAlpha / 100.);
-			button->setBrushOverride(st::windowBgOver->b);
-			button->setPenOverride(QPen(border, st::lineWidth));
-			button->setRippleOverride(st::lightButtonBgRipple->c);
+			StyleSecondaryButton(button, false);
 		}
 	}
 	const auto cancel = box->addLeftButton(rpl::single(u"Отмена"_q),
@@ -283,12 +336,16 @@ void AddPluginInstallChoices(
 	const auto disclosure = selected->add(object_ptr<FileDetailsButton>(selected), style::al_justify);
 	const auto technical = selected->add(object_ptr<Ui::SlideWrap<Ui::VerticalLayout>>(
 		selected, object_ptr<Ui::VerticalLayout>(selected)), style::al_justify);
+	Ui::AddSkip(technical->entity(), style::ConvertScale(8));
 	AddPluginInstallLabel(technical->entity(), u"ID: "_q + metadata.value(u"id"_q).toString(),
 		TechnicalTextStyle());
 	AddPluginInstallLabel(technical->entity(), u"SHA-256: "_q + info.value(u"sha256"_q).toString(),
 		TechnicalTextStyle());
 	technical->toggleOn(showDetails.value());
 	technical->finishAnimating();
+	showDetails.value() | rpl::on_next([=](bool shown) {
+		disclosure->setExpanded(shown);
+	}, disclosure->lifetime());
 	disclosure->setClickedCallback([&showDetails] { showDetails = !showDetails.current(); });
 	if (status == u"blocked"_q) {
 		return;
@@ -313,7 +370,7 @@ void AddPluginInstallChoices(
 		const auto old = value.toObject();
 		const auto id = old.value(u"installation_id"_q).toString();
 		AddInstalledRow(rows, old, Version(metadata),
-			updateChoices == 1 ? st::settingsPluginInstallButton : st::settingsPluginInstallSecondary,
+			updateChoices != 1,
 			eligible(old) ? Fn<void()>([=] { confirm(id, false, old); }) : Fn<void()>());
 	}
 	if (!installationId.isEmpty() && !updateChoices) {

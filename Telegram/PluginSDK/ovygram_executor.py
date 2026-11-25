@@ -37,7 +37,7 @@ class LoadError(RuntimeError):
 
 def account_key(account_id):
     result = str(account_id)
-    if not result.isdecimal():
+    if not result.isascii() or not result.isdecimal():
         raise ValueError("Некорректный ID аккаунта.")
     return result
 

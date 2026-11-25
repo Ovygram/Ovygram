@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -13,7 +14,7 @@ import zipfile
 
 from ovygram_deps import python_command
 from ovygram_package import MAX_PACKAGE, archive_path
-from ovygram_sandbox import SandboxError, confine, release, wrap
+from ovygram_sandbox import SandboxError, confine, python_read_only_mounts, release, wrap
 
 PROXY_ROUTES = ("default", "api", "files", "pages", "mini_apps")
 
@@ -27,12 +28,34 @@ def _send_config(pipe, data):
         pass
 
 
+def _log_stderr(pipe, logger, owner):
+    try:
+        with pipe:
+            for _ in range(32):
+                line = pipe.readline(4096)
+                if not line:
+                    break
+                text = line.decode("utf-8", "replace").rstrip()
+                if text:
+                    logger.info("helper %s: %s", owner[:8], text)
+    except (OSError, ValueError):
+        pass
+
+
 class Helpers:
     def __init__(self, manager):
         self.manager = manager
         self.children = {}
         self.offers = {}
         self.pending_cleanup = []
+        root = getattr(manager, "root", None)
+        if isinstance(root, Path) and root.is_dir():
+            for entry in root.glob("helper-*"):
+                if entry.is_dir() and not entry.is_symlink():
+                    try:
+                        shutil.rmtree(entry)
+                    except OSError:
+                        pass
 
     @staticmethod
     def _terminate(process, guard):
@@ -106,6 +129,9 @@ class Helpers:
         process = guard = None
         try:
             folder = Path(directory.name)
+            if os.name == "nt":
+                from ovygram_sandbox_windows import grant_helper_read
+                grant_helper_read(folder)
             binary = folder / ("component.exe" if os.name == "nt" else "component")
             with zipfile.ZipFile(io.BytesIO(package)) as archive, archive.open(resource) as source:
                 with binary.open("xb") as target:
@@ -117,21 +143,23 @@ class Helpers:
             if os.name != "nt":
                 binary.chmod(0o500)
             python, environment, bundled = python_command(self.manager.python_dir)
+            if sys.platform.startswith("linux") and not bundled:
+                python = str(Path(python).resolve())
             launcher = Path(__file__).resolve().with_name("ovygram_helper_launcher.py")
             # The trusted launcher applies the final restrictions before executing any package bytes.
             args = [python, *(["-s", "-S"] if bundled else ["-I", "-S"]), str(launcher)]
-            argv, descriptors, report = wrap(args, environment, read_only=[
-                self.manager.python_dir, folder], directory=folder)
+            read_only = [*python_read_only_mounts(python, bundled, self.manager.python_dir), folder]
+            allow_network = getattr(self.manager.host, "allow_network", True)
+            argv, descriptors, report = wrap(
+                args, environment, read_only=read_only, directory=folder, allow_network=allow_network)
             try:
                 if not report["active"]:
                     raise SandboxError("Для запуска компонента нужна системная песочница.")
                 if os.name == "nt":
-                    from ovygram_sandbox_windows import grant_helper_read
-                    grant_helper_read(folder)
-                    environment["SystemRoot"] = os.environ["SystemRoot"]
+                    environment["SystemRoot"] = os.environ.get("SystemRoot", r"C:\Windows")
                 argv.extend([str(int(bool(report.get("scoped")))), str(binary), *arguments])
                 process = subprocess.Popen(
-                    argv, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                    argv, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
                     close_fds=True, pass_fds=descriptors, env={} if descriptors else environment,
                     creationflags=report.get("creation_flags", 0) | getattr(subprocess, "CREATE_NO_WINDOW", 0))
                 if report.get("creation_flags"):
@@ -139,6 +167,8 @@ class Helpers:
                 # A component that does not read stdin must not block the manager.
                 threading.Thread(target=_send_config, args=(process.stdin, config.encode()),
                                  name="Ovygram component input", daemon=True).start()
+                threading.Thread(target=_log_stderr, args=(process.stderr, self.manager.logger, owner),
+                                 name="Ovygram component log", daemon=True).start()
             finally:
                 for descriptor in descriptors:
                     os.close(descriptor)
@@ -148,6 +178,8 @@ class Helpers:
                 if process is not None:
                     self._terminate(process, guard)
                     process.stdin.close()
+                    if process.stderr is not None:
+                        process.stderr.close()
             finally:
                 self._cleanup(directory)
             raise

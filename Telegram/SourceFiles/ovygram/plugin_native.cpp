@@ -1,6 +1,7 @@
 #include "ovygram/plugin_native.h"
 #include "ovygram/plugin_install.h"
 
+#include "core/application.h"
 #include "ovygram/plugin_widgets.h"
 #include "ovygram/protected_ui.h"
 
@@ -49,6 +50,11 @@ public:
 		if (id < 0 || call != QMetaObject::InvokeMetaMethod) {
 			return id;
 		} else if (id == 0) {
+			if (InstallationUiActive()
+				|| Core::App().passcodeLocked()
+				|| ProtectedFromPlugins(parent())) {
+				return -1;
+			}
 			auto values = QJsonArray();
 			for (auto i = 0; i != _signal.parameterCount(); ++i) {
 				const auto type = _signal.parameterMetaType(i);
@@ -56,7 +62,16 @@ public:
 					? Widgets::VariantToJson(QVariant(type, arguments[i + 1]))
 					: QJsonValue());
 			}
-			_callback(std::move(values));
+			const auto guard = QPointer<SignalRelay>(this);
+			QMetaObject::invokeMethod(qApp, [guard, values = std::move(values)]() mutable {
+				if (!guard
+					|| InstallationUiActive()
+					|| Core::App().passcodeLocked()
+					|| ProtectedFromPlugins(guard->parent())) {
+					return;
+				}
+				guard->_callback(std::move(values));
+			}, Qt::QueuedConnection);
 		}
 		return -1;
 	}
@@ -101,7 +116,7 @@ State &Get() {
 }
 
 bool WindowFilter::eventFilter(QObject *watched, QEvent *e) {
-	if (InstallationUiActive()) return false;
+	if (InstallationUiActive() || Core::App().passcodeLocked()) return false;
 	const auto type = e->type();
 	if (type != QEvent::Show && type != QEvent::Hide) {
 		return false;
@@ -182,6 +197,9 @@ QJsonValue Invoke(not_null<QWidget*> widget, const QJsonObject &command) {
 	if (args.size() > kMaximumArguments) {
 		throw std::runtime_error("Too many arguments.");
 	}
+	if (name == "deleteLater") {
+		throw std::runtime_error("Method deleteLater is not allowed.");
+	}
 	if (CouldCoverProtected(widget, QString::fromLatin1(name))) {
 		throw std::runtime_error(
 			"Layout of this window is locked while Ovygram's plugin manager is open.");
@@ -202,8 +220,13 @@ QJsonValue Invoke(not_null<QWidget*> widget, const QJsonObject &command) {
 		try {
 			for (auto k = 0; k != args.size(); ++k) {
 				const auto type = method.parameterMetaType(k);
-				values[k] = Widgets::JsonToVariant(args[k], type.id());
-				arguments[k] = QGenericArgument(type.name(), values[k].constData());
+				if (type.id() == QMetaType::QVariant) {
+					values[k] = args[k].toVariant();
+					arguments[k] = QGenericArgument("QVariant", &values[k]);
+				} else {
+					values[k] = Widgets::JsonToVariant(args[k], type.id());
+					arguments[k] = QGenericArgument(type.name(), values[k].constData());
+				}
 			}
 		} catch (const std::exception &error) {
 			lastError = error.what(); // Try an overload with other types.
@@ -212,9 +235,15 @@ QJsonValue Invoke(not_null<QWidget*> widget, const QJsonObject &command) {
 		const auto returnType = method.returnMetaType();
 		const auto returns = returnType.isValid()
 			&& returnType.id() != QMetaType::Void;
-		auto result = returns ? QVariant(returnType) : QVariant();
+		auto result = (returns && returnType.id() != QMetaType::QVariant)
+			? QVariant(returnType)
+			: QVariant();
 		const auto returned = returns
-			? QGenericReturnArgument(returnType.name(), result.data())
+			? QGenericReturnArgument(
+				returnType.name(),
+				(returnType.id() == QMetaType::QVariant)
+					? static_cast<void*>(&result)
+					: result.data())
 			: QGenericReturnArgument();
 		if (!method.invoke(
 				widget,
@@ -279,6 +308,14 @@ void Handle(const QJsonObject &command) {
 		throw std::runtime_error("A native rule needs an ID.");
 	}
 	auto &state = Get();
+	if (const auto i = state.windowWatchers.find(ruleId);
+		i != end(state.windowWatchers) && i->second != installationId) {
+		throw std::runtime_error("Native window watcher belongs to another installation.");
+	}
+	if (const auto i = state.connections.find(ruleId);
+		i != end(state.connections) && i->second.installationId != installationId) {
+		throw std::runtime_error("Native signal connection belongs to another installation.");
+	}
 	if (method == u"ui.native.windows"_q) {
 		if (command.value(u"enabled"_q).toBool()) {
 			state.windowWatchers[ruleId] = installationId;
