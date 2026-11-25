@@ -1,4 +1,5 @@
 from pathlib import Path
+import stat
 import subprocess
 import sys
 import tarfile
@@ -43,7 +44,8 @@ class PackageLinuxTests(unittest.TestCase):
             with tarfile.open(archive) as tar:
                 names = set(tar.getnames())
                 helper = tar.getmember(f"{prefix}/TelegramHelpers/TelegramWidgetHelper")
-                self.assertEqual(helper.mode, 0o755)
+                source_helper = build / "TelegramHelpers/TelegramWidgetHelper"
+                self.assertEqual(helper.mode, stat.S_IMODE(source_helper.stat().st_mode))
                 self.assertEqual(tar.extractfile(helper).read(), b"widget helper")
             for name in ("Ovygram", "LICENSE", "io.github.maxutka00.Ovygram.desktop",
                          "python/pip.whl", "python/sdk/ovygram_deps.py",
