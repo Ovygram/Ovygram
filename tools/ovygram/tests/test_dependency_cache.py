@@ -54,6 +54,16 @@ class CacheTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'does not match'):
             cache.restore(self.root, 'foundation', 'second')
 
+    def test_legacy_extras_keep_the_current_local_prefix(self):
+        updated = self.make('local/lib/dav1d.lib', b'older foundation')
+        extra = self.make('local/lib/tde2e.lib', b'previous extra')
+        self.assertTrue(cache.pack(self.root, 'extras', 'seed')['save'])
+        updated.write_bytes(b'current foundation')
+        extra.unlink()
+        self.assertTrue(cache.restore(self.root, 'extras', 'seed', preserve_local=True))
+        self.assertEqual(updated.read_bytes(), b'current foundation')
+        self.assertEqual(extra.read_bytes(), b'previous extra')
+
     def test_budget_uses_compressed_size(self):
         self.make('zlib/Debug/zlib.lib', bytes(64 * 1024))
         result = cache.pack(self.root, 'foundation', 'identity', maximum=1024)

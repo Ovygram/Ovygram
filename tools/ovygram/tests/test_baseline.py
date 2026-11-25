@@ -198,9 +198,9 @@ class BaselineTests(unittest.TestCase):
                             {'configuration': 'Release'})
         return baseline.cache_identity(source, toolchain)
 
-    def restore_dependencies(self, key='', required=True):
+    def restore_dependencies(self, key='', required=True, group='foundation'):
         arguments = ['baseline.py', 'cache-restore', '--root', str(self.root),
-                     '--group', 'foundation']
+                     '--group', group]
         if required:
             arguments.append('--require-cache')
         with patch.object(sys, 'argv', arguments), patch.dict(
@@ -240,7 +240,28 @@ class BaselineTests(unittest.TestCase):
         })
         with patch.object(dependency_cache, 'restore', return_value=True) as restore:
             self.restore_dependencies(f'{identity}-foundation')
-        restore.assert_called_once_with(self.root.resolve(), 'foundation', identity)
+        restore.assert_called_once_with(
+            self.root.resolve(), 'foundation', identity, preserve_local=False)
+
+    def test_v743_seed_requires_the_original_runner_workspace_and_toolchain(self):
+        toolchain = dict(image='win25-vs2026', msvc='14.44.35207',
+                         sdk='10.0.26100.0\\', python_version='Python 3.12.10')
+        workspace = r'D:\a\Ovygram\Ovygram\TBuild'
+        self.assertTrue(baseline.release_seed_identity(workspace, toolchain))
+        self.assertFalse(baseline.release_seed_identity(r'D:\other\TBuild', toolchain))
+        self.assertFalse(baseline.release_seed_identity(
+            workspace, {**toolchain, 'msvc': '14.45'}))
+
+    def test_v743_seed_reuses_extras_and_allows_qt_preparation(self):
+        self.dependency_cache_fixture()
+        with patch.object(baseline, 'release_seed_identity', return_value='release-seed'):
+            with patch.object(dependency_cache, 'restore', return_value=True) as restore:
+                self.restore_dependencies('release-seed-extras', group='extras')
+            restore.assert_called_once_with(
+                self.root.resolve(), 'extras', 'release-seed', preserve_local=True)
+            self.restore_dependencies(group='qt')
+            with self.assertRaisesRegex(RuntimeError, 'No compatible dependency cache'):
+                self.restore_dependencies()
 
     def test_optional_dependency_cache_allows_initial_preparation(self):
         self.dependency_cache_fixture()

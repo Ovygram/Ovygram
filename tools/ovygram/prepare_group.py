@@ -24,7 +24,7 @@ def main():
         raise ValueError('Unknown dependency group.')
     recipe = Path(filename).resolve()
     sys.path.insert(0, str(recipe.parent))
-    sys.argv = [str(recipe), 'qt6', 'skip-release', 'silent']
+    sys.argv = [str(recipe), 'skip-release', 'silent']
     namespace = {'__file__': str(recipe), '__name__': '__main__',
                  '_desktop_group_for': group_for}
     exec(grouped_recipe(recipe.read_text(encoding='utf-8'), str(recipe), group), namespace)

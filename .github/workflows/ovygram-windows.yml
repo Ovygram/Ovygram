@@ -96,6 +96,7 @@ jobs:
           key: ${{ steps.cache-key.outputs.key }}-foundation
           restore-keys: |
             ${{ steps.cache-key.outputs.release-fallback-key && format('{0}-foundation', steps.cache-key.outputs.release-fallback-key) || '' }}
+            ${{ steps.cache-key.outputs.release-seed-key && format('{0}-foundation', steps.cache-key.outputs.release-seed-key) || '' }}
             ${{ steps.cache-key.outputs.debug-key }}-foundation
 
       - name: Unpack foundation snapshot
@@ -165,6 +166,7 @@ jobs:
           key: ${{ steps.cache-key.outputs.key }}-extras
           restore-keys: |
             ${{ steps.cache-key.outputs.release-fallback-key && format('{0}-extras', steps.cache-key.outputs.release-fallback-key) || '' }}
+            ${{ steps.cache-key.outputs.release-seed-key && format('{0}-extras', steps.cache-key.outputs.release-seed-key) || '' }}
             ${{ steps.cache-key.outputs.debug-key }}-extras
 
       - name: Unpack extras snapshot

@@ -195,6 +195,11 @@ dependency group. A Debug cache does not replace finished Release dependencies.
 Preparing all dependencies from scratch and compiling the client can together
 exceed 345 minutes, even if the compiler reports no errors.
 
+For the v7.4.6 update, the Windows Release workflow can seed the foundation and
+extras groups from the v7.4.3 snapshots on a matching toolchain and workspace.
+The pinned recipe rebuilds stale stages, and Qt 6.12 is prepared separately
+from the previous Qt 6.11 snapshot.
+
 If an attempt reached client compilation and stopped with
 `Build time allowance exhausted`, check that the `foundation`, `qt` and `extras`
 caches were saved successfully. Then start a new `plugins` run on the same branch

@@ -36,7 +36,7 @@ def main():
         os.environ['SKIP_DUMPSYMS'] = '1'
     recipe = Path(filename).resolve()
     sys.path.insert(0, str(recipe.parent))
-    sys.argv = [str(recipe), 'qt6', 'silent']
+    sys.argv = [str(recipe), 'silent']
     namespace = {'__file__': str(recipe), '__name__': '__main__',
                  '_desktop_group_for': group_for}
     exec(release_recipe(recipe.read_text(encoding='utf-8'), str(recipe), group), namespace)

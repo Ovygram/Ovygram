@@ -168,6 +168,19 @@ def release_cache_identity(debug_identity):
     return f'pd-win64-qt6-release-v1-{digest}'
 
 
+def release_seed_identity(build_root, toolchain):
+    # The v7.4.3 snapshots store absolute paths. The toolchain and workspace
+    # must match; prepare.py then decides which individual stages are stale.
+    if (CLIENT_VERSION == '7.4.6'
+            and str(build_root).lower() == r'd:\a\ovygram\ovygram\tbuild'
+            and toolchain['image'] == 'win25-vs2026'
+            and toolchain['msvc'] == '14.44.35207'
+            and toolchain['sdk'].rstrip('\\') == '10.0.26100.0'
+            and toolchain['python_version'] == 'Python 3.12.10'):
+        return 'pd-win64-qt6-release-v1-22ce995016d83367dbd199d041688c7a4b2dce8704e9bd47255e8a916c6c818e'
+    return ''
+
+
 def cache_size(paths):
     total = 0
     for path in paths:
@@ -214,8 +227,10 @@ def main():
         debug_identity = cache_identity(source, toolchain)
         identity = debug_identity
         release_fallback = ''
+        release_seed = ''
         if state['configuration'] == 'Release':
             identity = release_cache_identity(debug_identity)
+            release_seed = release_seed_identity(source.parent.resolve(), toolchain)
             # These images use the same pinned MSVC and SDK. The November 16
             # image uses a newer CMake to consume the prebuilt libraries.
             compatible_images = {
@@ -236,6 +251,8 @@ def main():
             if not args.group:
                 parser.error('--group required')
             restored_key = os.getenv('RESTORED_CACHE_KEY', '')
+            seeded = bool(release_seed and args.group in ('foundation', 'extras')
+                          and restored_key == f'{release_seed}-{args.group}')
             if restored_key == f'{debug_identity}-{args.group}':
                 if args.require_cache and state['configuration'] == 'Release':
                     raise RuntimeError(
@@ -245,19 +262,22 @@ def main():
                 identity = debug_identity
             elif release_fallback and restored_key == f'{release_fallback}-{args.group}':
                 identity = release_fallback
+            elif seeded:
+                identity = release_seed
             elif restored_key and restored_key != f'{identity}-{args.group}':
                 raise RuntimeError('Unexpected dependency cache key.')
-            restored = dependency_cache.restore(root, args.group, identity)
-            if args.require_cache and not restored:
+            restored = dependency_cache.restore(root, args.group, identity,
+                                                preserve_local=seeded and args.group == 'extras')
+            if args.require_cache and not restored and not (release_seed and args.group == 'qt'):
                 raise RuntimeError(
                     f'No compatible dependency cache for {args.group}. '
                     'Stopping before dependency preparation to preserve the build time allowance. '
                     'Prepare dependencies separately, then retry on the same branch.')
-            print('Snapshot restored:', restored)
+            print('Snapshot restored:', restored, '(v7.4.3 seed)' if seeded else '')
             return
         elif args.action == 'cache-key':
             value = (f'key={identity}\ndebug-key={debug_identity}\n'
-                     f'release-fallback-key={release_fallback}')
+                     f'release-fallback-key={release_fallback}\nrelease-seed-key={release_seed}')
         else:
             if not args.group:
                 parser.error('--group required')

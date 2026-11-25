@@ -90,7 +90,7 @@ def pack(root, group, identity, maximum=MAX_ARCHIVE):
         raise
 
 
-def restore(root, group, identity):
+def restore(root, group, identity, *, preserve_local=False):
     archive = root / 'dependency-cache' / group / 'dependencies.zip'
     if not archive.exists():
         return False
@@ -107,11 +107,16 @@ def restore(root, group, identity):
                             or entry.filename.startswith('TBuild/Libraries/win64/'))):
                 raise RuntimeError('Unexpected path in dependency snapshot.')
         for entry in entries:
-            if shutil.disk_usage(root).free < entry.file_size + 2 * 1024 ** 3:
-                raise RuntimeError('Insufficient disk reserve to restore dependencies.')
             destination = root.joinpath(*PurePosixPath(entry.filename).parts)
             if not destination.resolve().is_relative_to(root.resolve()):
                 raise RuntimeError('Dependency snapshot escapes build root.')
+            # The older extras snapshot also includes the shared local prefix.
+            # Keep files already installed by the current foundation stage.
+            if (preserve_local and entry.filename.startswith('TBuild/Libraries/win64/local/')
+                    and destination.is_file()):
+                continue
+            if shutil.disk_usage(root).free < entry.file_size + 2 * 1024 ** 3:
+                raise RuntimeError('Insufficient disk reserve to restore dependencies.')
             destination.parent.mkdir(parents=True, exist_ok=True)
             with source.open(entry) as reader, destination.open('wb') as writer:
                 shutil.copyfileobj(reader, writer)
