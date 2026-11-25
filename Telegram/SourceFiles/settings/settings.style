@@ -49,10 +49,6 @@ settingsAttentionButtonWithIcon: SettingsButton(settingsButton) {
 	textFg: attentionButtonFg;
 	textFgOver: attentionButtonFgOver;
 }
-settingsPluginImport: SettingsButton(settingsButtonLightNoIcon) {
-	height: 20px;
-	padding: margins(22px, 12px, 22px, 12px);
-}
 settingsFaqKeysLegendIcon: icon {{ "menu/keyboard", menuIconColor }};
 settingsFaqKeysLegendIconOver: icon {{ "menu/keyboard", windowBoldFgOver }};
 settingsFaqKeysLegend: IconButton {

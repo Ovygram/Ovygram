@@ -12,19 +12,17 @@ class VerticalLayout;
 
 namespace PreviewPluginList {
 
-Ui::InputField *AddSearch(not_null<Ui::VerticalLayout*> layout, bool before);
+Ui::InputField *AddSearch(not_null<Ui::VerticalLayout*> layout);
 void AddActions(
 	not_null<Ui::VerticalLayout*> layout,
-	bool before,
 	Fn<void()> import,
 	Fn<void()> check);
 void BuildRows(
 	not_null<Ui::VerticalLayout*> layout,
 	const QJsonArray &plugins,
 	const QString &query,
-	bool before,
 	Fn<void(QJsonObject)> open,
-	Fn<void(QString)> toggle,
+	Fn<void(QString id, bool enabled)> setEnabled,
 	Fn<void()> share,
 	Fn<void()> remove,
 	Fn<void()> log);

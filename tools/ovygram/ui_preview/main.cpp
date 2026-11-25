@@ -3,6 +3,7 @@
 #include "base/unique_qptr.h"
 #include "base/concurrent_timer.h"
 #include "ovygram/plugin_install_view.h"
+#include "ovygram/plugin_list_view.h"
 #include "ovygram/plugin_management_view.h"
 #include "ovygram/plugin_ui_tree.h"
 #include "ovygram/plugin_proxy_view.h"
@@ -511,6 +512,7 @@ private:
 	Ui::InputField *_listSearch = nullptr;
 	Ui::VerticalLayout *_listRows = nullptr;
 	QJsonArray _listPlugins;
+	bool _listLaunchBlocked = false;
 	QJsonObject _plugin;
 	QJsonArray _fields;
 	QString _installChoice;
@@ -534,10 +536,15 @@ void Preview::showPluginList() {
 	auto layer = object_ptr<SettingsLayer>(&_layers, u"Плагины"_q, st::settingsPluginsLayerWidth);
 	_list = layer.data();
 	const auto layout = _list->content();
-	_listSearch = PreviewPluginList::AddSearch(layout, before);
-	PreviewPluginList::AddActions(layout, before,
-		[this] { showInstaller(InstallInfo(u"install-new"_q)); },
-		[this] { showListNotice(u"Обновления плагинов"_q, u"Доступно одно обновление."_q); });
+	const auto import = [this] { showInstaller(InstallInfo(u"install-new"_q)); };
+	const auto check = [this] { showListNotice(u"Обновления плагинов"_q, u"Доступно одно обновление."_q); };
+	if (before) {
+		_listSearch = PreviewPluginList::AddSearch(layout);
+		PreviewPluginList::AddActions(layout, import, check);
+	} else {
+		_listSearch = Ovygram::AddPluginListSearch(layout);
+		Ovygram::AddPluginListActions(layout, import, check);
+	}
 	_listRows = layout->add(object_ptr<Ui::VerticalLayout>(layout));
 	_listSearch->changes() | rpl::on_next([this] { buildPluginList(); }, _listSearch->lifetime());
 	_layers.showSpecialLayer(std::move(layer), anim::type::instant);
@@ -545,34 +552,39 @@ void Preview::showPluginList() {
 }
 
 void Preview::buildPluginList() {
-	PreviewPluginList::BuildRows(_listRows, _listPlugins, _listSearch->getLastText().trimmed(),
-		_scenario == u"list-before"_q,
-		[this](QJsonObject plugin) {
-			const auto fields = plugin.value(u"plugin_id"_q) == u"proxy_windows"_q
-				? SampleSettings(false) : QJsonArray();
-			showDetails(std::move(plugin), fields);
-		},
-		[this](QString id) {
-			QTimer::singleShot(0, this, [this, id] {
-				if (!_list) {
-					return;
+	_listRows->clear();
+	const auto query = _listSearch->getLastText().trimmed();
+	const auto open = [this](QJsonObject plugin) {
+		const auto fields = plugin.value(u"plugin_id"_q) == u"proxy_windows"_q
+			? SampleSettings(false) : QJsonArray();
+		showDetails(std::move(plugin), fields);
+	};
+	const auto setEnabled = [this](QString id, bool enabled) {
+		QTimer::singleShot(0, this, [=, this] {
+			if (!_list) {
+				return;
+			}
+			for (auto i = 0; i != _listPlugins.size(); ++i) {
+				auto plugin = _listPlugins.at(i).toObject();
+				if (plugin.value(u"installation_id"_q).toString() == id) {
+					plugin.insert(u"enabled"_q, enabled);
+					plugin.insert(u"loaded"_q, enabled);
+					_listPlugins.replace(i, plugin);
+					break;
 				}
-				for (auto i = 0; i != _listPlugins.size(); ++i) {
-					auto plugin = _listPlugins.at(i).toObject();
-					if (plugin.value(u"installation_id"_q).toString() == id) {
-						const auto enabled = !plugin.value(u"enabled"_q).toBool();
-						plugin.insert(u"enabled"_q, enabled);
-						plugin.insert(u"loaded"_q, enabled);
-						_listPlugins.replace(i, plugin);
-						break;
-					}
-				}
-				buildPluginList();
-			});
-		},
-		[this] { showListNotice(u"Отправить плагин"_q, u"Выбор получателя доступен в клиенте."_q); },
-		[this] { showRemoval(); },
-		[this] { showListNotice(u"Журнал плагинов"_q, u"Журнал тестового профиля пуст."_q); });
+			}
+			buildPluginList();
+		});
+	};
+	const auto log = [this] { showListNotice(u"Журнал плагинов"_q, u"Журнал тестового профиля пуст."_q); };
+	if (_scenario == u"list-before"_q) {
+		PreviewPluginList::BuildRows(_listRows, _listPlugins, query, open, setEnabled,
+			[this] { showListNotice(u"Отправить плагин"_q, u"Выбор получателя доступен в клиенте."_q); },
+			[this] { showRemoval(); },
+			log);
+	} else {
+		Ovygram::AddPluginListRows(_listRows, _listPlugins, query, _listLaunchBlocked, open, setEnabled, log);
+	}
 	_list->parentResized();
 }
 
@@ -765,6 +777,14 @@ void Preview::verify() {
 		Check(ByName(_list, u"Не проверен"_q) && ByName(_list, u"Официальный"_q)
 			&& ByName(_list, u"Проверен"_q), "A plugin trust badge is missing.");
 		Check(ByName(_list, u"Доступно обновление до 1.0.4"_q), "Available update is missing.");
+		_listLaunchBlocked = true;
+		buildPluginList();
+		const auto start = dynamic_cast<Ui::SettingsButton*>(ByName(_list, u"Включить Черновик заметки"_q));
+		const auto stop = dynamic_cast<Ui::SettingsButton*>(ByName(_list, u"Отключить PROXY · Подписки (Windows)"_q));
+		Check(start && start->isDisabled() && stop && !stop->isDisabled(),
+			"Runtime recovery must prevent starting plugins and allow stopping them.");
+		_listLaunchBlocked = false;
+		buildPluginList();
 		_listSearch->setFocus();
 		const auto edit = _listSearch->rawTextEdit().get();
 		QTest::keyClicks(edit, "note_draft");

@@ -58,6 +58,7 @@ add_executable(ovygram-ui-preview
     ${src_loc}/ui/vertical_list.cpp
     ${src_loc}/ovygram/plugin_management_view.cpp
     ${src_loc}/ovygram/plugin_install_view.cpp
+    ${src_loc}/ovygram/plugin_list_view.cpp
     ${src_loc}/ovygram/plugin_ui_tree.cpp
     ${src_loc}/ovygram/plugin_paint.cpp
     ${src_loc}/ovygram/plugin_proxy_view.cpp

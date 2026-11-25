@@ -45,8 +45,8 @@ tools/ovygram/ui-preview --scenario install-update --theme light --scale 125 \
   --width 1000 --height 760 --click 'Подробности файла' --screenshot /tmp/file-details.png
 ```
 
-`list-before` показывает текущие карточки списка. `list-after` показывает
-предложение компактного списка с теми же тестовыми плагинами.
+`list-before` показывает прежние карточки. `list-after` открывает компактный
+список на тех же тестовых данных через общие с клиентом виджеты.
 
 С `DISPLAY` или `WAYLAND_DISPLAY` команда без `--check`, `--click` и
 `--screenshot` оставляет окно открытым. В headless-среде

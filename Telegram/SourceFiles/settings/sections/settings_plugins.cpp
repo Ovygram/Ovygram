@@ -4,6 +4,7 @@
 #include "core/file_utilities.h"
 #include "core/plugin_runtime.h"
 #include "ovygram/plugin_install.h"
+#include "ovygram/plugin_list_view.h"
 #include "ovygram/plugin_management_view.h"
 #include "ovygram/protected_ui.h"
 #include "lang/lang_keys.h"
@@ -11,16 +12,14 @@
 #include "settings/settings_common_session.h"
 #include "ui/boxes/confirm_box.h"
 #include "ui/layers/generic_box.h"
-#include "ui/search_field_controller.h"
 #include "ui/vertical_list.h"
 #include "ui/widgets/buttons.h"
-#include "ui/widgets/labels.h"
+#include "ui/widgets/fields/input_field.h"
 #include "ui/wrap/slide_wrap.h"
 #include "ui/wrap/vertical_layout.h"
 #include "window/window_session_controller.h"
 #include "styles/style_layers.h"
 #include "styles/style_settings.h"
-#include "styles/style_plugin_management.h"
 
 #include <QtCore/QJsonArray>
 #include <QtCore/QJsonDocument>
@@ -124,14 +123,6 @@ void AddNotice(
 		: QString();
 }
 
-// A text that came from the plugin's own process is the plugin speaking,
-// not Ovygram: it is labelled so.
-[[nodiscard]] QString ErrorTitle(const QJsonObject &plugin) {
-	return plugin.value(u"error_from_plugin"_q).toBool()
-		? u"Сообщение плагина: "_q
-		: u"Ошибка: "_q;
-}
-
 // What the user must know about the process plugins run in: why it can't
 // start, that it has no network, or that it isn't restricted at all.
 [[nodiscard]] QString IsolationStatus(const QJsonObject &snapshot) {
@@ -145,12 +136,6 @@ void AddNotice(
 			: u"Плагины работают без изоляции от системы. %1"_q.arg(reason);
 	}
 	return u"Плагины не запущены. %1"_q.arg(reason);
-}
-
-[[nodiscard]] QString ErrorPreview(const QString &description) {
-	const auto text = description.simplified();
-	constexpr auto kLimit = 160;
-	return (text.size() > kLimit) ? text.left(kLimit).trimmed() + u"…"_q : text;
 }
 
 void ConfirmRemove(
@@ -281,7 +266,7 @@ void PluginDetails::refresh() {
 		!status.isEmpty() || plugin.value(u"trust"_q).toObject().value(u"status"_q).toString() == u"blocked"_q,
 		[=, this] { operate(enabled ? u"disable"_q : u"enable"_q); });
 	if (const auto error = plugin.value(u"error"_q).toString(); !error.isEmpty()) {
-		Ui::AddDividerText(_content, rpl::single(ErrorTitle(plugin) + error));
+		Ui::AddDividerText(_content, rpl::single(Ovygram::PluginErrorTitle(plugin) + error));
 	}
 	if (!status.isEmpty()) {
 		Ui::AddDividerText(_content, rpl::single(status));
@@ -383,13 +368,12 @@ private:
 	void refresh();
 	void populate();
 	void install();
-	void operate(const QString &id, const QString &action, bool keepData = false);
+	void setPluginEnabled(const QString &id, bool enabled);
 
-	std::unique_ptr<Ui::SearchFieldController> _search;
+	Ui::InputField *_search = nullptr;
 	Ui::VerticalLayout *_content = nullptr;
-	Ui::SettingsButton *_checkUpdates = nullptr;
+	Ui::RoundButton *_checkUpdates = nullptr;
 	QJsonObject _snapshot;
-	QString _query;
 	rpl::variable<QString> _notice;
 	bool _polling = false;
 	bool _manualCheckPending = false;
@@ -401,13 +385,10 @@ Plugins::Plugins(
 : Section(parent, controller) {
 	Ovygram::ProtectSurface(this);
 	const auto layout = Ui::CreateChild<Ui::VerticalLayout>(this);
-	auto search = CreateSectionSearchRow(layout);
-	_search = std::move(search.controller);
-	layout->add(object_ptr<Ui::RpWidget>::fromRaw(search.row.get()));
+	_search = Ovygram::AddPluginListSearch(layout);
 	setNavigationAnchor(layout);
 	AddNotice(layout, _notice);
-	AddAction(layout, u"Импортировать плагин"_q, [this] { install(); }, st::settingsPluginImport);
-	_checkUpdates = AddAction(layout, u"Проверить обновления"_q, [this] {
+	_checkUpdates = Ovygram::AddPluginListActions(layout, [this] { install(); }, [this] {
 		const auto started = Request({ { u"action"_q, u"check_updates"_q } }, _notice);
 		if (started.isUndefined()) return;
 		_manualCheckPending = true;
@@ -417,10 +398,7 @@ Plugins::Plugins(
 	_content = layout->add(object_ptr<Ui::VerticalLayout>(layout));
 	Ui::ResizeFitChild(this, layout);
 
-	_search->queryChanges() | rpl::on_next([this](const QString &query) {
-		_query = query.trimmed();
-		populate();
-	}, layout->lifetime());
+	_search->changes() | rpl::on_next([this] { populate(); }, layout->lifetime());
 	refresh();
 }
 
@@ -493,76 +471,31 @@ void Plugins::populate() {
 			crl::on_main(this, [this] { refresh(); });
 		});
 	}
-	Ui::AddSkip(_content);
-	Ui::AddDivider(_content);
-	Ui::AddSubsectionTitle(_content, rpl::single(u"Установленные плагины"_q));
-	const auto entries = _snapshot.value(u"plugins"_q).toArray();
-	auto found = false;
-	for (const auto &entry : entries) {
-		const auto plugin = entry.toObject();
-		const auto name = plugin.value(u"name"_q).toString();
-		const auto id = plugin.value(u"installation_id"_q).toString();
-		const auto pluginId = plugin.value(u"plugin_id"_q).toString();
-		const auto author = plugin.value(u"author"_q).toString();
-		if (!name.contains(_query, Qt::CaseInsensitive)
-			&& !pluginId.contains(_query, Qt::CaseInsensitive)
-			&& !author.contains(_query, Qt::CaseInsensitive)) {
-			continue;
-		}
-		found = true;
-		const auto card = Ovygram::AddPluginCard(_content);
-		const auto enabled = plugin.value(u"enabled"_q).toBool();
-		Ovygram::AddPluginHeader(
-			card, name,
-			[=, this] { showOther(PluginDetails::Id(id, name)); },
-			enabled, !status.isEmpty() || plugin.value(u"trust"_q).toObject().value(u"status"_q).toString() == u"blocked"_q,
-			[=, this] { operate(id, enabled ? u"disable"_q : u"enable"_q); });
-		Ovygram::AddPluginSummary(card, plugin);
-		if (plugin.value(u"update"_q).isObject()) {
-			const auto offer = plugin.value(u"update"_q).toObject();
-			const auto target = offer.value(u"latest_version"_q).toString(offer.value(u"version"_q).toString());
-			AddAction(card, offer.value(u"rollback"_q).toBool()
-				? u"Установить безопасную версию %1"_q.arg(target)
-				: u"Обновить до версии %1"_q.arg(target),
-				[=, this] { operate(id, u"apply_update"_q); }, st::settingsPluginCardAction);
-		}
-		if (const auto error = plugin.value(u"error"_q).toString(); !error.isEmpty()) {
-			auto label = object_ptr<Ui::FlatLabel>(card,
-				ErrorTitle(plugin) + ErrorPreview(error), st::settingsPluginCardMeta);
-			card->add(std::move(label), st::settingsPluginTextMargin, style::al_justify);
-		}
-		Ovygram::AddPluginCardActions(
-			card,
-			[=, this] { SharePlugin(controller(), id, _notice); },
-			[=, this] {
-				ConfirmRemove(controller(), crl::guard(this, [=, this](bool keepData) {
-					operate(id, u"remove"_q, keepData);
-				}));
-			});
-	}
-	if (!found) {
-		Ui::AddDividerText(_content, rpl::single(entries.isEmpty()
-			? u"Установленных плагинов пока нет."_q
-			: u"Плагины не найдены."_q));
-	}
-	Ui::AddSkip(_content);
-	Ui::AddDivider(_content);
-	AddAction(_content, u"Открыть журнал"_q, [this] {
-		const auto path = _snapshot.value(u"log_path"_q).toString();
-		if (path.isEmpty() || !QDesktopServices::openUrl(QUrl::fromLocalFile(path))) {
-			_notice = u"Не удалось открыть журнал плагинов."_q;
-		}
-	});
-	Ui::AddSkip(_content);
+	Ovygram::AddPluginListRows(
+		_content,
+		_snapshot.value(u"plugins"_q).toArray(),
+		_search->getLastText().trimmed(),
+		!status.isEmpty(),
+		[this](QJsonObject plugin) {
+			showOther(PluginDetails::Id(
+				plugin.value(u"installation_id"_q).toString(),
+				plugin.value(u"name"_q).toString()));
+		},
+		[this](QString id, bool enabled) { setPluginEnabled(id, enabled); },
+		[this] {
+			const auto path = _snapshot.value(u"log_path"_q).toString();
+			if (path.isEmpty() || !QDesktopServices::openUrl(QUrl::fromLocalFile(path))) {
+				_notice = u"Не удалось открыть журнал плагинов."_q;
+			}
+		});
 }
 
-void Plugins::operate(const QString &id, const QString &action, bool keepData) {
+void Plugins::setPluginEnabled(const QString &id, bool enabled) {
 	_notice = QString();
-	(void)Request([&] {
-		auto request = QJsonObject{ { u"action"_q, action }, { u"installation_id"_q, id } };
-		if (action == u"remove"_q) request.insert(u"keep_data"_q, keepData);
-		return request;
-	}(), _notice);
+	(void)Request({
+		{ u"action"_q, enabled ? u"enable"_q : u"disable"_q },
+		{ u"installation_id"_q, id },
+	}, _notice);
 	QTimer::singleShot(0, this, [this] { refresh(); });
 }
 

@@ -337,13 +337,6 @@ QRect LayerWidget::countGeometry(int newWidth) {
 	const auto maxVisibleHeight = windowHeight - newTop;
 	// Top rounding is included in _contentWrapHeight.
 	auto desiredHeight = _contentWrapHeight + bottomRadius;
-#ifdef OVYGRAM_ENABLED
-	const auto section = _contentWrap->controller()->section();
-	if (section.type() == Section::Type::Settings
-		&& section.settingsType() == ::Settings::PluginsId()) {
-		accumulate_max(desiredHeight, st::settingsPluginsLayerMinHeight);
-	}
-#endif
 	accumulate_min(desiredHeight, maxVisibleHeight - newBottom);
 
 	// First resize content to new width and get the new desired height.

@@ -24,7 +24,6 @@ settingsPluginSelectorMargin: margins(22px, 5px, 10px, 5px);
 settingsPluginCardMargin: margins(16px, 4px, 16px, 8px);
 settingsPluginCardRadius: 10px;
 settingsPluginsLayerWidth: 660px;
-settingsPluginsLayerMinHeight: 640px;
 settingsPluginTextMargin: margins(16px, 0px, 16px, 8px);
 settingsPluginSectionMargin: margins(16px, 10px, 16px, 8px);
 settingsPluginSectionTitle: FlatLabel(defaultSubsectionTitle) {
