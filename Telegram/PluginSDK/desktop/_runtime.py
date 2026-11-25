@@ -420,7 +420,7 @@ class Runtime:
         else:
             node = surface.nodes.get(event.get("node_id"))
             callback = node.handlers.get(kind) if node is not None else None
-            if kind in ("change", "toggle") and node is not None:
+            if kind in ("change", "toggle", "slide") and node is not None:
                 node.props["text" if kind == "change" else "value"] = event.get("value")
         if callback is None or not owner.active:
             return

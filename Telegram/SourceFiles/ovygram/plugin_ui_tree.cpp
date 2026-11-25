@@ -7,6 +7,7 @@
 #include "ui/rp_widget.h"
 #include "ui/widgets/buttons.h"
 #include "ui/widgets/checkbox.h"
+#include "ui/widgets/continuous_sliders.h"
 #include "ui/widgets/fields/input_field.h"
 #include "ui/widgets/labels.h"
 #include "ui/wrap/slide_wrap.h"
@@ -16,11 +17,14 @@
 #include "styles/style_widgets.h"
 
 #include <QtCore/QJsonArray>
+#include <QtCore/QRegularExpression>
 #include <QtGui/QImage>
 #include <QtGui/QMouseEvent>
+#include <QtGui/QPaintEvent>
 #include <QtGui/QPainter>
 
 #include <algorithm>
+#include <cmath>
 #include <optional>
 #include <stdexcept>
 #include <vector>
@@ -48,13 +52,50 @@ constexpr auto kColumnSkip = 6;
 	return entry->second;
 }
 
-void SetLabelTone(not_null<Ui::FlatLabel*> label, const QString &tone) {
-	if (tone == u"muted"_q) label->setTextColorOverride(st::windowSubTextFg->c);
-	else if (tone == u"accent"_q) label->setTextColorOverride(st::windowActiveTextFg->c);
-	else if (tone == u"positive"_q) label->setTextColorOverride(st::groupCallLive1->c);
-	else if (tone == u"attention"_q) label->setTextColorOverride(st::attentionButtonFg->c);
-	else label->setTextColorOverride(std::nullopt);
+[[nodiscard]] std::optional<QColor> ReadColor(const QJsonValue &value) {
+	if (value.isUndefined() || value.isNull()) {
+		return std::nullopt;
+	}
+	const auto text = value.toString();
+	static const auto pattern = QRegularExpression(u"^#[0-9A-Fa-f]{6}$"_q);
+	if (text.size() != 7 || !pattern.match(text).hasMatch()) {
+		throw std::runtime_error("A plugin color must use #RRGGBB.");
+	}
+	return QColor(text);
 }
+
+class PaletteLabel final : public Ui::FlatLabel {
+public:
+	PaletteLabel(QWidget *parent, const QString &text, const style::FlatLabel &style)
+	: FlatLabel(parent, text, style) {
+		style::PaletteChanged() | rpl::on_next([this] { applyColor(); }, lifetime());
+	}
+
+	void setTone(QString tone) {
+		_tone = std::move(tone);
+		applyColor();
+	}
+
+	void setColor(std::optional<QColor> color) {
+		_color = std::move(color);
+		applyColor();
+	}
+
+private:
+	void applyColor() {
+		auto color = _color;
+		if (!color) {
+			if (_tone == u"muted"_q) color = st::windowSubTextFg->c;
+			else if (_tone == u"accent"_q) color = st::windowActiveTextFg->c;
+			else if (_tone == u"positive"_q) color = st::groupCallLive1->c;
+			else if (_tone == u"attention"_q) color = st::attentionButtonFg->c;
+		}
+		setTextColorOverride(color);
+	}
+
+	QString _tone;
+	std::optional<QColor> _color;
+};
 
 [[nodiscard]] const style::RoundButton &ButtonStyle(const QString &variant) {
 	if (variant == u"primary"_q) return st::defaultActiveButton;
@@ -105,86 +146,188 @@ constexpr auto kOvygramCode = ButtonColors{ 0xFF86A7C5, 0xFF293C4A };
 	return std::nullopt;
 }
 
-void SetButtonVariant(not_null<Ui::RoundButton*> button, const QString &variant, bool useOvygramPalette) {
-	if (variant == u"chip"_q) button->setFullRadius(true);
-	const auto colors = useOvygramPalette ? OvygramButtonColors(variant) : std::nullopt;
-	if (!colors && variant != u"secondary"_q && variant != u"danger"_q) return;
-	const auto apply = [=] {
-		if (colors && DarkButtonPalette()) {
-			const auto text = QColor::fromRgba(colors->text);
-			button->setTextFgOverride(text);
-			button->setBrushOverride(QBrush(QColor::fromRgba(colors->fill)));
-			// RoundButton centers the stroke on its edge, clipping the outer half.
-			button->setPenOverride(colors->outline
-				? std::optional(QPen(QColor::fromRgba(colors->outline), 2.))
-				: std::nullopt);
-			auto ripple = text;
-			ripple.setAlpha(55);
-			button->setRippleOverride(ripple);
-		} else if (variant == u"danger"_q) {
-			auto tint = st::attentionButtonFg->c;
-			button->setTextFgOverride(tint);
-			tint.setAlpha(35);
-			button->setBrushOverride(QBrush(tint));
-			button->setRippleOverride(std::nullopt);
-		} else if (variant == u"secondary"_q) {
-			button->setTextFgOverride(std::nullopt);
-			auto tint = st::lightButtonFg->c;
-			tint.setAlpha(115);
-			button->setBrushOverride(QBrush(st::windowBg->c));
-			button->setPenOverride(QPen(tint));
-			button->setRippleOverride(tint);
-		} else {
-			button->setTextFgOverride(std::nullopt);
-			button->setBrushOverride(std::nullopt);
-			button->setRippleOverride(std::nullopt);
-		}
+struct ButtonOverrides {
+	std::optional<QColor> text;
+	std::optional<QColor> background;
+	std::optional<QColor> border;
+};
+
+[[nodiscard]] ButtonOverrides ReadButtonOverrides(const QJsonValue &value) {
+	if (value.isNull() || value.isUndefined()) {
+		return {};
+	}
+	if (!value.isObject()) {
+		throw std::runtime_error("Button colors must be an object.");
+	}
+	const auto colors = value.toObject();
+	return {
+		.text = ReadColor(colors.value(u"text"_q)),
+		.background = ReadColor(colors.value(u"background"_q)),
+		.border = ReadColor(colors.value(u"border"_q)),
 	};
-	apply();
-	style::PaletteChanged() | rpl::on_next(apply, button->lifetime());
 }
 
-class TrashButton final : public Ui::IconButton {
+class ColorableButton {
+public:
+	virtual ~ColorableButton() = default;
+	virtual void setColors(ButtonOverrides colors) = 0;
+};
+
+class PaletteRoundButton final : public Ui::RoundButton, public ColorableButton {
+public:
+	PaletteRoundButton(
+		QWidget *parent,
+		rpl::producer<QString> text,
+		QString variant,
+		bool useOvygramPalette)
+	: RoundButton(parent, std::move(text), ButtonStyle(variant))
+	, _variant(std::move(variant))
+	, _reference(useOvygramPalette ? OvygramButtonColors(_variant) : std::nullopt) {
+		setTextTransform(Ui::RoundButtonTextTransform::NoTransform);
+		if (_variant == u"chip"_q) {
+			setFullRadius(true);
+		}
+		style::PaletteChanged() | rpl::on_next([this] { applyColors(); }, lifetime());
+	}
+
+	void setColors(ButtonOverrides colors) override {
+		_colors = std::move(colors);
+		applyColors();
+	}
+
+private:
+	void applyColors() {
+		auto text = std::optional<QColor>();
+		auto background = std::optional<QColor>();
+		auto border = std::optional<QColor>();
+		auto ripple = std::optional<QColor>();
+		const auto useReference = _reference && DarkButtonPalette();
+		if (useReference) {
+			text = QColor::fromRgba(_reference->text);
+			background = QColor::fromRgba(_reference->fill);
+			if (_reference->outline) border = QColor::fromRgba(_reference->outline);
+			ripple = *text;
+			ripple->setAlpha(55);
+		} else if (_variant == u"danger"_q) {
+			text = st::attentionButtonFg->c;
+			background = *text;
+			background->setAlpha(35);
+		} else if (_variant == u"secondary"_q) {
+			background = st::windowBg->c;
+			border = st::lightButtonFg->c;
+			border->setAlpha(115);
+			ripple = border;
+		}
+		if (_colors.text) text = _colors.text;
+		if (_colors.background) background = _colors.background;
+		if (_colors.border) border = _colors.border;
+		if (border && !background) background = st().textBg->c;
+		if (_colors.text || _colors.border) {
+			ripple = (_colors.text ? _colors.text : _colors.border);
+			ripple->setAlpha(55);
+		}
+		setTextFgOverride(text);
+		setBrushOverride(background ? std::optional(QBrush(*background)) : std::nullopt);
+		// The outer half of the stroke is clipped at the widget edge.
+		setPenOverride(border
+			? std::optional(QPen(*border, (useReference || _colors.border) ? 2. : 1.))
+			: std::nullopt);
+		setRippleOverride(ripple);
+	}
+
+	const QString _variant;
+	const std::optional<ButtonColors> _reference;
+	ButtonOverrides _colors;
+};
+
+class TrashButton final : public Ui::IconButton, public ColorableButton {
 public:
 	TrashButton(QWidget *parent, bool useOvygramPalette)
 	: IconButton(parent, st::boxTitleClose)
 	, _useOvygramPalette(useOvygramPalette) {
 		setIconOverride(&st::menuIconDeleteAttention, &st::menuIconDeleteAttention);
-		if (_useOvygramPalette) {
-			const auto apply = [this] {
-				setIconColorOverride(DarkButtonPalette()
-					? std::optional(QColor::fromRgba(kOvygramDanger.text))
-					: std::nullopt);
-				update();
-			};
-			apply();
-			style::PaletteChanged() | rpl::on_next(apply, lifetime());
-		}
+		style::PaletteChanged() | rpl::on_next([this] { applyColors(); }, lifetime());
+	}
+
+	void setColors(ButtonOverrides colors) override {
+		_colors = std::move(colors);
+		applyColors();
 	}
 
 protected:
 	void paintEvent(QPaintEvent *e) override {
-		if (_useOvygramPalette && DarkButtonPalette()) {
+		auto background = _colors.background;
+		if (!background && referenceColors()) {
+			background = QColor::fromRgba(kOvygramDanger.fill);
+		}
+		if (background || _colors.border) {
 			auto p = QPainter(this);
 			p.setRenderHint(QPainter::Antialiasing);
-			p.setPen(Qt::NoPen);
-			p.setBrush(QColor::fromRgba(kOvygramDanger.fill));
+			p.setPen(_colors.border ? QPen(*_colors.border) : QPen(Qt::NoPen));
+			p.setBrush(background ? QBrush(*background) : QBrush(Qt::NoBrush));
 			const auto buttonHeight = std::min(height(), st::defaultActiveButton.height);
 			const auto corners = style::ConvertScale(6);
-			p.drawRoundedRect(QRect(0, (height() - buttonHeight) / 2, width(), buttonHeight),
-				corners, corners);
+			p.drawRoundedRect(QRectF(0, (height() - buttonHeight) / 2., width(), buttonHeight)
+				.adjusted(.5, .5, -.5, -.5), corners, corners);
 		}
 		IconButton::paintEvent(e);
 	}
 
 private:
+	[[nodiscard]] bool referenceColors() const {
+		return _useOvygramPalette && DarkButtonPalette();
+	}
+
+	void applyColors() {
+		setIconColorOverride(_colors.text ? _colors.text : referenceColors()
+			? std::optional(QColor::fromRgba(kOvygramDanger.text))
+			: std::nullopt);
+		update();
+	}
+
 	const bool _useOvygramPalette;
+	ButtonOverrides _colors;
 };
 
-class ChoiceButton final : public Ui::SettingsButton {
+class PaletteSettingsButton : public Ui::SettingsButton, public ColorableButton {
+public:
+	using Ui::SettingsButton::SettingsButton;
+
+	void setColors(ButtonOverrides colors) override {
+		_colors = std::move(colors);
+		setColorOverride(_colors.text);
+		update();
+	}
+
+protected:
+	void paintEvent(QPaintEvent *e) override {
+		if (!_colors.background && !_colors.border) {
+			SettingsButton::paintEvent(e);
+			return;
+		}
+		auto p = Painter(this);
+		const auto over = (isOver() || isDown()) && !isDisabled();
+		if (_colors.background) {
+			p.fillRect(e->rect(), *_colors.background);
+		} else {
+			paintBg(p, e->rect(), over);
+		}
+		paintRipple(p, 0, 0);
+		paintText(p, over, width());
+		if (_colors.border) {
+			p.setPen(*_colors.border);
+			p.setBrush(Qt::NoBrush);
+			p.drawRect(rect().adjusted(0, 0, -1, -1));
+		}
+	}
+
+	ButtonOverrides _colors;
+};
+
+class ChoiceButton final : public PaletteSettingsButton {
 public:
 	ChoiceButton(QWidget *parent, rpl::producer<QString> text)
-	: SettingsButton(parent, std::move(text), Style()) {
+	: PaletteSettingsButton(parent, std::move(text), Style()) {
 	}
 
 	void setDetail(QString detail) {
@@ -212,18 +355,18 @@ protected:
 	void paintEvent(QPaintEvent *) override {
 		auto p = Painter(this);
 		auto hq = PainterHighQualityEnabler(p);
-		p.setPen(Qt::NoPen);
+		p.setPen(_colors.border ? QPen(*_colors.border) : QPen(Qt::NoPen));
 		const auto over = isOver() && !isDisabled();
-		p.setBrush(_selected ? st::windowBgActive
-			: over ? st::windowBgRipple : st::windowBgOver);
+		const auto fill = _selected ? st::windowBgActive : over ? st::windowBgRipple : st::windowBgOver;
+		p.setBrush(_colors.background.value_or(fill->c));
 		const auto radius = style::ConvertScale(6);
-		p.drawRoundedRect(rect(), radius, radius);
+		p.drawRoundedRect(QRectF(rect()).adjusted(.5, .5, -.5, -.5), radius, radius);
 		paintRipple(p, 0, 0);
 		paintText(p, _selected, width());
 		if (!_detail.isEmpty()) {
 			const auto font = st().style.font;
 			p.setFont(font);
-			p.setPen(_selected ? st::windowFgActive : st::windowSubTextFg);
+			p.setPen(_colors.text.value_or((_selected ? st::windowFgActive : st::windowSubTextFg)->c));
 			p.drawTextRight(st().padding.right(), (height() - font->height) / 2,
 				width(), _detail);
 		}
@@ -294,6 +437,12 @@ public:
 			if (!_resizing) resizeToWidth(width());
 		}, lifetime());
 	}
+
+	void setBackground(std::optional<QColor> background) {
+		_background = std::move(background);
+		update();
+	}
+
 protected:
 	int resizeGetHeight(int width) override {
 		_resizing = true;
@@ -311,7 +460,7 @@ protected:
 		p.setPen(Qt::NoPen);
 		auto background = st::windowBgOver->c;
 		background.setAlpha(125);
-		p.setBrush(background);
+		p.setBrush(_background.value_or(background));
 		p.drawRoundedRect(rect(), style::ConvertScale(12), style::ConvertScale(12));
 	}
 private:
@@ -319,6 +468,7 @@ private:
 	const int _padding;
 	const int _cap;
 	const bool _card;
+	std::optional<QColor> _background;
 	bool _resizing = false;
 };
 
@@ -343,6 +493,54 @@ protected:
 	}
 private:
 	double _value = 0.;
+};
+
+class PluginSlider final : public Ui::MediaSlider {
+public:
+	PluginSlider(QWidget *parent, int minimum, int maximum, Fn<void(int)> changed)
+	: MediaSlider(parent, st::defaultContinuousSlider)
+	, _minimum(minimum)
+	, _span(maximum - minimum)
+	, _changed(std::move(changed)) {
+		setAlwaysDisplayMarker(true);
+		setFocusPolicy(Qt::StrongFocus);
+		resize(1, std::max(st::defaultContinuousSlider.seekSize.height(), style::ConvertScale(24)));
+		setChangeProgressCallback([this](double value) { report(value); });
+		setChangeFinishedCallback([this](double value) { report(value); });
+	}
+
+	void setPluginValue(int value) {
+		_lastReported = std::clamp(value, _minimum, _minimum + _span);
+		setValue(double(_lastReported - _minimum) / _span);
+	}
+
+	QString accessibilityValue() const override {
+		return QString::number(toInteger(value()));
+	}
+
+protected:
+	void mouseMoveEvent(QMouseEvent *e) override {
+		MediaSlider::mouseMoveEvent(e);
+		if (isChanging()) report(value());
+	}
+
+private:
+	[[nodiscard]] int toInteger(double value) const {
+		return _minimum + int(std::round(value * _span));
+	}
+
+	void report(double value) {
+		const auto current = toInteger(value);
+		if (current != _lastReported) {
+			_lastReported = current;
+			_changed(current);
+		}
+	}
+
+	const int _minimum;
+	const int _span;
+	const Fn<void(int)> _changed;
+	int _lastReported = 0;
 };
 
 class Canvas final : public Ui::RpWidget {
@@ -630,7 +828,9 @@ object_ptr<Ui::RpWidget> PluginUiTree::build(
 			}
 		}
 		if (type == u"card"_q) {
-			result = object_ptr<ContentFrame>(parent, std::move(column), style::ConvertScale(19), 0, true);
+			auto card = object_ptr<ContentFrame>(parent, std::move(column), style::ConvertScale(19), 0, true);
+			card->setBackground(ReadColor(node.value(u"background"_q)));
+			result = std::move(card);
 		} else {
 			result = std::move(column);
 		}
@@ -678,13 +878,13 @@ object_ptr<Ui::RpWidget> PluginUiTree::build(
 	} else if (type == u"text"_q) {
 		const auto align = node.value(u"align"_q).toString(u"left"_q);
 		const auto bold = node.value(u"bold"_q).toBool();
-		auto label = object_ptr<Ui::FlatLabel>(parent, text, LabelStyle(
+		auto label = object_ptr<PaletteLabel>(parent, text, LabelStyle(
 			(align == u"center"_q) ? style::al_top
 				: (align == u"right"_q) ? style::al_topright
 				: (align == u"left"_q) ? style::al_topleft
 				: throw std::runtime_error("Text align must be left, center or right."), bold));
-		const auto tone = node.value(u"tone"_q).toString();
-		SetLabelTone(label.data(), tone);
+		label->setTone(node.value(u"tone"_q).toString());
+		label->setColor(ReadColor(node.value(u"color"_q)));
 		result = std::move(label);
 	} else if (type == u"button"_q) {
 		const auto variant = node.value(u"variant"_q).toString(u"primary"_q);
@@ -704,7 +904,7 @@ object_ptr<Ui::RpWidget> PluginUiTree::build(
 				button->setClickedCallback([=] { sender(u"click"_q, QJsonValue()); });
 				result = std::move(button);
 			} else if (variant == u"link"_q) {
-				auto button = object_ptr<Ui::SettingsButton>(parent, value->value());
+				auto button = object_ptr<PaletteSettingsButton>(parent, value->value());
 				const auto raw = button.data();
 				const auto icon = Ui::CreateChild<Ui::RpWidget>(raw);
 				const auto size = style::ConvertScale(14);
@@ -728,13 +928,23 @@ object_ptr<Ui::RpWidget> PluginUiTree::build(
 				button->setClickedCallback([=] { sender(u"click"_q, QJsonValue()); });
 				result = std::move(button);
 			} else {
-				auto button = object_ptr<Ui::RoundButton>(parent, value->value(), ButtonStyle(variant));
-				button->setTextTransform(Ui::RoundButtonTextTransform::NoTransform);
-				SetButtonVariant(button.data(), variant, useOvygramPalette);
+				auto button = object_ptr<PaletteRoundButton>(parent, value->value(), variant, useOvygramPalette);
 				button->setClickedCallback([=] { sender(u"click"_q, QJsonValue()); });
 				result = std::move(button);
 			}
 		}
+		dynamic_cast<ColorableButton&>(*result.data()).setColors(ReadButtonOverrides(node.value(u"colors"_q)));
+	} else if (type == u"slider"_q) {
+		const auto minimum = node.value(u"minimum"_q).toInt();
+		const auto maximum = node.value(u"maximum"_q).toInt(255);
+		if (minimum >= maximum || minimum < -1000000 || maximum > 1000000) {
+			throw std::runtime_error("Invalid slider range.");
+		}
+		auto slider = object_ptr<PluginSlider>(parent, minimum, maximum,
+			[=](int value) { sender(u"slide"_q, value); });
+		slider->setAccessibleName(node.value(u"label"_q).toString());
+		slider->setPluginValue(node.value(u"value"_q).toInt());
+		result = std::move(slider);
 	} else if (type == u"input"_q) {
 		const auto placeholder = node.value(u"placeholder"_q).toString();
 		auto field = node.value(u"search"_q).toBool()
@@ -817,12 +1027,24 @@ void PluginUiTree::update(
 		if (props.contains(u"detail"_q)) button->setDetail(props.value(u"detail"_q).toString());
 		if (props.contains(u"selected"_q)) button->setSelected(props.value(u"selected"_q).toBool());
 	}
-	if (props.contains(u"tone"_q)) {
-		if (const auto label = dynamic_cast<Ui::FlatLabel*>(widget)) {
-			SetLabelTone(label, props.value(u"tone"_q).toString());
+	if (const auto label = dynamic_cast<PaletteLabel*>(widget)) {
+		if (props.contains(u"tone"_q)) label->setTone(props.value(u"tone"_q).toString());
+		if (props.contains(u"color"_q)) label->setColor(ReadColor(props.value(u"color"_q)));
+	}
+	if (props.contains(u"colors"_q)) {
+		if (const auto button = dynamic_cast<ColorableButton*>(widget)) {
+			button->setColors(ReadButtonOverrides(props.value(u"colors"_q)));
+		}
+	}
+	if (props.contains(u"background"_q)) {
+		if (const auto card = dynamic_cast<ContentFrame*>(widget)) {
+			card->setBackground(ReadColor(props.value(u"background"_q)));
 		}
 	}
 	if (props.contains(u"value"_q)) {
+		if (const auto slider = dynamic_cast<PluginSlider*>(widget)) {
+			slider->setPluginValue(props.value(u"value"_q).toInt());
+		}
 		if (const auto meter = dynamic_cast<Meter*>(widget)) {
 			meter->setValue(props.value(u"value"_q).toDouble());
 		}

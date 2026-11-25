@@ -22,7 +22,9 @@ class Column(Node):
     def __init__(self, *children: Node | str, width: Width = None, stretch: int | None = None,
                  gap: int | None = None, visible: bool | None = None) -> None: ...
 
-class Card(Column): ...
+class Card(Column):
+    def __init__(self, *children: Node | str, width: Width = None, stretch: int | None = None,
+                 gap: int | None = None, visible: bool | None = None, background: str | None = None) -> None: ...
 
 class Progress(Node):
     def __init__(self, value: float = 0.0) -> None: ...
@@ -37,7 +39,7 @@ class Text(Node):
     def __init__(self, text: Any, align: Literal["left", "center", "right"] = "left",
                  width: Width = None, stretch: int | None = None, *,
                  tone: Literal["normal", "muted", "accent", "positive", "attention"] = "normal",
-                 bold: bool = False) -> None: ...
+                 bold: bool = False, color: str | None = None) -> None: ...
 
 class Button(Node):
     def __init__(self, text: Any, on_click: Callable[[], Any] | None = None,
@@ -45,7 +47,8 @@ class Button(Node):
                  tooltip: str = "", variant: Literal["primary", "secondary", "danger", "trash", "chip", "code", "link",
                                                      "choice"] = "primary",
                  visible: bool | None = None, detail: str = "", selected: bool = False,
-                 palette: Literal["theme", "ovygram"] = "theme") -> None: ...
+                 palette: Literal["theme", "ovygram"] = "theme",
+                 colors: dict[str, str] | None = None) -> None: ...
 
 class Input(Node):
     def __init__(self, text: str = "", placeholder: str = "", on_change: Callable[[str], Any] | None = None,
@@ -54,6 +57,11 @@ class Input(Node):
 class Switch(Node):
     def __init__(self, text: Any, value: bool = False, on_toggle: Callable[[bool], Any] | None = None,
                  width: Width = None, stretch: int | None = None) -> None: ...
+
+class Slider(Node):
+    def __init__(self, value: int = 0, on_change: Callable[[int], Any] | None = None,
+                 width: Width = None, stretch: int | None = None, *, minimum: int = 0,
+                 maximum: int = 255, label: str = "") -> None: ...
 
 class Image(Node):
     def __init__(self, path: str, height: int = 0, width: Width = None, stretch: int | None = None) -> None: ...

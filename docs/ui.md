@@ -28,6 +28,7 @@
 | `Button(text, on_click=None)` | Кнопка, `on_click()` |
 | `Input(text="", placeholder="", on_change=None)` | Поле ввода, `on_change(text)` |
 | `Switch(text, value=False, on_toggle=None)` | Переключатель, `on_toggle(value)` |
+| `Slider(value=0, on_change=None, minimum=0, maximum=255, label="")` | Нативный ползунок, `on_change(value)` получает целое число |
 | `Image(path, height=0)` | Картинка из файла |
 | `Spacer(height)` | Отступ |
 | `Canvas(height, commands=(), on_click=None)` | Собственная отрисовка, `on_click(x, y)` |
@@ -42,6 +43,20 @@
 У `Button(palette="ovygram")` варианты `primary`, `secondary`, `danger`,
 `trash` и `code` используют палитру из [дизайн-промпта](ui-design-prompt.txt)
 в тёмной теме. В светлой теме используются цвета Telegram.
+
+Для конкретных элементов передавай HEX-цвета `#RRGGBB`.
+`Button(..., colors={"text": "#86A7C5", "background": "#293C4A", "border": "#507B9C"})`
+принимает любые из трёх ролей. У `trash` цвет `text` применяется к иконке.
+`Text(..., color="#86A7C5")` задаёт цвет надписи, а `Card(..., background="#1C2732")`
+задаёт фон карточки. Эти цвета работают в любой
+теме и действуют в пределах соответствующих элементов плагина.
+`update(button, colors=...)` заменяет словарь переопределений. Передай
+`colors=None` или `color=None`, чтобы снова использовать палитру или тон.
+
+Пример [Палитра Ovygram](../tools/ovygram/examples/palette_lab.ovyplugin)
+открывается из главного меню. Выбери элемент и роль цвета, меняй RGB
+ползунками или введи HEX. **Экспорт JSON** копирует все цвета в буфер обмена,
+чтобы их можно было вставить в сообщение или файл.
 
 У любого элемента внутри `Row` есть `width` (пиксели или `"fit"` — по
 содержимому) и `stretch` (доля свободного места, по умолчанию 1).
@@ -87,7 +102,7 @@ ui.Row(
 
 - `show()` — показать, возвращает саму поверхность;
 - `update(node, **props)` — изменить `text` у `Text`, `Button`, `Input`,
-  `value` у `Switch` и `Progress`, `tone` у `Text`, `commands` у `Canvas`;
+  `value` у `Switch`, `Slider` и `Progress`, `tone` у `Text`, `commands` у `Canvas`;
 - `draw(canvas, commands)` — перерисовать холст;
 - `close()` — закрыть. После закрытия `update()` бросает `ObjectDestroyed`.
 

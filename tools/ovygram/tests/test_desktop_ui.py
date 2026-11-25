@@ -111,6 +111,50 @@ class DesktopUiTests(unittest.TestCase):
         self.event(installation_id=self.b, object_id=dialog.id, node_id=button.id, type="click")
         self.assertEqual(clicks, [])
 
+    def test_local_colors_are_validated_and_can_be_reset(self):
+        button = ui.Button("x", palette="ovygram", colors={"text": "#a1b2c3"})
+        label = ui.Text("y", tone="accent", color="#a0b1c2")
+        dialog = self.as_plugin(self.a, lambda: ui.show_dialog(ui.Row(button, label)))
+        tree = self.commands_list()[-1]["tree"]["children"]
+        self.assertEqual(tree[0]["colors"], {"text": "#A1B2C3"})
+        self.assertEqual(tree[1]["color"], "#A0B1C2")
+        with self.assertRaises(ValueError):
+            dialog.update(button, colors={"background": "blue"})
+        self.assertEqual(button.props["colors"], {"text": "#A1B2C3"})
+        with self.assertRaises(ValueError):
+            ui.Button("x", colors={"unexpected": "#FFFFFF"})
+        dialog.update(button, colors=None)
+        dialog.update(label, color=None)
+        changes = self.commands_list()
+        self.assertEqual(changes[0]["props"], {"colors": {}})
+        self.assertEqual(changes[1]["props"], {"color": None})
+
+    def test_palette_sample_slider_recolors_and_exports(self):
+        identity = self.manager.install(str(ROOT / "tools/ovygram/examples/palette_lab.ovyplugin"))
+        self.manager.enable(identity)
+        plugin, owner = self.manager.loaded[identity][:2]
+        self.runtime.call(owner, plugin.open)
+        editor = plugin.editor
+        self.commands_list()
+
+        self.event(installation_id=identity, object_id=editor.dialog.id,
+                   node_id=editor.sliders[0].id, type="slide", value=16)
+        self.assertEqual(editor.sliders[0].props["value"], 16)
+        self.assertEqual(editor.samples["secondary"].props["colors"]["text"], "#1093BD")
+        self.runtime.call(owner, editor.select_role, "selected_choice")
+        self.runtime.call(owner, editor.enter_hex, "#209060")
+        self.assertEqual(editor.samples["selected_choice"].props["colors"]["text"], "#209060")
+
+        self.event(installation_id=identity, object_id=editor.dialog.id,
+                   node_id=editor.dialog.footer_action.id, type="click")
+        commands = self.commands_list()
+        export = json.loads(next(item["text"] for item in commands if item["method"] == "ui.clipboard"))
+        self.assertEqual(export["schema"], "ovygram.palette.v1")
+        self.assertEqual(export["buttons"]["secondary"]["text"], "#1093BD")
+        self.assertEqual(export["buttons"]["selected_choice"]["text"], "#209060")
+        self.assertIn("accent", export["labels"])
+        self.assertFalse(any(item["method"] == "ui.palette" for item in commands))
+
     def test_closed_surface_raises_object_destroyed(self):
         closed = []
         label = ui.Text("x")

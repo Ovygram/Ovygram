@@ -5,6 +5,7 @@ on_plugin_load, a hook or a background task. The client builds the widgets
 on the main thread, and widget callbacks always run on the main thread.
 """
 
+import re
 import uuid
 from dataclasses import dataclass
 
@@ -37,6 +38,26 @@ def _layout(width=None, stretch=None):
 def _choice(value, allowed, name):
     if value not in allowed:
         raise ValueError(f"{name} должен быть одним из: {', '.join(allowed)}.")
+    return value
+
+
+def _hex_color(value):
+    if not isinstance(value, str) or not re.fullmatch(r"#[0-9A-Fa-f]{6}", value):
+        raise ValueError("Цвет задаётся в формате #RRGGBB.")
+    return value.upper()
+
+
+def _button_colors(colors):
+    if colors is None:
+        return {}
+    if not isinstance(colors, dict) or colors.keys() - {"text", "background", "border"}:
+        raise ValueError("Цвета кнопки задаются словарём с ключами text, background и border.")
+    return {role: _hex_color(color) for role, color in colors.items()}
+
+
+def _slider_value(value, minimum, maximum):
+    if type(value) is not int or not minimum <= value <= maximum:
+        raise ValueError("Значение ползунка должно быть целым и находиться в его диапазоне.")
     return value
 
 
@@ -77,6 +98,11 @@ class Card(Column):
     """A padded group using the client's current palette."""
     type = "card"
 
+    def __init__(self, *children, width=None, stretch=None, gap=None, visible=None, background=None):
+        super().__init__(*children, width=width, stretch=stretch, gap=gap, visible=visible)
+        if background is not None:
+            self.props["background"] = _hex_color(background)
+
 
 class Progress(Node):
     """A thin meter. Update its value in the range from zero to one."""
@@ -112,18 +138,20 @@ class Text(Node):
 
     type = "text"
 
-    def __init__(self, text, align="left", width=None, stretch=None, *, tone="normal", bold=False):
+    def __init__(self, text, align="left", width=None, stretch=None, *, tone="normal", bold=False, color=None):
         super().__init__(width, stretch, text=str(text),
                          align=_choice(align, ("left", "center", "right"), "align"),
                          tone=_choice(tone, ("normal", "muted", "accent", "positive", "attention"), "tone"),
                          bold=bool(bold))
+        if color is not None:
+            self.props["color"] = _hex_color(color)
 
 
 class Button(Node):
     type = "button"
 
     def __init__(self, text, on_click=None, width=None, stretch=None, *, enabled=True, tooltip="", variant="primary",
-                 visible=None, detail="", selected=False, palette="theme"):
+                 visible=None, detail="", selected=False, palette="theme", colors=None):
         super().__init__(width, stretch, text=str(text), enabled=bool(enabled), tooltip=str(tooltip),
                          variant=_choice(variant, ("primary", "secondary", "danger", "trash", "chip", "code",
                                                    "link", "choice"), "variant"))
@@ -133,6 +161,8 @@ class Button(Node):
             self.props.update(detail=str(detail), selected=bool(selected))
         if _choice(palette, ("theme", "ovygram"), "palette") == "ovygram":
             self.props["palette"] = palette
+        if colors is not None:
+            self.props["colors"] = _button_colors(colors)
         if on_click is not None:
             self.handlers["click"] = on_click
 
@@ -155,6 +185,18 @@ class Switch(Node):
         super().__init__(width, stretch, text=str(text), value=bool(value))
         if on_toggle is not None:
             self.handlers["toggle"] = on_toggle
+
+
+class Slider(Node):
+    type = "slider"
+
+    def __init__(self, value=0, on_change=None, width=None, stretch=None, *, minimum=0, maximum=255, label=""):
+        if type(minimum) is not int or type(maximum) is not int or not -1_000_000 <= minimum < maximum <= 1_000_000:
+            raise ValueError("Границы ползунка должны быть целыми от −1 000 000 до 1 000 000.")
+        super().__init__(width, stretch, value=_slider_value(value, minimum, maximum),
+                         minimum=minimum, maximum=maximum, label=str(label))
+        if on_change is not None:
+            self.handlers["slide"] = on_change
 
 
 class Image(Node):
@@ -238,6 +280,14 @@ class Surface:
 
     def update(self, node, **props):
         self._check(node)
+        if isinstance(node, Button) and "colors" in props:
+            props["colors"] = _button_colors(props["colors"])
+        if isinstance(node, Text) and props.get("color") is not None:
+            props["color"] = _hex_color(props["color"])
+        if isinstance(node, Card) and props.get("background") is not None:
+            props["background"] = _hex_color(props["background"])
+        if isinstance(node, Slider) and "value" in props:
+            _slider_value(props["value"], node.props["minimum"], node.props["maximum"])
         node.props.update(props)
         self.owner.manager.runtime.submit_ui(
             self.owner, "ui.update", object_id=self.id, node_id=node.id, props=props)

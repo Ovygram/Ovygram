@@ -1,0 +1,257 @@
+"""Sample desktop plugin for editing control colors and exporting them as JSON."""
+
+from functools import partial
+import json
+import re
+
+from base_plugin import BasePlugin
+from desktop import ui
+
+__id__ = "palette_lab"
+__name__ = "Палитра Ovygram"
+__description__ = "Подбор цветов нативных кнопок, надписей и пунктов меню с экспортом в JSON."
+__author__ = "Ovygram"
+__version__ = "1.0.0"
+__release__ = False
+__platform__ = "desktop"
+__desktop_sdk__ = 4
+
+BUTTONS = {
+    "primary": ("Основная кнопка", "Выбрать сервер", {"text": "#F0F7FC", "background": "#3375AA"}),
+    "secondary": ("Вторичная кнопка", "Обновить список",
+                  {"text": "#6493BD", "background": "#18242F", "border": "#507B9C"}),
+    "danger": ("Опасная кнопка", "Остановить", {"text": "#DE7D7A", "background": "#3A2D33"}),
+    "trash": ("Корзина", "Удалить", {"text": "#DE7D7A", "background": "#3A2D33"}),
+    "code": ("Плашка IP", "192.0.2.42", {"text": "#86A7C5", "background": "#293C4A"}),
+    "chip": ("Метка", "Telegram", {"text": "#DDE5ED", "background": "#253746"}),
+    "link": ("Строка настроек", "Тип соединения", {"text": "#DDE5ED", "background": "#18242F"}),
+    "choice": ("Пункт меню", "По умолчанию",
+               {"text": "#DDE5ED", "background": "#253746", "border": "#507B9C"}),
+    "selected_choice": ("Выбранный пункт", "PROXY",
+                        {"text": "#F0F7FC", "background": "#3375AA"}),
+}
+
+LABELS = {
+    "normal": ("Основная надпись", "#F5F5F5"),
+    "muted": ("Приглушённая подпись", "#728A9F"),
+    "accent": ("Акцентная надпись", "#5AAAF0"),
+    "positive": ("Успешное состояние", "#4DCD63"),
+    "attention": ("Предупреждение", "#DE7D7A"),
+}
+FIELDS = {"text": "Текст или иконка", "background": "Фон", "border": "Обводка"}
+HEX_COLOR = re.compile(r"#[0-9A-Fa-f]{6}")
+
+
+def color_ok(value):
+    return isinstance(value, str) and HEX_COLOR.fullmatch(value) is not None
+
+
+class Editor:
+    def __init__(self, plugin):
+        self.plugin = plugin
+        self.colors = plugin.colors
+        self.role = "secondary"
+        self.field = "text"
+        self.menu = None
+        self.samples = {}
+        for role, (_, caption, _) in BUTTONS.items():
+            self.samples[role] = ui.Button(
+                caption, partial(self.select_role, role),
+                variant="choice" if role == "selected_choice" else role,
+                selected=role == "selected_choice", palette="ovygram", colors=self.colors[role],
+                **({"width": 42} if role == "trash" else {})
+            )
+        for role, (caption, _) in LABELS.items():
+            self.samples[role] = ui.Text(caption, tone=role, color=self.colors[role]["text"])
+        self.role_picker = ui.Button(self.role_caption(), self.choose_role, variant="secondary")
+        self.field_picker = ui.Button(FIELDS[self.field], self.choose_field, variant="secondary")
+        self.hex_input = ui.Input(self.current_color(), on_change=self.enter_hex)
+        self.hex_hint = ui.Text("", tone="attention")
+        self.status = ui.Text("", tone="muted")
+        self.slider_labels = [ui.Text("", width=74) for _ in range(3)]
+        self.sliders = [ui.Slider(on_change=partial(self.set_channel, index), label=name)
+                        for index, name in enumerate(("Красный", "Зелёный", "Синий"))]
+        self.swatch = ui.Canvas(32, width=40)
+        self.dialog = ui.Dialog(
+            ui.Column(
+                ui.Card(
+                    ui.Text("Образцы интерфейса", bold=True, color="#DCE8F2"),
+                    ui.Row(*(self.samples[role] for role in ("primary", "secondary", "danger", "trash")), wrap=True),
+                    ui.Row(ui.Text("IP-адрес", width="fit", color="#DCE8F2"), self.samples["code"], self.samples["chip"],
+                           ui.Spacer(0), spacing=10),
+                    ui.Row(ui.Column(*(self.samples[role] for role in ("normal", "muted", "accent")), gap=1),
+                           ui.Column(*(self.samples[role] for role in ("positive", "attention")), gap=1), align="top"),
+                    self.samples["link"],
+                    ui.Row(self.samples["choice"], self.samples["selected_choice"]),
+                    ui.Row(ui.Button("Открыть пример меню", self.show_menu, variant="secondary",
+                                     width="fit", colors=BUTTONS["secondary"][2]),
+                           ui.Spacer(0)),
+                    gap=5, background="#1C2732",
+                ),
+                ui.Card(
+                    ui.Text("Цвет элемента", bold=True),
+                    ui.Row(self.role_picker, self.field_picker, wrap=True),
+                    ui.Row(ui.Text("HEX", width=74), self.hex_input, self.swatch),
+                    *(ui.Row(label, slider) for label, slider in zip(self.slider_labels, self.sliders)),
+                    self.hex_hint,
+                    ui.Row(ui.Button("Вернуть исходные цвета", self.reset, variant="secondary", width="fit"),
+                           self.status, wrap=True),
+                    gap=4,
+                ),
+                gap=9,
+            ),
+            title=__name__, width=710,
+            footer_action=ui.Button("Экспорт JSON", self.export, palette="ovygram"),
+        ).show()
+        self.render_editor()
+
+    def role_caption(self):
+        return BUTTONS[self.role][0] if self.role in BUTTONS else LABELS[self.role][0]
+
+    def current_color(self):
+        return self.colors[self.role][self.field]
+
+    def update(self, node, **props):
+        changed = {key: value for key, value in props.items() if node.props.get(key) != value}
+        if changed:
+            self.dialog.update(node, **changed)
+
+    def render_editor(self, *, sync_input=True):
+        color = self.current_color()
+        self.update(self.role_picker, text=self.role_caption())
+        self.update(self.field_picker, text=FIELDS[self.field], enabled=len(self.colors[self.role]) > 1)
+        if sync_input:
+            self.update(self.hex_input, text=color)
+        self.update(self.hex_hint, text="")
+        self.update(self.swatch, commands=[ui.fill_rect(1, 1, 38, 30, color, radius=6)])
+        for name, value, label, slider in zip(
+            ("R", "G", "B"), bytes.fromhex(color[1:]), self.slider_labels, self.sliders
+        ):
+            self.update(label, text=f"{name} {value}")
+            self.update(slider, value=value)
+
+    def choose(self, title, items, select):
+        if self.menu and not self.menu.closed:
+            return
+
+        def pick(key):
+            self.menu.close()
+            select(key)
+
+        self.menu = ui.Dialog(
+            ui.Column(*(ui.Button(label, partial(pick, key), variant="choice") for key, label in items), gap=3),
+            title=title, width=400,
+        ).show()
+
+    def choose_role(self):
+        self.choose("Элемент палитры",
+                    [(role, spec[0]) for role, spec in BUTTONS.items()]
+                    + [(role, spec[0]) for role, spec in LABELS.items()],
+                    self.select_role)
+
+    def choose_field(self):
+        self.choose("Что перекрасить", [(key, FIELDS[key]) for key in self.colors[self.role]], self.select_field)
+
+    def select_role(self, role):
+        self.role = role
+        self.field = "text"
+        self.render_editor()
+
+    def select_field(self, field):
+        self.field = field
+        self.render_editor()
+
+    def apply(self, color, *, sync_input=True):
+        if self.current_color() != color:
+            self.colors[self.role][self.field] = color
+            self.update_sample(self.role)
+            self.update(self.status, text="")
+        self.render_editor(sync_input=sync_input)
+
+    def update_sample(self, role):
+        colors = self.colors[role]
+        if role in BUTTONS:
+            self.update(self.samples[role], colors=dict(colors))
+        else:
+            self.update(self.samples[role], color=colors["text"])
+
+    def enter_hex(self, value):
+        if color_ok(value):
+            self.apply(value.upper(), sync_input=False)
+        else:
+            self.update(self.hex_hint, text="Введите цвет в формате #RRGGBB.")
+
+    def set_channel(self, channel, value):
+        channels = bytearray.fromhex(self.current_color()[1:])
+        channels[channel] = value
+        self.apply("#" + channels.hex().upper())
+
+    def show_menu(self):
+        if self.menu and not self.menu.closed:
+            return
+
+        def sample(role):
+            self.menu.close()
+            self.select_role(role)
+
+        self.menu = ui.Dialog(
+            ui.Column(
+                ui.Text("Нажмите на образец, чтобы выбрать его цвет.", tone="muted"),
+                ui.Button(BUTTONS["link"][1], partial(sample, "link"), variant="link",
+                          colors=self.colors["link"]),
+                ui.Button("По умолчанию", partial(sample, "choice"), variant="choice",
+                          colors=self.colors["choice"]),
+                ui.Button("PROXY", partial(sample, "selected_choice"), variant="choice", selected=True,
+                          detail="Подключён", colors=self.colors["selected_choice"]),
+                gap=5,
+            ),
+            title="Пример меню", width=420,
+        ).show()
+
+    def reset(self):
+        self.colors.clear()
+        self.colors.update(default_colors())
+        for role in self.samples:
+            self.update_sample(role)
+        self.update(self.status, text="")
+        self.render_editor()
+
+    def export(self):
+        result = {
+            "schema": "ovygram.palette.v1",
+            "buttons": {role: self.colors[role] for role in BUTTONS},
+            "labels": {role: self.colors[role]["text"] for role in LABELS},
+        }
+        self.plugin.set_setting("palette", self.colors)
+        ui.set_clipboard(json.dumps(result, ensure_ascii=False, indent=2))
+        self.update(self.status, text="JSON скопирован в буфер обмена.")
+
+
+def default_colors():
+    return {role: dict(spec[2]) for role, spec in BUTTONS.items()} | {
+        role: {"text": spec[1]} for role, spec in LABELS.items()
+    }
+
+
+class PaletteLab(BasePlugin):
+    def on_plugin_load(self):
+        self.editor = None
+        self.colors = default_colors()
+        saved = self.get_setting("palette", {})
+        if isinstance(saved, dict):
+            for role, colors in self.colors.items():
+                previous = saved.get(role)
+                if isinstance(previous, dict):
+                    for field in colors:
+                        value = previous.get(field)
+                        if color_ok(value):
+                            colors[field] = value.upper()
+        ui.add_menu_item("main", __name__, self.open)
+
+    def open(self, _menu=None):
+        if self.editor and not self.editor.dialog.closed:
+            return
+        if not hasattr(ui, "Slider"):
+            ui.show_dialog("Для редактора палитры нужна версия Ovygram с поддержкой ползунков.", title=__name__)
+            return
+        self.editor = Editor(self)

@@ -56,6 +56,7 @@ add_executable(ovygram-ui-preview
     main.cpp
     plugin_list.cpp
     ${src_loc}/ui/vertical_list.cpp
+    ${src_loc}/ui/widgets/continuous_sliders.cpp
     ${src_loc}/ovygram/plugin_management_view.cpp
     ${src_loc}/ovygram/plugin_install_view.cpp
     ${src_loc}/ovygram/plugin_list_view.cpp
