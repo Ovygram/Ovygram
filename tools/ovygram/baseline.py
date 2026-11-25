@@ -396,6 +396,13 @@ def main():
     except Exception as error:
         state['status'] = 'blocked'
         state['error'] = str(error)
+        if args.action == 'prepare-foundation':
+            config_log = source.parent / 'Libraries/win64/ffmpeg/ffbuild/config.log'
+            if config_log.is_file():
+                shutil.copyfile(config_log, reports / 'ffmpeg-config.log')
+                with config_log.open('rb') as stream:
+                    stream.seek(max(0, config_log.stat().st_size - 6000))
+                    print(stream.read().decode('utf-8', errors='replace'), flush=True)
         raise
     finally:
         write_json(state_path, state)

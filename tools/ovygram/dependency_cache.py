@@ -120,4 +120,8 @@ def restore(root, group, identity, *, preserve_local=False):
             destination.parent.mkdir(parents=True, exist_ok=True)
             with source.open(entry) as reader, destination.open('wb') as writer:
                 shutil.copyfileobj(reader, writer)
+    # Snapshots contain only files. MSYS2 expects its empty /tmp on startup.
+    msys = root / 'TBuild/ThirdParty/msys64'
+    if group == 'foundation' and msys.is_dir():
+        (msys / 'tmp').mkdir(exist_ok=True)
     return True

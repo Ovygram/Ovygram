@@ -64,6 +64,14 @@ class CacheTests(unittest.TestCase):
         self.assertEqual(updated.read_bytes(), b'current foundation')
         self.assertEqual(extra.read_bytes(), b'previous extra')
 
+    def test_foundation_restore_recreates_msys_tmp(self):
+        msys = self.root / 'TBuild/ThirdParty/msys64'
+        msys.mkdir(parents=True)
+        (msys / 'example').write_bytes(b'msys fixture')
+        self.assertTrue(cache.pack(self.root, 'foundation', 'seed')['save'])
+        self.assertTrue(cache.restore(self.root, 'foundation', 'seed'))
+        self.assertTrue((msys / 'tmp').is_dir())
+
     def test_budget_uses_compressed_size(self):
         self.make('zlib/Debug/zlib.lib', bytes(64 * 1024))
         result = cache.pack(self.root, 'foundation', 'identity', maximum=1024)
