@@ -11,6 +11,7 @@
 #include <memory>
 
 namespace Ui {
+class GenericBox;
 class RpWidget;
 } // namespace Ui
 
@@ -26,6 +27,9 @@ public:
 		const Event &event,
 		int depth = 0);
 	void update(const QString &nodeId, const QJsonObject &props, bool relayoutParent = true);
+	static void AddDialogButtons(
+		not_null<Ui::GenericBox*> box,
+		object_ptr<Ui::RpWidget> footerAction);
 	[[nodiscard]] static object_ptr<Ui::RpWidget> CenterContent(
 		QWidget *parent,
 		object_ptr<Ui::RpWidget> content,

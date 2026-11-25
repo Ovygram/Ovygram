@@ -123,7 +123,7 @@ class Button(Node):
     type = "button"
 
     def __init__(self, text, on_click=None, width=None, stretch=None, *, enabled=True, tooltip="", variant="primary",
-                 visible=None, detail="", selected=False):
+                 visible=None, detail="", selected=False, palette="theme"):
         super().__init__(width, stretch, text=str(text), enabled=bool(enabled), tooltip=str(tooltip),
                          variant=_choice(variant, ("primary", "secondary", "danger", "trash", "chip", "code",
                                                    "link", "choice"), "variant"))
@@ -131,6 +131,8 @@ class Button(Node):
             self.props["visible"] = bool(visible)
         if variant == "choice":
             self.props.update(detail=str(detail), selected=bool(selected))
+        if _choice(palette, ("theme", "ovygram"), "palette") == "ovygram":
+            self.props["palette"] = palette
         if on_click is not None:
             self.handlers["click"] = on_click
 
@@ -261,6 +263,19 @@ class Dialog(Surface):
     """A modal box in the active Telegram window."""
 
     kind = "dialog"
+
+    def __init__(self, content, title="", width=0, height=0, on_close=None, *, footer_action=None):
+        super().__init__(content, title, width, height, on_close)
+        self.footer_action = footer_action
+        if footer_action is not None:
+            if not isinstance(footer_action, Button) or footer_action.id in self.nodes:
+                raise ValueError("Действие внизу диалога должно быть отдельной кнопкой.")
+            self.nodes[footer_action.id] = footer_action
+
+    def _placement(self):
+        if self.footer_action is None:
+            return {}
+        return {"footer_action": self.footer_action.to_json()}
 
 
 class Window(Surface):
@@ -816,8 +831,8 @@ def set_clipboard(text):
     owner.manager.runtime.submit_ui(owner, "ui.clipboard", text=str(text))
 
 
-def show_dialog(content, title="", width=0, on_close=None):
-    return Dialog(content, title, width, on_close=on_close).show()
+def show_dialog(content, title="", width=0, on_close=None, *, footer_action=None):
+    return Dialog(content, title, width, on_close=on_close, footer_action=footer_action).show()
 
 
 @dataclass(frozen=True)

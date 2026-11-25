@@ -302,6 +302,12 @@ void PluginUi::show(const QJsonObject &command) {
 		// Built before the box, so an invalid tree throws before showing.
 		const auto content = std::make_shared<object_ptr<Ui::RpWidget>>(
 			build(*object, nullptr, tree));
+		const auto footer = command.value(u"footer_action"_q).toObject();
+		if (!footer.isEmpty() && footer.value(u"type"_q).toString() != u"button"_q) {
+			throw std::runtime_error("A dialog footer action must be a button.");
+		}
+		const auto action = std::make_shared<object_ptr<Ui::RpWidget>>(
+			footer.isEmpty() ? object_ptr<Ui::RpWidget>(nullptr) : build(*object, nullptr, footer));
 		auto box = Box([=](not_null<Ui::GenericBox*> box) {
 			box->setTitle(rpl::single(title));
 			if (width > 0) {
@@ -314,9 +320,7 @@ void PluginUi::show(const QJsonObject &command) {
 			raw->setParent(box);
 			box->addRow(std::move(*content), style::al_justify);
 			raw->show();
-			box->addButton(rpl::single(u"Закрыть"_q), [=] {
-				box->closeBox();
-			});
+			PluginUiTree::AddDialogButtons(box, std::move(*action));
 			if (const auto i = _objects.find(objectId); i != end(_objects)) {
 				i->second->box = box.get();
 			}

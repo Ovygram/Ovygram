@@ -39,6 +39,9 @@
 `positive`. Для `Button` доступен `variant` со значениями `primary`, `secondary`,
 `danger`, `trash`, `chip`, `code`, `link`. `code` использует моноширинный шрифт,
 а `link` показывает строку настроек со стрелкой.
+У `Button(palette="ovygram")` варианты `primary`, `secondary`, `danger`,
+`trash` и `code` используют палитру из [дизайн-промпта](ui-design-prompt.txt)
+в тёмной теме. В светлой теме используются цвета Telegram.
 
 У любого элемента внутри `Row` есть `width` (пиксели или `"fit"` — по
 содержимому) и `stretch` (доля свободного места, по умолчанию 1).
@@ -70,11 +73,15 @@ ui.Row(
 
 | Класс | Где показывается |
 | --- | --- |
-| `Dialog(content, title="", width=0)`, `show_dialog(...)` | Модальное окно внутри Telegram с прокручиваемым телом |
+| `Dialog(content, title="", width=0, footer_action=None)`, `show_dialog(...)` | Модальное окно внутри Telegram с прокручиваемым телом |
 | `Window(content, title="", width=420, height=480, max_content_width=None)` | Отдельное окно с прокруткой и необязательным ограничением ширины содержимого |
 | `Section(content, title="", max_content_width=None)` | Страница в основной колонке вместо чата с необязательным ограничением ширины |
 | `ChatBar(chat, content)` | Полоса над сообщениями одного чата |
 | `Overlay(widget, canvas)` | Холст поверх любого виджета Telegram |
+
+Передай отдельную `Button` в `footer_action`, чтобы поставить её в нижний
+ряд рядом с «Отмена». «Отмена» и крестик закрывают окно. Действие кнопки
+вызывается её обработчиком.
 
 У всех есть `on_close` и методы:
 

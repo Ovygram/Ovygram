@@ -1,6 +1,8 @@
 #include "ovygram/plugin_ui_tree.h"
 
 #include "ovygram/plugin_paint.h"
+#include "ui/layers/box_layer_widget.h"
+#include "ui/layers/generic_box.h"
 #include "ui/painter.h"
 #include "ui/rp_widget.h"
 #include "ui/widgets/buttons.h"
@@ -80,26 +82,104 @@ void SetLabelTone(not_null<Ui::FlatLabel*> label, const QString &tone) {
 	return code;
 }
 
-void SetButtonVariant(not_null<Ui::RoundButton*> button, const QString &variant) {
+struct ButtonColors {
+	QRgb text;
+	QRgb fill;
+	QRgb outline = 0;
+};
+
+constexpr auto kOvygramPrimary = ButtonColors{ 0xFFF0F7FC, 0xFF3375AA };
+constexpr auto kOvygramSecondary = ButtonColors{ 0xFF6493BD, 0xFF18242F, 0xFF507B9C };
+constexpr auto kOvygramDanger = ButtonColors{ 0xFFDE7D7A, 0xFF3A2D33 };
+constexpr auto kOvygramCode = ButtonColors{ 0xFF86A7C5, 0xFF293C4A };
+
+[[nodiscard]] bool DarkButtonPalette() {
+	return st::windowBg->c.lightness() < 128;
+}
+
+[[nodiscard]] std::optional<ButtonColors> OvygramButtonColors(const QString &variant) {
+	if (variant == u"primary"_q) return kOvygramPrimary;
+	if (variant == u"secondary"_q) return kOvygramSecondary;
+	if (variant == u"danger"_q) return kOvygramDanger;
+	if (variant == u"code"_q) return kOvygramCode;
+	return std::nullopt;
+}
+
+void SetButtonVariant(not_null<Ui::RoundButton*> button, const QString &variant, bool useOvygramPalette) {
 	if (variant == u"chip"_q) button->setFullRadius(true);
-	if (variant != u"secondary"_q && variant != u"danger"_q) return;
+	const auto colors = useOvygramPalette ? OvygramButtonColors(variant) : std::nullopt;
+	if (!colors && variant != u"secondary"_q && variant != u"danger"_q) return;
 	const auto apply = [=] {
-		if (variant == u"danger"_q) {
+		if (colors && DarkButtonPalette()) {
+			const auto text = QColor::fromRgba(colors->text);
+			button->setTextFgOverride(text);
+			button->setBrushOverride(QBrush(QColor::fromRgba(colors->fill)));
+			// RoundButton centers the stroke on its edge, clipping the outer half.
+			button->setPenOverride(colors->outline
+				? std::optional(QPen(QColor::fromRgba(colors->outline), 2.))
+				: std::nullopt);
+			auto ripple = text;
+			ripple.setAlpha(55);
+			button->setRippleOverride(ripple);
+		} else if (variant == u"danger"_q) {
 			auto tint = st::attentionButtonFg->c;
 			button->setTextFgOverride(tint);
 			tint.setAlpha(35);
 			button->setBrushOverride(QBrush(tint));
-		} else {
+			button->setRippleOverride(std::nullopt);
+		} else if (variant == u"secondary"_q) {
+			button->setTextFgOverride(std::nullopt);
 			auto tint = st::lightButtonFg->c;
 			tint.setAlpha(115);
 			button->setBrushOverride(QBrush(st::windowBg->c));
 			button->setPenOverride(QPen(tint));
 			button->setRippleOverride(tint);
+		} else {
+			button->setTextFgOverride(std::nullopt);
+			button->setBrushOverride(std::nullopt);
+			button->setRippleOverride(std::nullopt);
 		}
 	};
 	apply();
 	style::PaletteChanged() | rpl::on_next(apply, button->lifetime());
 }
+
+class TrashButton final : public Ui::IconButton {
+public:
+	TrashButton(QWidget *parent, bool useOvygramPalette)
+	: IconButton(parent, st::boxTitleClose)
+	, _useOvygramPalette(useOvygramPalette) {
+		setIconOverride(&st::menuIconDeleteAttention, &st::menuIconDeleteAttention);
+		if (_useOvygramPalette) {
+			const auto apply = [this] {
+				setIconColorOverride(DarkButtonPalette()
+					? std::optional(QColor::fromRgba(kOvygramDanger.text))
+					: std::nullopt);
+				update();
+			};
+			apply();
+			style::PaletteChanged() | rpl::on_next(apply, lifetime());
+		}
+	}
+
+protected:
+	void paintEvent(QPaintEvent *e) override {
+		if (_useOvygramPalette && DarkButtonPalette()) {
+			auto p = QPainter(this);
+			p.setRenderHint(QPainter::Antialiasing);
+			p.setPen(Qt::NoPen);
+			p.setBrush(QColor::fromRgba(kOvygramDanger.fill));
+			const auto buttonHeight = std::min(height(), st::defaultActiveButton.height);
+			const auto corners = style::ConvertScale(6);
+			p.drawRoundedRect(QRect(0, (height() - buttonHeight) / 2, width(), buttonHeight),
+				corners, corners);
+		}
+		IconButton::paintEvent(e);
+	}
+
+private:
+	const bool _useOvygramPalette;
+};
 
 class ChoiceButton final : public Ui::SettingsButton {
 public:
@@ -608,9 +688,9 @@ object_ptr<Ui::RpWidget> PluginUiTree::build(
 		result = std::move(label);
 	} else if (type == u"button"_q) {
 		const auto variant = node.value(u"variant"_q).toString(u"primary"_q);
+		const auto useOvygramPalette = node.value(u"palette"_q).toString() == u"ovygram"_q;
 		if (variant == u"trash"_q) {
-			auto button = object_ptr<Ui::IconButton>(parent, st::boxTitleClose);
-			button->setIconOverride(&st::menuIconDeleteAttention, &st::menuIconDeleteAttention);
+			auto button = object_ptr<TrashButton>(parent, useOvygramPalette);
 			button->setAccessibleName(text);
 			button->setClickedCallback([=] { sender(u"click"_q, QJsonValue()); });
 			result = std::move(button);
@@ -650,7 +730,7 @@ object_ptr<Ui::RpWidget> PluginUiTree::build(
 			} else {
 				auto button = object_ptr<Ui::RoundButton>(parent, value->value(), ButtonStyle(variant));
 				button->setTextTransform(Ui::RoundButtonTextTransform::NoTransform);
-				SetButtonVariant(button.data(), variant);
+				SetButtonVariant(button.data(), variant, useOvygramPalette);
 				button->setClickedCallback([=] { sender(u"click"_q, QJsonValue()); });
 				result = std::move(button);
 			}
@@ -770,10 +850,24 @@ void PluginUiTree::update(
 		}
 	}
 	if (const auto rp = dynamic_cast<Ui::RpWidget*>(parent);
-			rp && (props.contains(u"text"_q) || props.contains(u"visible"_q))) {
+			rp && !dynamic_cast<Ui::BoxLayerWidget*>(rp)
+			&& (props.contains(u"text"_q) || props.contains(u"visible"_q))) {
 		// resizeToWidth expects the content width and adds the margins itself.
 		rp->resizeToWidth(std::max(rp->widthNoMargins(), 0));
 	}
+}
+
+void PluginUiTree::AddDialogButtons(
+		not_null<Ui::GenericBox*> box,
+		object_ptr<Ui::RpWidget> footerAction) {
+	const auto action = dynamic_cast<Ui::AbstractButton*>(footerAction.data());
+	if (action) {
+		footerAction.release();
+		box->addButton(object_ptr<Ui::AbstractButton>::fromRaw(action));
+	}
+	box->addButton(rpl::single(action ? u"Отмена"_q : u"Закрыть"_q), [=] {
+		box->closeBox();
+	});
 }
 
 object_ptr<Ui::RpWidget> PluginUiTree::CenterContent(

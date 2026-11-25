@@ -678,13 +678,19 @@ void Preview::showPluginSurface(const QJsonObject &command) {
 		write({ { u"type"_q, u"closed"_q }, { u"installation_id"_q, owner }, { u"object_id"_q, id } });
 	};
 	const auto guard = QPointer<Preview>(this);
-	auto content = surface->tree.build(nullptr, command.value(u"tree"_q).toObject(),
-		[=, this](QString node, QString type, QJsonValue value) {
-			if (guard && !_updating) {
-				write({ { u"type"_q, type }, { u"installation_id"_q, owner },
-					{ u"object_id"_q, id }, { u"node_id"_q, node }, { u"value"_q, value } });
-			}
-		});
+	const auto emitEvent = [=, this](QString node, QString type, QJsonValue value) {
+		if (guard && !_updating) {
+			write({ { u"type"_q, type }, { u"installation_id"_q, owner },
+				{ u"object_id"_q, id }, { u"node_id"_q, node }, { u"value"_q, value } });
+		}
+	};
+	auto content = surface->tree.build(nullptr, command.value(u"tree"_q).toObject(), emitEvent);
+	const auto footer = command.value(u"footer_action"_q).toObject();
+	auto action = object_ptr<Ui::RpWidget>(nullptr);
+	if (kind == u"dialog"_q && !footer.isEmpty()) {
+		Check(footer.value(u"type"_q).toString() == u"button"_q, "A dialog footer action must be a button.");
+		action = surface->tree.build(nullptr, footer, emitEvent);
+	}
 	_surfaces.emplace(id, std::move(owned));
 	const auto requested = command.value(u"width"_q).toInt();
 	_captureWindow = nullptr;
@@ -718,6 +724,7 @@ void Preview::showPluginSurface(const QJsonObject &command) {
 		_captureWindow = scroll->window();
 	} else {
 		auto wrapper = std::make_shared<object_ptr<Ui::RpWidget>>(std::move(content));
+		auto footerAction = std::make_shared<object_ptr<Ui::RpWidget>>(std::move(action));
 		_layers.showBox(Box([=, this](not_null<Ui::GenericBox*> box) {
 			box->setTitle(rpl::single(title));
 			const auto available = std::max(width() - style::ConvertScale(32), 1);
@@ -729,7 +736,7 @@ void Preview::showPluginSurface(const QJsonObject &command) {
 				*wrapper = Ovygram::PluginUiTree::CenterContent(box, std::move(*wrapper), 0, cap);
 			}
 			box->addRow(std::move(*wrapper), style::al_justify);
-			box->addButton(rpl::single(u"Закрыть"_q), [=] { box->closeBox(); });
+			Ovygram::PluginUiTree::AddDialogButtons(box, std::move(*footerAction));
 			surface->box = box.get();
 			connect(box.get(), &QObject::destroyed, this, [=, this] {
 				_surfaces.erase(id);
