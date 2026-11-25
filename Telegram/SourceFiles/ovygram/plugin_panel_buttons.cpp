@@ -15,6 +15,7 @@
 #include <QtGui/QAction>
 #include "styles/style_layers.h"
 #include "styles/style_widgets.h"
+#include "styles/style_plugin_management.h"
 
 #include <QtCore/QJsonArray>
 #include <QtCore/QPointer>
@@ -302,7 +303,7 @@ int Prepare(QWidget *owner, PeerData *peer, int availableWidth, int rowHeight) {
 	for (const auto &[id, item] : items) {
 		auto &button = host->buttons[id];
 		if (!button) {
-			button = new Ui::RoundButton(owner, rpl::single(item.text), st::defaultActiveButton);
+			button = new Ui::RoundButton(owner, rpl::single(item.text), st::settingsPluginPrimary);
 			button->setTextTransform(Ui::RoundButtonTextTransform::NoTransform);
 			button->setClickedCallback([owner, id] { Clicked(owner, id); });
 		}
@@ -321,7 +322,7 @@ int Prepare(QWidget *owner, PeerData *peer, int availableWidth, int rowHeight) {
 	}
 	if (host->overflow.empty()) return used;
 	if (!host->more) {
-		host->more = new Ui::RoundButton(owner, rpl::single(u"…"_q), st::defaultActiveButton);
+		host->more = new Ui::RoundButton(owner, rpl::single(u"…"_q), st::settingsPluginPrimary);
 		host->more->setFullWidth(host->more->height());
 		host->more->setAccessibleName(u"Другие действия плагинов"_q);
 		host->more->setFocusPolicy(Qt::StrongFocus);
@@ -334,7 +335,7 @@ int Prepare(QWidget *owner, PeerData *peer, int availableWidth, int rowHeight) {
 			}
 			const auto account = host->session;
 			const auto peer = host->peerId;
-			host->menu = new Ui::PopupMenu(owner, st::popupMenuWithIcons);
+			host->menu = new Ui::PopupMenu(owner, st::settingsPluginPanelPopup);
 			for (const auto &id : host->overflow) {
 				const auto i = Get().items.find(id);
 				if (i == end(Get().items)) continue;

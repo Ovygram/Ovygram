@@ -34,6 +34,7 @@
 #include "ui/wrap/vertical_layout.h"
 #include "window/window_controller.h"
 #include "styles/style_layers.h"
+#include "styles/style_plugin_management.h"
 
 #include <QtCore/QCoreApplication>
 #include <QtCore/QJsonArray>
@@ -315,7 +316,7 @@ void PluginUi::show(const QJsonObject &command) {
 				box->setWidth(std::min(style::ConvertScale(std::clamp(width, 320, 960)),
 					std::max(available, 1)));
 			}
-			box->addTopButton(st::boxTitleClose, [=] { box->closeBox(); });
+			box->addTopButton(st::settingsPluginClose, [=] { box->closeBox(); });
 			const auto raw = content->data();
 			raw->setParent(box);
 			box->addRow(std::move(*content), style::al_justify);

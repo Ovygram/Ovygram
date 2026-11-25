@@ -35,6 +35,7 @@
 #include <QtCore/QRegularExpression>
 #include <QtCore/QTemporaryDir>
 #include <QtCore/QTimer>
+#include <QtGui/QClipboard>
 #include <QtGui/QPainter>
 #include <QtTest/QTest>
 #include <QtWidgets/QApplication>
@@ -643,6 +644,16 @@ void Preview::handlePlugin(const QJsonObject &command) {
 		}
 	} else if (method == u"preview.error"_q) {
 		throw std::runtime_error(command.value(u"message"_q).toString().toStdString());
+	} else if (method == u"appearance.palette"_q) {
+		write({
+			{ u"kind"_q, u"reply"_q },
+			{ u"request"_q, QJsonObject{
+				{ u"id"_q, command.value(u"id"_q) },
+				{ u"result"_q, Ovygram::PluginStylePalette() },
+			} },
+		});
+	} else if (method == u"ui.clipboard"_q) {
+		QGuiApplication::clipboard()->setText(command.value(u"text"_q).toString());
 	} else if (method == u"ui.show"_q) {
 		showPluginSurface(command);
 		finishSoon();

@@ -17,6 +17,8 @@ class RpWidget;
 
 namespace Ovygram {
 
+[[nodiscard]] QJsonObject PluginStylePalette();
+
 class PluginUiTree final {
 public:
 	using Event = Fn<void(QString nodeId, QString type, QJsonValue value)>;

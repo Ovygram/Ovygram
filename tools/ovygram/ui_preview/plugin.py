@@ -84,7 +84,7 @@ def run(path, selected_menu, selected_setting, dependencies):
                         for label, rule_id in list(main_menu.items()):
                             if rule_id == command["rule_id"]:
                                 del main_menu[label]
-                    elif method in {"ui.show", "ui.update", "ui.close"}:
+                    elif method in {"ui.show", "ui.update", "ui.close", "appearance.palette", "ui.clipboard"}:
                         if method == "ui.show":
                             stage_images(command["tree"], image_roots, assets)
                         send(command)
@@ -134,7 +134,9 @@ def run(path, selected_menu, selected_setting, dependencies):
                     line, data = data.split(b"\n", maxsplit=1)
                     event = json.loads(line)
                     kind = event.get("kind")
-                    if kind == "setting":
+                    if kind == "reply":
+                        manager.forward("complete", None, request=event["request"])
+                    elif kind == "setting":
                         manager.settings_action(identity, event["action_id"])
                     elif kind == "save":
                         manager.save_settings(identity, event["values"])

@@ -50,9 +50,21 @@ def _hex_color(value):
 def _button_colors(colors):
     if colors is None:
         return {}
-    if not isinstance(colors, dict) or colors.keys() - {"text", "background", "border"}:
-        raise ValueError("Цвета кнопки задаются словарём с ключами text, background и border.")
+    fields = {"text", "background", "border", "hover_text", "hover_background", "ripple"}
+    if not isinstance(colors, dict) or colors.keys() - fields:
+        raise ValueError("Неизвестная роль цвета кнопки.")
     return {role: _hex_color(color) for role, color in colors.items()}
+
+
+def _button_radius(radius):
+    if radius is not None and (type(radius) is not int or not 0 <= radius <= 64):
+        raise ValueError("Скругление кнопки задаётся целым числом от 0 до 64.")
+    return radius
+
+
+async def get_style_palette():
+    """Read the current Ovygram button and label styles without changing the theme."""
+    return await context().manager.runtime.request("appearance.palette")
 
 
 def _slider_value(value, minimum, maximum):
@@ -151,10 +163,15 @@ class Button(Node):
     type = "button"
 
     def __init__(self, text, on_click=None, width=None, stretch=None, *, enabled=True, tooltip="", variant="primary",
-                 visible=None, detail="", selected=False, palette="theme", colors=None):
+                 visible=None, detail="", selected=False, palette="theme", colors=None, radius=None):
         super().__init__(width, stretch, text=str(text), enabled=bool(enabled), tooltip=str(tooltip),
                          variant=_choice(variant, ("primary", "secondary", "danger", "trash", "chip", "code",
-                                                   "link", "choice"), "variant"))
+                                                   "link", "choice", "install", "subtle", "install_secondary", "proxy_selector",
+                                                   "proxy_reset", "dialog", "dialog_danger", "native_primary", "cancel",
+                                                   "settings_row",
+                                                   "save_settings", "settings_link", "file_details", "card_title",
+                                                   "card_action", "card_danger", "menu_action", "menu_danger",
+                                                   "popup_item", "close", "back", "search_clear"), "variant"))
         if visible is not None:
             self.props["visible"] = bool(visible)
         if variant == "choice":
@@ -163,6 +180,8 @@ class Button(Node):
             self.props["palette"] = palette
         if colors is not None:
             self.props["colors"] = _button_colors(colors)
+        if radius is not None:
+            self.props["radius"] = _button_radius(radius)
         if on_click is not None:
             self.handlers["click"] = on_click
 
@@ -280,8 +299,11 @@ class Surface:
 
     def update(self, node, **props):
         self._check(node)
-        if isinstance(node, Button) and "colors" in props:
-            props["colors"] = _button_colors(props["colors"])
+        if isinstance(node, Button):
+            if "colors" in props:
+                props["colors"] = _button_colors(props["colors"])
+            if "radius" in props:
+                _button_radius(props["radius"])
         if isinstance(node, Text) and props.get("color") is not None:
             props["color"] = _hex_color(props["color"])
         if isinstance(node, Card) and props.get("background") is not None:

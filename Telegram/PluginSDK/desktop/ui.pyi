@@ -45,10 +45,16 @@ class Button(Node):
     def __init__(self, text: Any, on_click: Callable[[], Any] | None = None,
                  width: Width = None, stretch: int | None = None, *, enabled: bool = True,
                  tooltip: str = "", variant: Literal["primary", "secondary", "danger", "trash", "chip", "code", "link",
-                                                     "choice"] = "primary",
+                     "choice", "install", "subtle", "install_secondary", "proxy_selector", "proxy_reset",
+                     "dialog", "dialog_danger", "native_primary", "cancel",
+                     "settings_row", "save_settings", "settings_link", "file_details", "card_title", "card_action",
+                     "card_danger", "menu_action", "menu_danger", "popup_item", "close", "back", "search_clear"]
+                     = "primary",
                  visible: bool | None = None, detail: str = "", selected: bool = False,
                  palette: Literal["theme", "ovygram"] = "theme",
-                 colors: dict[str, str] | None = None) -> None: ...
+                 colors: dict[str, str] | None = None, radius: int | None = None) -> None: ...
+
+async def get_style_palette() -> dict[str, Any]: ...
 
 class Input(Node):
     def __init__(self, text: str = "", placeholder: str = "", on_change: Callable[[str], Any] | None = None,

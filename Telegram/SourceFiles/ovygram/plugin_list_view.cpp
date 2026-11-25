@@ -24,14 +24,14 @@ style::margins Inset(int top = 0, int bottom = 0) {
 }
 
 QColor SecondaryText() {
-	return anim::color(st::windowSubTextFg, st::windowFg, 0.26);
+	return anim::color(st::settingsPluginLabelMuted, st::windowFg, st::settingsPluginSecondaryTextBlend);
 }
 
 Ui::SettingsButton *Action(
 		not_null<Ui::VerticalLayout*> layout,
 		QString text,
 		Fn<void()> callback,
-		const style::SettingsButton &style = st::defaultSettingsButton) {
+		const style::SettingsButton &style = st::settingsPluginPlainRow) {
 	const auto button = layout->add(object_ptr<Ui::SettingsButton>(
 		layout, rpl::single(std::move(text)), style));
 	button->setClickedCallback(std::move(callback));
@@ -104,7 +104,7 @@ public:
 		const auto update = UpdateLabel(plugin);
 		if (!update.isEmpty()) {
 			_update = Ui::CreateChild<Ui::FlatLabel>(this, update, st::settingsPluginCardMeta);
-			_update->setTextColorOverride(st::windowActiveTextFg->c);
+			_update->setTextColorOverride(st::settingsPluginLabelAccent->c);
 			_update->setAttribute(Qt::WA_TransparentForMouseEvents);
 		}
 		const auto error = plugin.value(u"error"_q).toString().simplified();
@@ -159,8 +159,8 @@ protected:
 			auto p = QPainter(this);
 			const auto quality = PainterHighQualityEnabler(p);
 			p.setPen(Qt::NoPen);
-			p.setBrush(isDown() ? st::windowBgRipple : st::windowBgOver);
-			p.drawRoundedRect(rect(), Px(6), Px(6));
+			p.setBrush(isDown() ? st::settingsPluginRowPressed : st::settingsPluginRowHover);
+			p.drawRoundedRect(rect(), st::settingsPluginRowRadius, st::settingsPluginRowRadius);
 		}
 		Ui::SettingsButton::paintEvent(event);
 		auto p = QPainter(this);
@@ -241,7 +241,7 @@ protected:
 
 	void paintEvent(QPaintEvent *) override {
 		auto color = st::windowFg->c;
-		color.setAlphaF(0.08);
+		color.setAlphaF(st::settingsPluginDividerAlpha);
 		QPainter(this).fillRect(0, height() - st::lineWidth, width(), st::lineWidth, color);
 	}
 
@@ -265,7 +265,7 @@ not_null<Ui::InputField*> AddPluginListSearch(not_null<Ui::VerticalLayout*> layo
 	const auto field = Ui::CreateChild<Ui::InputField>(row, st::defaultMultiSelectSearchField,
 		rpl::single(u"Поиск плагинов"_q));
 	field->setAccessibleName(u"Поиск плагинов"_q);
-	const auto clear = Ui::CreateChild<Ui::CrossButton>(row, st::defaultMultiSelectSearchCancel);
+	const auto clear = Ui::CreateChild<Ui::CrossButton>(row, st::settingsPluginSearchClear);
 	clear->setAccessibleName(u"Очистить поиск"_q);
 	clear->setClickedCallback([=] { field->setText({}); });
 	clear->toggle(false, anim::type::instant);
@@ -282,7 +282,7 @@ not_null<Ui::InputField*> AddPluginListSearch(not_null<Ui::VerticalLayout*> layo
 		auto p = QPainter(row);
 		const auto quality = PainterHighQualityEnabler(p);
 		p.setPen(Qt::NoPen);
-		p.setBrush(st::windowBgOver);
+		p.setBrush(st::settingsPluginCardFill);
 		p.drawRoundedRect(row->rect(), Px(8), Px(8));
 		st::boxFieldSearchIcon.paint(p, 0, Px(2), row->width());
 	}, row->lifetime());

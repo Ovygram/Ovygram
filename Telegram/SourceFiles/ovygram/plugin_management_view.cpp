@@ -75,7 +75,7 @@ not_null<Ui::VerticalLayout*> AddPluginCard(
 		auto p = QPainter(card);
 		const auto quality = PainterHighQualityEnabler(p);
 		p.setPen(Qt::NoPen);
-		p.setBrush(st::windowBgOver);
+		p.setBrush(st::settingsPluginCardFill);
 		const auto radius = st::settingsPluginCardRadius;
 		p.drawRoundedRect(card->rect(), radius, radius);
 	}, card->lifetime());
@@ -178,12 +178,14 @@ protected:
 		if (!_toggle && (isOver() || isDown()) && !isDisabled()) {
 			auto p = QPainter(this);
 			const auto quality = PainterHighQualityEnabler(p);
-			auto fill = st::windowFg->c;
-			fill.setAlpha(isDown() ? 22 : 12);
+			auto fill = st::settingsPluginCardActionOverlay->c;
+			fill.setAlpha(isDown() ? st::settingsPluginCardActionPressedAlpha
+				: st::settingsPluginCardActionHoverAlpha);
 			p.setPen(Qt::NoPen);
 			p.setBrush(fill);
 			const auto bounds = QRect(4, 4, std::min(width() - 8, fullTextWidth() + 20), height() - 8);
-			p.drawRoundedRect(bounds, 6, 6);
+			const auto radius = st::settingsPluginLegacyCardActionRadius;
+			p.drawRoundedRect(bounds, radius, radius);
 		}
 		Ui::SettingsButton::paintEvent(event);
 	}
@@ -385,7 +387,7 @@ protected:
 			const auto over = (isOver() || isDown()) && !isDisabled();
 			const auto radius = st::settingsPluginCardRadius;
 			p.setPen(Qt::NoPen);
-			p.setBrush(over ? st::windowBgRipple : st::windowBgOver);
+			p.setBrush(over ? st::settingsPluginRowPressed : st::settingsPluginRowHover);
 			p.drawRoundedRect(rect(), radius, radius);
 			const auto &arrow = st::settingsPluginLinkArrow;
 			arrow.paint(p, width() - st::settingsPluginTextMargin.right() - arrow.width(),
@@ -429,7 +431,7 @@ void AddPluginManagement(
 			st::settingsPluginMenuRow.padding.right(), 0));
 	divider->paintRequest() | rpl::on_next([=] {
 		auto color = st::windowFg->c;
-		color.setAlphaF(0.08);
+		color.setAlphaF(st::settingsPluginDividerAlpha);
 		QPainter(divider).fillRect(divider->rect(), color);
 	}, divider->lifetime());
 	AddMenuAction(layout, u"Удалить плагин"_q, st::settingsPluginRemoveIcon,
@@ -524,13 +526,13 @@ void BuildPluginRemovalBox(
 		const auto invoke = remove;
 		box->closeBox();
 		invoke(true);
-	});
+	}, st::settingsPluginDialog);
 	box->addButton(rpl::single(u"Удалить всё"_q), [=] {
 		const auto invoke = remove;
 		box->closeBox();
 		invoke(false);
-	});
-	box->addButton(std::move(cancel), [=] { box->closeBox(); });
+	}, st::settingsPluginDialog);
+	box->addButton(std::move(cancel), [=] { box->closeBox(); }, st::settingsPluginDialog);
 }
 
 } // namespace Ovygram

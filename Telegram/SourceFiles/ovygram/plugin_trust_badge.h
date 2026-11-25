@@ -17,25 +17,28 @@ namespace Ovygram {
 inline QColor PluginTrustColor(const QString &status) {
 	const auto warning = status != u"verified"_q && status != u"official"_q;
 	auto color = status == u"official"_q
-		? st::windowActiveTextFg->c
+		? st::settingsPluginBadgeOfficial->c
 		: status == u"verified"_q
-		? st::boxTextFgGood->c
-		: st::attentionButtonFg->c;
+		? st::settingsPluginBadgeVerified->c
+		: st::settingsPluginBadgeUnverified->c;
 	if (!warning) {
 		// Telegram's night palettes map boxTextFgGood to blue, while custom
 		// accents can turn active text green/purple. Trust has fixed semantics:
 		// verified is green, official is blue; retain theme contrast/chroma.
 		const auto dark = st::windowBg->c.lightnessF() < 0.5;
 		color.setHslF(
-			(status == u"verified"_q ? 125. : 210.) / 360.,
-			std::clamp(double(color.hslSaturationF()), 0.48, 0.72),
-			std::clamp(double(color.lightnessF()), dark ? 0.60 : 0.38, dark ? 0.72 : 0.46));
+			(status == u"verified"_q ? st::settingsPluginBadgeVerifiedHue
+				: st::settingsPluginBadgeOfficialHue) / 360.,
+			std::clamp(double(color.hslSaturationF()),
+				st::settingsPluginBadgeSaturationMin, st::settingsPluginBadgeSaturationMax),
+			std::clamp(double(color.lightnessF()), dark ? st::settingsPluginBadgeDarkLightnessMin : st::settingsPluginBadgeLightLightnessMin,
+				dark ? st::settingsPluginBadgeDarkLightnessMax : st::settingsPluginBadgeLightLightnessMax));
 	}
 	if (warning && st::windowBg->c.lightnessF() < 0.5) {
 		color.setHslF(
 			color.hslHueF(),
-			std::min(double(color.hslSaturationF()), 0.62),
-			std::max(double(color.lightnessF()), 0.66));
+			std::min(double(color.hslSaturationF()), st::settingsPluginBadgeWarningSaturation),
+			std::max(double(color.lightnessF()), st::settingsPluginBadgeWarningLightness));
 	}
 	return color;
 }
@@ -58,11 +61,11 @@ inline object_ptr<Ui::VerticalLayout> MakePluginBadge(
 	const auto label = badge->add(std::move(textLabel), padding);
 	const auto foreground = [=] {
 		if (!trustStatus) {
-			return st::windowSubTextFg->c;
+			return st::settingsPluginLabelMuted->c;
 		}
 		const auto color = PluginTrustColor(*trustStatus);
 		return (st::windowBg->c.lightnessF() >= 0.5)
-			? anim::color(color, st::windowFg, 0.30)
+			? anim::color(color, st::windowFg, st::settingsPluginBadgeLightTextBlend)
 			: color;
 	};
 	const auto updateColor = [=] {
@@ -75,7 +78,7 @@ inline object_ptr<Ui::VerticalLayout> MakePluginBadge(
 		auto p = QPainter(badge);
 		const auto quality = PainterHighQualityEnabler(p);
 		auto background = trustStatus ? foreground() : st::windowFg->c;
-		background.setAlpha(trustStatus ? 26 : 16);
+		background.setAlpha(trustStatus ? st::settingsPluginBadgeTrustFillAlpha : st::settingsPluginBadgeNeutralFillAlpha);
 		p.setPen(Qt::NoPen);
 		p.setBrush(background);
 		p.drawRoundedRect(badge->rect(), badge->height() / 2, badge->height() / 2);

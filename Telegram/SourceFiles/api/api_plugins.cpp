@@ -36,6 +36,7 @@
 #include "ovygram/plugin_actions.h"
 #include "ovygram/plugin_native.h"
 #include "ovygram/plugin_ui.h"
+#include "ovygram/plugin_ui_tree.h"
 #include "ovygram/plugin_media.h"
 #include "ovygram/plugin_widgets.h"
 #include "ui/image/image_location.h"
@@ -533,7 +534,7 @@ void PluginClient::receive(const QByteArray &request) {
 			&& method != u"ui.action.remove"_q
 			&& (method.startsWith(u"ui."_q) || method.startsWith(u"native."_q)
 				|| method.startsWith(u"widgets."_q) || method.startsWith(u"compose."_q)
-				|| method == u"python_ui"_q)) {
+				|| method == u"python_ui"_q || method == u"appearance.palette"_q)) {
 			throw std::runtime_error("Plugin UI access is suspended during installation.");
 		}
 		if (method == u"ui.close_plugin"_q) {
@@ -617,7 +618,10 @@ void PluginClient::receive(const QByteArray &request) {
 			}
 			return;
 		}
-		if (method.startsWith(u"compose."_q)) {
+		if (method == u"appearance.palette"_q) {
+			reply(id, Ovygram::PluginStylePalette());
+			return;
+		} else if (method.startsWith(u"compose."_q)) {
 			reply(id, Ovygram::Elements::Request(command));
 			return;
 		} else if (method.startsWith(u"widgets."_q)) {

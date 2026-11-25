@@ -129,18 +129,51 @@ class DesktopUiTests(unittest.TestCase):
         self.assertEqual(changes[0]["props"], {"colors": {}})
         self.assertEqual(changes[1]["props"], {"color": None})
 
+    def test_button_radii_and_state_colors_can_be_overridden_and_reset(self):
+        for variant in ("subtle", "settings_link", "choice", "trash", "search_clear"):
+            with self.subTest(variant=variant):
+                button = ui.Button("x", variant=variant, radius=0, colors={"hover_background": "#1a2b3c"})
+                dialog = self.as_plugin(self.a, lambda: ui.show_dialog(button))
+                tree = self.commands_list()[-1]["tree"]
+                self.assertEqual(tree["radius"], 0)
+                self.assertEqual(tree["colors"], {"hover_background": "#1A2B3C"})
+                for invalid in (True, -1, 10.5, 65):
+                    with self.assertRaises(ValueError):
+                        dialog.update(button, radius=invalid)
+                dialog.update(button, radius=18)
+                dialog.update(button, radius=None)
+                self.assertEqual([command["props"] for command in self.commands_list()],
+                                 [{"radius": 18}, {"radius": None}])
+
     def test_palette_sample_slider_recolors_and_exports(self):
         identity = self.manager.install(str(ROOT / "tools/ovygram/examples/palette_lab.ovyplugin"))
         self.manager.enable(identity)
         plugin, owner = self.manager.loaded[identity][:2]
-        self.runtime.call(owner, plugin.open)
+        self.commands_list()
+        example = type(plugin).open.__globals__
+        palette = {
+            "theme": "dark", "background": "#171F28",
+            "buttons": {key: {"radius": 8, "colors": {"text": "#6493BD"}} for key in example["BUTTONS"]},
+            "labels": dict.fromkeys(example["LABELS"], "#6493BD"),
+        }
+        opened = self.runtime.schedule(owner, plugin.open())
+        request = self.commands.get(timeout=5)
+        self.assertEqual(request["method"], "appearance.palette")
+        self.runtime.complete({"id": request["id"], "result": palette})
+        opened.result(timeout=5)
         editor = plugin.editor
         self.commands_list()
 
         self.event(installation_id=identity, object_id=editor.dialog.id,
                    node_id=editor.sliders[0].id, type="slide", value=16)
         self.assertEqual(editor.sliders[0].props["value"], 16)
-        self.assertEqual(editor.samples["secondary"].props["colors"]["text"], "#1093BD")
+        self.assertEqual(editor.samples["subtle"].props["colors"]["text"], "#1093BD")
+        self.event(installation_id=identity, object_id=editor.dialog.id,
+                   node_id=editor.radius_slider.id, type="slide", value=13)
+        self.assertEqual(editor.samples["subtle"].props["radius"], 13)
+        self.assertNotIn("radius", editor.samples["install"].props)
+        self.runtime.call(owner, editor.apply_radius_to_all)
+        self.assertEqual(editor.samples["install"].props["radius"], 13)
         self.runtime.call(owner, editor.select_role, "selected_choice")
         self.runtime.call(owner, editor.enter_hex, "#209060")
         self.assertEqual(editor.samples["selected_choice"].props["colors"]["text"], "#209060")
@@ -149,10 +182,12 @@ class DesktopUiTests(unittest.TestCase):
                    node_id=editor.dialog.footer_action.id, type="click")
         commands = self.commands_list()
         export = json.loads(next(item["text"] for item in commands if item["method"] == "ui.clipboard"))
-        self.assertEqual(export["schema"], "ovygram.palette.v1")
-        self.assertEqual(export["buttons"]["secondary"]["text"], "#1093BD")
-        self.assertEqual(export["buttons"]["selected_choice"]["text"], "#209060")
-        self.assertIn("accent", export["labels"])
+        self.assertEqual(export["schema"], "ovygram.palette.v2")
+        self.assertEqual(export["theme"], "dark")
+        self.assertEqual(export["buttons"]["subtle"], {"colors": {"text": "#1093BD"}, "radius": 13})
+        self.assertEqual(export["buttons"]["selected_choice"]["colors"]["text"], "#209060")
+        self.assertEqual(export["buttons"]["install"], {"radius": 13})
+        self.assertEqual(export["labels"], {})
         self.assertFalse(any(item["method"] == "ui.palette" for item in commands))
 
     def test_closed_surface_raises_object_destroyed(self):

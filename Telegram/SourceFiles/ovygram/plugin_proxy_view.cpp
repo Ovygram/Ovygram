@@ -9,6 +9,7 @@
 #include "styles/style_layers.h"
 #include "styles/style_menu_icons.h"
 #include "styles/style_widgets.h"
+#include "styles/style_plugin_management.h"
 
 #include <algorithm>
 #include <array>
@@ -16,18 +17,6 @@
 
 namespace Ovygram {
 namespace {
-
-const style::RoundButton &SelectorStyle() {
-	static const auto value = [] {
-		auto result = st::defaultLightButton;
-		result.radius = style::ConvertScale(7);
-		result.textBg = st::windowBgOver;
-		result.textFg = st::windowFg;
-		result.textFgOver = st::windowFgOver;
-		return result;
-	}();
-	return value;
-}
 
 const style::FlatLabel &RouteLabelStyle() {
 	static const auto value = [] {
@@ -53,12 +42,12 @@ void SetupPluginProxyBox(
 		Fn<void(const QString&, const QJsonObject&)> apply) {
 	box->setWidth(width);
 	box->setTitle(rpl::single(u"Прокси плагинов"_q));
-	box->addTopButton(st::boxTitleClose, [=] { box->closeBox(); });
+	box->addTopButton(st::settingsPluginClose, [=] { box->closeBox(); });
 	const auto padding = st::boxRowPadding;
 	const auto subtitle = box->addRow(object_ptr<Ui::FlatLabel>(box,
 		u"Назначение прокси по типам трафика"_q, RouteLabelStyle()),
 		QMargins(padding.left(), 0, padding.right(), style::ConvertScale(14)));
-	subtitle->setTextColorOverride(st::windowSubTextFg->c);
+	subtitle->setTextColorOverride(st::settingsPluginLabelMuted->c);
 	auto divider = object_ptr<Ui::RpWidget>(box);
 	const auto line = divider.data();
 	line->resize(1, st::lineWidth);
@@ -80,7 +69,7 @@ void SetupPluginProxyBox(
 	const auto state = box->lifetime().make_state<State>();
 	const auto errorLabel = box->addRow(object_ptr<Ui::FlatLabel>(box,
 		QString(), RouteLabelStyle()));
-	errorLabel->setTextColorOverride(st::attentionButtonFg->c);
+	errorLabel->setTextColorOverride(st::settingsPluginLabelAttention->c);
 	const auto refresh = [=] {
 		for (const auto &[route, control] : state->controls) {
 			const auto active = state->data.active.find(route);
@@ -123,8 +112,8 @@ void SetupPluginProxyBox(
 		const auto row = line.data();
 		row->resize(1, style::ConvertScale(64));
 		const auto title = Ui::CreateChild<Ui::FlatLabel>(row, name, RouteLabelStyle());
-		const auto select = Ui::CreateChild<Ui::RoundButton>(row, rpl::single(QString()), SelectorStyle());
-		const auto reset = Ui::CreateChild<Ui::RoundButton>(row, rpl::single(u"↶"_q), SelectorStyle());
+		const auto select = Ui::CreateChild<Ui::RoundButton>(row, rpl::single(QString()), st::settingsPluginProxySelector);
+		const auto reset = Ui::CreateChild<Ui::RoundButton>(row, rpl::single(u"↶"_q), st::settingsPluginProxyReset);
 		const auto dot = Ui::CreateChild<Ui::RpWidget>(select);
 		dot->setAttribute(Qt::WA_TransparentForMouseEvents);
 		dot->resize(style::ConvertScale(7), style::ConvertScale(7));
@@ -132,18 +121,17 @@ void SetupPluginProxyBox(
 			auto p = QPainter(dot);
 			p.setRenderHint(QPainter::Antialiasing);
 			p.setPen(Qt::NoPen);
-			p.setBrush(st::groupCallLive1);
+			p.setBrush(st::settingsPluginLabelPositive);
 			p.drawEllipse(dot->rect());
 		}, dot->lifetime());
 		select->setTextTransform(Ui::RoundButtonTextTransform::NoTransform);
 		reset->setAccessibleName(u"Сбросить маршрут: "_q + name);
 		reset->setToolTip(u"Восстановить настройки"_q);
-		reset->setTextFgOverride(st::windowSubTextFg->c);
 		state->controls.emplace(route, Control{select, reset, dot});
 		row->widthValue() | rpl::on_next([=](int width) {
 			const auto gap = style::ConvertScale(8);
 			const auto left = style::ConvertScale(45);
-			reset->setFullWidth(style::ConvertScale(38));
+			reset->setFullWidth(st::settingsPluginProxyResetWidth);
 			select->setFullWidth(std::max((width - reset->width() - 2 * gap) * 55 / 100, 1));
 			const auto selectLeft = width - reset->width() - gap - select->width();
 			title->resizeToWidth(std::max(selectLeft - left - gap, 1));
@@ -161,7 +149,7 @@ void SetupPluginProxyBox(
 		select->setClickedCallback([=] {
 			try {
 				const auto offers = load();
-				state->menu = base::make_unique_q<Ui::PopupMenu>(select, st::defaultPopupMenu);
+				state->menu = base::make_unique_q<Ui::PopupMenu>(select, st::settingsPluginPopup);
 				state->menu->addAction(u"По умолчанию"_q, [=] { save(route, {}); });
 				for (const auto &entry : offers) {
 					const auto offer = entry.toObject();
@@ -199,9 +187,8 @@ void SetupPluginProxyBox(
 	} catch (const std::exception &error) {
 		errorLabel->setText(QString::fromUtf8(error.what()));
 	}
-	auto resetAll = box->addLeftButton(rpl::single(u"Сбросить все"_q), [=] { save({}, {}); });
-	resetAll->setTextFgOverride(st::attentionButtonFg->c);
-	box->addButton(rpl::single(u"Готово"_q), [=] { box->closeBox(); }, st::defaultActiveButton);
+	box->addLeftButton(rpl::single(u"Сбросить все"_q), [=] { save({}, {}); }, st::settingsPluginDialogDanger);
+	box->addButton(rpl::single(u"Готово"_q), [=] { box->closeBox(); }, st::settingsPluginPrimary);
 }
 
 } // namespace Ovygram

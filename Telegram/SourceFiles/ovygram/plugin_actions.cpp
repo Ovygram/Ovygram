@@ -14,6 +14,7 @@
 #include "window/window_controller.h"
 #include "window/window_session_controller.h"
 #include "styles/style_widgets.h"
+#include "styles/style_plugin_management.h"
 
 #include "ui/toast/toast.h"
 #include <QtCore/QRegularExpression>
@@ -190,14 +191,14 @@ void Configure(const QString &id, quint64 generation) {
 				Settings().setValue(key, value->serialize());
 				field->setText(value->toDisplayString());
 			}));
-		});
+		}, st::settingsPluginDialog);
 		box->addLeftButton(rpl::single(u"Сбросить"_q), [=] {
 			if (*recorder) (*recorder)->stopRecording();
 			if (Watch(id, generation, nullptr)) Settings().remove(key);
 			ReleaseIdleWatcher();
 			box->closeBox();
-		});
-		box->addButton(rpl::single(u"Закрыть"_q), [=] { box->closeBox(); });
+		}, st::settingsPluginDialog);
+		box->addButton(rpl::single(u"Закрыть"_q), [=] { box->closeBox(); }, st::settingsPluginDialog);
 	}));
 }
 
@@ -331,8 +332,8 @@ void OpenLink(Window::SessionController *controller, const QString &owner, const
 			box->addButton(rpl::single(u"Выполнить"_q), [=] {
 				if (const auto strong = session.get()) Run(id, generation, u"link"_q, QString::number(strong->uniqueId()));
 				box->closeBox();
-			});
-			box->addButton(rpl::single(u"Отмена"_q), [=] { box->closeBox(); });
+			}, st::settingsPluginDialog);
+			box->addButton(rpl::single(u"Отмена"_q), [=] { box->closeBox(); }, st::settingsPluginDialog);
 		}));
 		return;
 	}

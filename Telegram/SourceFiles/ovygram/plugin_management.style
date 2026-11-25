@@ -35,6 +35,25 @@ settingsPluginStatusSkip: 8px;
 settingsPluginBadgeGap: 6px;
 settingsPluginBadgePadding: margins(10px, 4px, 10px, 4px);
 settingsPluginBadgeWarning: icon {{ "levels/level_warning-16x16", attentionButtonFg }};
+settingsPluginBadgeOfficial: windowActiveTextFg;
+settingsPluginBadgeVerified: boxTextFgGood;
+settingsPluginBadgeUnverified: attentionButtonFg;
+settingsPluginBadgeOfficialHue: 210.;
+settingsPluginBadgeVerifiedHue: 125.;
+settingsPluginBadgeSaturationMin: 0.48;
+settingsPluginBadgeSaturationMax: 0.72;
+settingsPluginBadgeDarkLightnessMin: 0.60;
+settingsPluginBadgeDarkLightnessMax: 0.72;
+settingsPluginBadgeLightLightnessMin: 0.38;
+settingsPluginBadgeLightLightnessMax: 0.46;
+settingsPluginBadgeWarningSaturation: 0.62;
+settingsPluginBadgeWarningLightness: 0.66;
+settingsPluginBadgeLightTextBlend: 0.30;
+settingsPluginBadgeTrustFillAlpha: 26;
+settingsPluginBadgeNeutralFillAlpha: 16;
+settingsPluginVersionFillAlpha: 0.18;
+settingsPluginDividerAlpha: 0.08;
+settingsPluginSecondaryTextBlend: 0.26;
 settingsPluginCardAction: SettingsButton(settingsPluginSettingRow) {
 	textFg: lightButtonFg;
 	textFgOver: lightButtonFgOver;
@@ -124,13 +143,126 @@ settingsPluginInstallRowMargin: margins(16px, 10px, 16px, 10px);
 settingsPluginInstallRowGap: 12px;
 settingsPluginInstallBadgeRadius: 6px;
 settingsPluginInstallBadgePadding: margins(8px, 3px, 8px, 3px);
-settingsPluginInstallButton: RoundButton(defaultActiveButton) {
-	radius: 8px;
+// Shared styles for Ovygram-owned actions. Inherited colors follow the theme.
+settingsPluginActionRadius: 8px;
+settingsPluginRowRadius: 6px;
+settingsPluginLegacyCardActionRadius: 6;
+settingsPluginProxyRadius: 7px;
+settingsPluginChoiceHeight: 18px;
+settingsPluginChipHeight: 24px;
+settingsPluginChipWidth: -18px;
+settingsPluginCodeHeight: 25px;
+settingsPluginPrimary: RoundButton(defaultActiveButton) {
+	radius: buttonRadius;
 }
-settingsPluginInstallSecondary: RoundButton(defaultLightButton) {
-	radius: 8px;
+settingsPluginLight: RoundButton(defaultLightButton) {
+	radius: buttonRadius;
+}
+settingsPluginDialog: RoundButton(defaultBoxButton) {
+	radius: buttonRadius;
+}
+settingsPluginDialogDanger: RoundButton(settingsPluginDialog) {
+	textFg: attentionButtonFg;
+	textFgOver: attentionButtonFg;
+}
+settingsPluginInstallButton: RoundButton(settingsPluginPrimary) {
+	radius: settingsPluginActionRadius;
+}
+settingsPluginInstallSecondary: RoundButton(settingsPluginLight) {
+	radius: settingsPluginActionRadius;
 	textBg: windowBgOver;
 }
+settingsPluginProxySelector: RoundButton(settingsPluginLight) {
+	radius: settingsPluginProxyRadius;
+	textBg: windowBgOver;
+	textFg: windowFg;
+	textFgOver: windowFgOver;
+}
+settingsPluginProxyReset: RoundButton(settingsPluginProxySelector) {
+	textFg: windowSubTextFg;
+	textFgOver: windowSubTextFg;
+}
+settingsPluginPopupText: windowFg;
+settingsPluginPopupTextHover: windowFgOver;
+settingsPluginPopupFill: windowBg;
+settingsPluginPopupFillHover: windowBgOver;
+settingsPluginPopupPadding: margins(17px, 8px, 17px, 7px);
+settingsPluginPopup: PopupMenu(defaultPopupMenu) {
+	menu: Menu(defaultMenu) {
+		itemFg: settingsPluginPopupText;
+		itemFgOver: settingsPluginPopupTextHover;
+		itemBg: settingsPluginPopupFill;
+		itemBgOver: settingsPluginPopupFillHover;
+		itemPadding: settingsPluginPopupPadding;
+	}
+}
+settingsPluginPanelPopup: PopupMenu(popupMenuWithIcons) {
+	menu: Menu(menuWithIcons) {
+		itemFg: settingsPluginPopupText;
+		itemFgOver: settingsPluginPopupTextHover;
+		itemBg: settingsPluginPopupFill;
+		itemBgOver: settingsPluginPopupFillHover;
+	}
+}
+settingsPluginClose: IconButton(boxTitleClose) {
+}
+settingsPluginBack: IconButton(defaultIconButton) {
+	width: 60px;
+	height: 54px;
+	icon: icon {{ "info/info_back", boxTitleCloseFg }};
+	iconOver: icon {{ "info/info_back", boxTitleCloseFgOver }};
+	iconPosition: point(11px, -1px);
+	rippleAreaPosition: point(6px, 6px);
+	rippleAreaSize: 42px;
+	ripple: defaultRippleAnimationBgOver;
+}
+settingsPluginSearchClear: CrossButton(defaultMultiSelectSearchCancel) {
+}
+settingsPluginPlainRow: SettingsButton(defaultSettingsButton) {
+}
+settingsPluginPopupRow: SettingsButton(defaultSettingsButton) {
+	style: defaultTextStyle;
+	textFg: settingsPluginPopupText;
+	textFgOver: settingsPluginPopupTextHover;
+	textBg: settingsPluginPopupFill;
+	textBgOver: settingsPluginPopupFillHover;
+	padding: settingsPluginPopupPadding;
+	height: 18px;
+}
+settingsPluginChoice: SettingsButton(defaultSettingsButton) {
+	style: semiboldTextStyle;
+	textFgOver: windowFgActive;
+	padding: margins(11px, 5px, 11px, 5px);
+}
+settingsPluginLabelMuted: windowSubTextFg;
+settingsPluginLabelAccent: windowActiveTextFg;
+settingsPluginLabelPositive: groupCallLive1;
+settingsPluginLabelAttention: attentionButtonFg;
+settingsPluginRowHover: windowBgOver;
+settingsPluginRowPressed: windowBgRipple;
+settingsPluginChoiceSelected: windowBgActive;
+settingsPluginCardFill: windowBgOver;
+settingsPluginCardActionOverlay: windowFg;
+settingsPluginCardActionHoverAlpha: 12;
+settingsPluginCardActionPressedAlpha: 22;
+settingsPluginInstallOutlineAlpha: 16;
+settingsPluginProxyResetWidth: 38px;
+settingsPluginSdkBorderAlpha: 115;
+settingsPluginSdkDangerAlpha: 35;
+settingsPluginSdkRippleAlpha: 55;
+
+// Fixed reference colors for palette="ovygram" in dark themes.
+// Hex literals are stored as strings because style colors follow the theme.
+settingsPluginRefPrimaryText: "#F0F7FC";
+settingsPluginRefPrimaryFill: "#3375AA";
+settingsPluginRefSecondaryText: "#6493BD";
+settingsPluginRefSecondaryFill: "#18242F";
+settingsPluginRefSecondaryBorder: "#507B9C";
+settingsPluginRefDangerText: "#DE7D7A";
+settingsPluginRefDangerFill: "#3A2D33";
+settingsPluginRefCodeText: "#86A7C5";
+settingsPluginRefCodeFill: "#293C4A";
+
 settingsPluginInstallDetailsIcon: icon {{ "menu/file", menuIconFg }};
 settingsPluginInstallDetails: SettingsButton(settingsPluginLinkRow) {
 	textFg: windowActiveTextFg;

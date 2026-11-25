@@ -99,7 +99,7 @@ protected:
 			const auto quality = PainterHighQualityEnabler(painter);
 			const auto radius = st::settingsPluginCardRadius;
 			painter.setPen(Qt::NoPen);
-			painter.setBrush(st::windowBgRipple);
+			painter.setBrush(st::settingsPluginRowPressed);
 			painter.drawRoundedRect(rect().adjusted(0, -radius, 0, 0), radius, radius);
 		}
 		paintRipple(painter, 0, 0);
@@ -115,7 +115,7 @@ protected:
 void AddSeparator(not_null<Ui::RpWidget*> widget) {
 	widget->paintRequest() | rpl::on_next([=] {
 		auto color = st::windowFg->c;
-		color.setAlphaF(0.08);
+		color.setAlphaF(st::settingsPluginDividerAlpha);
 		QPainter(widget).fillRect(widget->rect(), color);
 	}, widget->lifetime());
 }
@@ -123,13 +123,13 @@ void AddSeparator(not_null<Ui::RpWidget*> widget) {
 object_ptr<Ui::VerticalLayout> VersionBadge(QWidget *parent, const QString &version) {
 	auto badge = object_ptr<Ui::VerticalLayout>(parent);
 	badge->add(object_ptr<Ui::FlatLabel>(badge, version, TechnicalTextStyle()),
-		st::settingsPluginInstallBadgePadding)->setTextColorOverride(st::windowActiveTextFg->c);
+		st::settingsPluginInstallBadgePadding)->setTextColorOverride(st::settingsPluginLabelAccent->c);
 	const auto widget = badge.data();
 	widget->paintRequest() | rpl::on_next([=] {
 		auto painter = QPainter(widget);
 		const auto quality = PainterHighQualityEnabler(painter);
 		auto fill = st::activeButtonBg->c;
-		fill.setAlphaF(0.18);
+		fill.setAlphaF(st::settingsPluginVersionFillAlpha);
 		painter.setPen(Qt::NoPen);
 		painter.setBrush(fill);
 		const auto radius = st::settingsPluginInstallBadgeRadius;
@@ -198,7 +198,7 @@ Ui::RoundButton *SetPluginInstallAction(
 		Fn<void()> callback,
 		bool secondary) {
 	box->clearButtons();
-	box->addTopButton(st::boxTitleClose, [=] { box->closeBox(); })->setAccessibleName(u"Закрыть"_q);
+	box->addTopButton(st::settingsPluginClose, [=] { box->closeBox(); })->setAccessibleName(u"Закрыть"_q);
 	if (!text.isEmpty()) {
 		const auto button = box->addButton(rpl::single(std::move(text)),
 			[callback = std::move(callback)] {
@@ -209,14 +209,14 @@ Ui::RoundButton *SetPluginInstallAction(
 		button->setTextTransform(Ui::RoundButtonTextTransform::NoTransform);
 		if (secondary) {
 			auto border = st::windowFg->c;
-			border.setAlphaF(0.16);
+			border.setAlphaF(st::settingsPluginInstallOutlineAlpha / 100.);
 			button->setBrushOverride(st::windowBgOver->b);
 			button->setPenOverride(QPen(border, st::lineWidth));
 			button->setRippleOverride(st::lightButtonBgRipple->c);
 		}
 	}
 	const auto cancel = box->addLeftButton(rpl::single(u"Отмена"_q),
-		[=] { box->closeBox(); }, st::defaultLightButton);
+		[=] { box->closeBox(); }, st::settingsPluginLight);
 	cancel->setTextTransform(Ui::RoundButtonTextTransform::NoTransform);
 	return cancel.data();
 }

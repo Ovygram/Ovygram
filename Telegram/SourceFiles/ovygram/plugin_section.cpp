@@ -12,6 +12,7 @@
 #include "window/window_session_controller.h"
 #include "styles/style_info.h"
 #include "styles/style_layers.h"
+#include "styles/style_plugin_management.h"
 
 #include <QtCore/QPointer>
 
@@ -130,7 +131,7 @@ Section::Section(
 	std::shared_ptr<Token> token)
 : SectionWidget(parent, controller)
 , _token(std::move(token))
-, _back(Ui::CreateChild<Ui::IconButton>(this, st::infoTopBarBack))
+, _back(Ui::CreateChild<Ui::IconButton>(this, st::settingsPluginBack))
 , _title(Ui::CreateChild<Ui::FlatLabel>(this, st::infoTopBarTitle))
 , _scroll(Ui::CreateChild<Ui::ScrollArea>(this, st::boxScroll))
 , _holder(_scroll->setOwnedWidget(object_ptr<Ui::RpWidget>(_scroll)).data()) {
