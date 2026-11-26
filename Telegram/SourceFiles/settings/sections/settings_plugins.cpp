@@ -405,6 +405,7 @@ private:
 	void populate();
 	void install();
 	void setPluginEnabled(const QString &id, bool enabled);
+	void applyUpdate(const QString &id);
 
 	Ui::InputField *_search = nullptr;
 	Ui::VerticalLayout *_content = nullptr;
@@ -424,7 +425,6 @@ Plugins::Plugins(
 	const auto layout = Ui::CreateChild<Ui::VerticalLayout>(this);
 	_search = Ovygram::AddPluginListSearch(layout);
 	setNavigationAnchor(layout);
-	AddNotice(layout, _notice);
 	_checkUpdates = Ovygram::AddPluginListActions(layout, [this] { install(); }, [this] {
 		const auto started = Request({ { u"action"_q, u"check_updates"_q } }, _notice);
 		if (started.isUndefined()) return;
@@ -432,6 +432,7 @@ Plugins::Plugins(
 		_notice = started.toBool() ? u"Проверяю обновления плагинов…"_q : u"Проверка уже выполняется…"_q;
 		refresh();
 	});
+	Ovygram::AddPluginListNotice(layout, _notice.value());
 	_content = layout->add(object_ptr<Ui::VerticalLayout>(layout));
 	Ui::ResizeFitChild(this, layout);
 
@@ -465,7 +466,7 @@ void Plugins::refresh() {
 		const auto errors = result.value(u"errors"_q).toArray();
 		const auto updates = result.value(u"updates"_q).toInt();
 		_notice = updates
-			? u"Найдены обновления или безопасные версии: %1. Выберите плагин ниже."_q.arg(updates)
+			? u"Найдены новые или безопасные версии: %1."_q.arg(updates)
 			: result.value(u"checked"_q).toInt()
 			? u"Проверка завершена. Новых проверенных версий нет."_q
 			: u"Установленных плагинов для проверки нет."_q;
@@ -493,17 +494,17 @@ void Plugins::populate() {
 		return;
 	}
 	for (const auto &notice : _snapshot.value(u"distribution"_q).toObject().value(u"notices"_q).toArray()) {
-		Ui::AddDividerText(_content, rpl::single(notice.toString()));
+		Ovygram::AddPluginListNotice(_content, rpl::single(notice.toString()));
 	}
 	const auto status = RuntimeStatus(_snapshot);
 	if (!status.isEmpty()) {
-		Ui::AddDividerText(_content, rpl::single(status));
+		Ovygram::AddPluginListNotice(_content, rpl::single(status));
 	}
 	if (const auto text = DependencyStatus(_snapshot); !text.isEmpty()) {
-		Ui::AddDividerText(_content, rpl::single(text));
+		Ovygram::AddPluginListNotice(_content, rpl::single(text));
 	}
 	if (const auto text = IsolationStatus(_snapshot); !text.isEmpty()) {
-		Ui::AddDividerText(_content, rpl::single(text));
+		Ovygram::AddPluginListNotice(_content, rpl::single(text));
 	}
 	if (_snapshot.value(u"recovery"_q).toBool()
 		&& !_snapshot.value(u"disabled"_q).toBool()
@@ -525,6 +526,7 @@ void Plugins::populate() {
 				plugin.value(u"name"_q).toString()));
 		},
 		[this](QString id, bool enabled) { setPluginEnabled(id, enabled); },
+		[this](QString id) { applyUpdate(id); },
 		[this] {
 			const auto path = _snapshot.value(u"log_path"_q).toString();
 			if (path.isEmpty() || !QDesktopServices::openUrl(QUrl::fromLocalFile(path))) {
@@ -537,6 +539,15 @@ void Plugins::setPluginEnabled(const QString &id, bool enabled) {
 	_notice = QString();
 	(void)Request({
 		{ u"action"_q, enabled ? u"enable"_q : u"disable"_q },
+		{ u"installation_id"_q, id },
+	}, _notice);
+	QTimer::singleShot(0, this, [this] { refresh(); });
+}
+
+void Plugins::applyUpdate(const QString &id) {
+	_notice = QString();
+	(void)Request({
+		{ u"action"_q, u"apply_update"_q },
 		{ u"installation_id"_q, id },
 	}, _notice);
 	QTimer::singleShot(0, this, [this] { refresh(); });

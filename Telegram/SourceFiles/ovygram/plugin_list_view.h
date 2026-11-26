@@ -4,6 +4,7 @@
 
 #include <QtCore/QJsonArray>
 #include <QtCore/QJsonObject>
+#include <rpl/producer.h>
 
 namespace Ui {
 class InputField;
@@ -16,6 +17,9 @@ namespace Ovygram {
 [[nodiscard]] QString PluginErrorTitle(const QJsonObject &plugin);
 [[nodiscard]] not_null<Ui::InputField*> AddPluginListSearch(
 	not_null<Ui::VerticalLayout*> layout);
+void AddPluginListNotice(
+	not_null<Ui::VerticalLayout*> layout,
+	rpl::producer<QString> text);
 not_null<Ui::RoundButton*> AddPluginListActions(
 	not_null<Ui::VerticalLayout*> layout,
 	Fn<void()> import,
@@ -27,6 +31,7 @@ void AddPluginListRows(
 	bool launchBlocked,
 	Fn<void(QJsonObject)> open,
 	Fn<void(QString id, bool enabled)> setEnabled,
+	Fn<void(QString id)> applyUpdate,
 	Fn<void()> log);
 
 } // namespace Ovygram

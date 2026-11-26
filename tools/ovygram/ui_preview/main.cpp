@@ -148,29 +148,29 @@ QJsonObject SamplePlugin() {
 
 QJsonArray SamplePluginList() {
 	auto subscriptions = SamplePlugin();
+	subscriptions.insert(u"name"_q, u"VLESS · Подписки (Windows)"_q);
+	subscriptions.insert(u"version"_q, u"1.0.8"_q);
 	subscriptions.insert(u"installation_id"_q, u"8e88c753"_q);
-	subscriptions.insert(u"update"_q, QJsonObject{ { u"latest_version"_q, u"1.0.4"_q } });
 	return {
-		subscriptions,
 		QJsonObject{
-			{ u"name"_q, u"Черновик заметки"_q },
-			{ u"installation_id"_q, u"1c03ee79"_q },
-			{ u"plugin_id"_q, u"note_draft"_q },
-			{ u"author"_q, u"Ovygram"_q },
-			{ u"version"_q, u"1.0.0"_q },
-			{ u"description"_q, u"Сохраняет заголовок и текст заметки в локальном черновике."_q },
-			{ u"trust"_q, QJsonObject{ { u"status"_q, u"official"_q } } },
-		},
-		QJsonObject{
-			{ u"name"_q, u"Очистка ссылок"_q },
+			{ u"name"_q, u"Палитра Ovygram"_q },
 			{ u"installation_id"_q, u"c65e509c"_q },
-			{ u"plugin_id"_q, u"clean_links"_q },
-			{ u"author"_q, u"Demo Studio"_q },
-			{ u"version"_q, u"2.1.0"_q },
-			{ u"description"_q, u"Удаляет метки отслеживания из ссылок в исходящих сообщениях."_q },
+			{ u"plugin_id"_q, u"palette_lab"_q },
+			{ u"version"_q, u"1.1.0"_q },
+			{ u"description"_q, u"Добавляет команды для работы с цветом."_q },
 			{ u"enabled"_q, true },
 			{ u"loaded"_q, true },
+			{ u"trust"_q, QJsonObject{ { u"status"_q, u"unverified"_q } } },
+		},
+		subscriptions,
+		QJsonObject{
+			{ u"name"_q, u"Что это? (Википедия)"_q },
+			{ u"installation_id"_q, u"1c03ee79"_q },
+			{ u"plugin_id"_q, u"wikipedia"_q },
+			{ u"version"_q, u"1.0.1"_q },
+			{ u"description"_q, u"Ищет выделенный текст в Википедии."_q },
 			{ u"trust"_q, QJsonObject{ { u"status"_q, u"verified"_q } } },
+			{ u"update"_q, QJsonObject{ { u"latest_version"_q, u"1.0.2"_q } } },
 		},
 	};
 }
@@ -226,7 +226,7 @@ QJsonObject InstallInfo(const QString &scenario) {
 // Native layer shell with the same fit-to-content behavior as the settings page.
 class SettingsLayer final : public Ui::LayerWidget {
 public:
-	SettingsLayer(QWidget *parent, QString name, int desiredWidth)
+	SettingsLayer(QWidget *parent, QString name, int desiredWidth, bool hasBack = true)
 	: Ui::LayerWidget(parent)
 	, _desiredWidth(desiredWidth)
 	, _title(Ui::CreateChild<Ui::FlatLabel>(this, std::move(name), st::boxTitle))
@@ -235,6 +235,7 @@ public:
 	, _scroll(Ui::CreateChild<Ui::ScrollArea>(this, st::boxScroll))
 	, _content(_scroll->setOwnedWidget(object_ptr<Ui::VerticalLayout>(_scroll))) {
 		_back->setAccessibleName(u"Назад"_q);
+		_back->setVisible(hasBack);
 		_close->setAccessibleName(u"Закрыть"_q);
 		_back->setClickedCallback([this] { closeLayer(); });
 		_close->setClickedCallback([this] { closeLayer(); });
@@ -257,7 +258,8 @@ public:
 		_back->moveToLeft(0, (head - _back->height()) / 2, width);
 		_close->moveToRight(0, (head - _close->height()) / 2, width);
 		_title->resizeToWidth(width - 2 * head);
-		_title->moveToLeft(head, (head - _title->height()) / 2, width);
+		_title->moveToLeft(_back->isHidden() ? st::boxTitlePosition.x() : head,
+			(head - _title->height()) / 2, width);
 	}
 
 protected:
@@ -533,6 +535,7 @@ private:
 	Ui::InputField *_listSearch = nullptr;
 	Ui::VerticalLayout *_listRows = nullptr;
 	QJsonArray _listPlugins;
+	rpl::variable<QString> _listNotice;
 	bool _listLaunchBlocked = false;
 	QJsonObject _plugin;
 	QJsonArray _fields;
@@ -556,17 +559,28 @@ void Preview::showListNotice(QString title, QString body) {
 
 void Preview::showPluginList() {
 	const auto before = _scenario == u"list-before"_q;
-	auto layer = object_ptr<SettingsLayer>(&_layers, u"Плагины"_q, st::settingsPluginsLayerWidth);
+	auto layer = object_ptr<SettingsLayer>(&_layers, u"Плагины"_q, st::settingsPluginsLayerWidth, false);
 	_list = layer.data();
 	const auto layout = _list->content();
 	const auto import = [this] { showInstaller(InstallInfo(u"install-new"_q)); };
-	const auto check = [this] { showListNotice(u"Обновления плагинов"_q, u"Доступно одно обновление."_q); };
 	if (before) {
 		_listSearch = PreviewPluginList::AddSearch(layout);
-		PreviewPluginList::AddActions(layout, import, check);
+		PreviewPluginList::AddActions(layout, import, [this] {
+			showListNotice(u"Обновления плагинов"_q, u"Доступно одно обновление."_q);
+		});
 	} else {
+		const auto check = [this] {
+			const auto hasUpdate = std::any_of(_listPlugins.cbegin(), _listPlugins.cend(), [](const QJsonValue &entry) {
+				return entry.toObject().value(u"update"_q).isObject();
+			});
+			_listNotice = hasUpdate ? u"Найдены новые или безопасные версии: 1."_q
+				: u"Проверка завершена. Новых проверенных версий нет."_q;
+			_list->parentResized();
+		};
 		_listSearch = Ovygram::AddPluginListSearch(layout);
 		Ovygram::AddPluginListActions(layout, import, check);
+		Ovygram::AddPluginListNotice(layout, _listNotice.value());
+		check();
 	}
 	_listRows = layout->add(object_ptr<Ui::VerticalLayout>(layout));
 	_listSearch->changes() | rpl::on_next([this] { buildPluginList(); }, _listSearch->lifetime());
@@ -606,7 +620,26 @@ void Preview::buildPluginList() {
 			[this] { showRemoval(); },
 			log);
 	} else {
-		Ovygram::AddPluginListRows(_listRows, _listPlugins, query, _listLaunchBlocked, open, setEnabled, log);
+		const auto applyUpdate = [this](QString id) {
+			QTimer::singleShot(0, this, [=, this] {
+				if (!_list) {
+					return;
+				}
+				for (auto i = 0; i != _listPlugins.size(); ++i) {
+					auto plugin = _listPlugins.at(i).toObject();
+					if (plugin.value(u"installation_id"_q).toString() == id) {
+						const auto offer = plugin.take(u"update"_q).toObject();
+						plugin.insert(u"version"_q, offer.value(u"latest_version"_q));
+						_listPlugins.replace(i, plugin);
+						break;
+					}
+				}
+				_listNotice = QString();
+				buildPluginList();
+			});
+		};
+		Ovygram::AddPluginListRows(_listRows, _listPlugins, query, _listLaunchBlocked,
+			open, setEnabled, applyUpdate, log);
 	}
 	_list->parentResized();
 }
@@ -829,37 +862,47 @@ void Preview::verify() {
 		_layers.finishAnimating();
 		Check(_removalChoice == u"delete"_q, "Removal default action did not delete plugin data.");
 	} else if (_scenario == u"list-after"_q) {
-		const auto first = u"Прокси-туннель (Windows)"_q;
-		const auto note = u"Черновик заметки"_q;
+		const auto first = u"VLESS · Подписки (Windows)"_q;
+		const auto wiki = u"Что это? (Википедия)"_q;
+		const auto update = u"Обновить · "_q + wiki;
+		const auto enableWiki = u"Включить "_q + wiki;
+		const auto disableWiki = u"Отключить "_q + wiki;
+		const auto button = ByName(_list, update);
 		Check(ByName(_list, first), "A plugin is missing from the list.");
-		Check(ByName(_list, u"Не проверен"_q) && ByName(_list, u"Официальный"_q)
-			&& ByName(_list, u"Проверен"_q), "A plugin trust badge is missing.");
-		Check(ByName(_list, u"Доступно обновление до 1.0.4"_q), "Available update is missing.");
+		Check(ByName(_list, u"Не проверен"_q) && ByName(_list, u"Проверен"_q),
+			"A plugin trust badge is missing.");
+		Check(ByName(_list, u"Новая версия 1.0.2"_q) && button
+			&& !ByName(_list, u"Обновить · "_q + first), "Update was offered for the wrong plugins.");
+		const auto row = button->parentWidget();
+		Check(row->childAt(button->mapToParent(button->rect().center())) == button,
+			"The update button is covered by the row controls.");
 		_listLaunchBlocked = true;
 		buildPluginList();
-		const auto start = dynamic_cast<Ui::SettingsButton*>(ByName(_list, u"Включить Черновик заметки"_q));
-		const auto stop = dynamic_cast<Ui::SettingsButton*>(ByName(_list, u"Отключить Прокси-туннель (Windows)"_q));
+		const auto start = dynamic_cast<Ui::SettingsButton*>(ByName(_list, enableWiki));
+		const auto stop = dynamic_cast<Ui::SettingsButton*>(ByName(_list, u"Отключить "_q + first));
 		Check(start && start->isDisabled() && stop && !stop->isDisabled(),
 			"Runtime recovery must prevent starting plugins and allow stopping them.");
 		_listLaunchBlocked = false;
 		buildPluginList();
 		_listSearch->setFocus();
 		const auto edit = _listSearch->rawTextEdit().get();
-		QTest::keyClicks(edit, "note_draft");
-		Check(!ByName(_list, first) && ByName(_list, note), "Plugin ID search did not filter the list.");
+		QTest::keyClicks(edit, "wikipedia");
+		Check(!ByName(_list, first) && ByName(_list, wiki), "Plugin ID search did not filter the list.");
 		QTest::keyClick(edit, Qt::Key_A, Qt::ControlModifier);
 		QTest::keyClicks(edit, "missing");
 		Check(ByName(_list, u"Плагины не найдены."_q), "Empty search result is missing.");
 		Click(_list, u"Очистить поиск"_q);
 		Check(ByName(_list, first), "Clearing search did not restore the list.");
-		Click(_list, u"Включить Черновик заметки"_q);
-		Check(ByName(_list, u"Отключить Черновик заметки"_q), "The plugin did not start.");
-		Click(_list, u"Отключить Черновик заметки"_q);
-		Check(ByName(_list, u"Включить Черновик заметки"_q), "The plugin did not stop.");
+		Click(_list, enableWiki);
+		Check(ByName(_list, disableWiki), "The plugin did not start.");
+		Click(_list, disableWiki);
+		Check(ByName(_list, enableWiki), "The plugin did not stop.");
+		Click(_list, update);
+		Check(!_details && ByName(_list, u"Остановлен · v1.0.2"_q) && !ByName(_list, update)
+			&& ByName(_list, enableWiki), "Update did not finish in the list or changed the toggle.");
 		Click(_list, u"Проверить обновления"_q);
-		Check(ByName(this, u"Доступно одно обновление."_q), "Update feedback did not open.");
-		Click(const_cast<Ui::LayerWidget*>(_layers.topShownLayer()), u"Закрыть"_q);
-		_layers.finishAnimating();
+		Check(ByName(_list, u"Проверка завершена. Новых проверенных версий нет."_q),
+			"Update check feedback is missing from the list.");
 		Click(_list, first);
 		Check(_details && ByName(_details, u"Удалить плагин"_q), "Plugin details did not open.");
 		Click(_details, u"Назад"_q);

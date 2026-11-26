@@ -8,7 +8,7 @@
 #include "ui/widgets/buttons.h"
 #include "ui/widgets/fields/input_field.h"
 #include "ui/widgets/labels.h"
-#include "ui/wrap/padding_wrap.h"
+#include "ui/wrap/slide_wrap.h"
 #include "ui/wrap/vertical_layout.h"
 
 namespace Ovygram {
@@ -25,6 +25,20 @@ style::margins Inset(int top = 0, int bottom = 0) {
 
 QColor SecondaryText() {
 	return anim::color(st::settingsPluginLabelMuted, st::windowFg, st::settingsPluginSecondaryTextBlend);
+}
+
+void UseSecondaryText(not_null<Ui::FlatLabel*> label) {
+	const auto apply = [=] { label->setTextColorOverride(SecondaryText()); };
+	apply();
+	style::PaletteChanged() | rpl::on_next(apply, label->lifetime());
+}
+
+int RowInset() {
+	return Px(12);
+}
+
+int ArrowSpace() {
+	return st::settingsPluginLinkArrow.width() + Px(16);
 }
 
 Ui::SettingsButton *Action(
@@ -46,7 +60,7 @@ QString UpdateLabel(const QJsonObject &plugin) {
 	const auto version = update.value(u"latest_version"_q).toString(update.value(u"version"_q).toString());
 	return update.value(u"rollback"_q).toBool()
 		? u"Доступна безопасная версия %1"_q.arg(version)
-		: u"Доступно обновление до %1"_q.arg(version);
+		: u"Новая версия %1"_q.arg(version);
 }
 
 QString TrustLabel(const QString &status) {
@@ -126,49 +140,55 @@ public:
 		_meta->setAttribute(Qt::WA_TransparentForMouseEvents);
 		applyColors();
 		style::PaletteChanged() | rpl::on_next(applyColors, lifetime());
-		setPaddingOverride({ 0, Px(10), Px(27), 0 });
+		setPaddingOverride({ RowInset(), Px(12), ArrowSpace(), 0 });
 		setAllowTextLines();
+	}
+
+	void setActionSpace(int width) {
+		if (_actionSpace != width) {
+			_actionSpace = width;
+			setPaddingOverride({ RowInset(), Px(12), ArrowSpace() + width, 0 });
+		}
 	}
 
 protected:
 	int resizeGetHeight(int width) override {
 		const auto titleHeight = Ui::SettingsButton::resizeGetHeight(width);
-		const auto textWidth = std::max(1, width - Px(27));
-		const auto metaLeft = Px(13);
+		const auto left = RowInset();
+		const auto textWidth = std::max(1, width - left - ArrowSpace() - _actionSpace);
+		const auto dotSpace = Px(13);
 		const auto badgeWidth = std::min(textWidth, _trustBadge->naturalWidth());
 		const auto gap = Px(8);
-		const auto badgeLeft = metaLeft + _meta->naturalWidth() + gap;
+		const auto badgeLeft = dotSpace + _meta->naturalWidth() + gap;
 		const auto inlineBadge = badgeLeft + badgeWidth <= textWidth;
 
-		_meta->resizeToWidth(std::max(1, inlineBadge ? _meta->naturalWidth() : textWidth - metaLeft));
+		_meta->resizeToWidth(std::max(1, inlineBadge ? _meta->naturalWidth() : textWidth - dotSpace));
 		_trustBadge->resizeToWidth(badgeWidth);
 		const auto metaHeight = _meta->height();
 		const auto badgeHeight = _trustBadge->height();
 		const auto metaTop = titleHeight + (inlineBadge ? std::max(0, badgeHeight - metaHeight) / 2 : 0);
-		_meta->moveToLeft(metaLeft, metaTop, width);
+		_meta->moveToLeft(left + dotSpace, metaTop, width);
 		const auto badgeTop = inlineBadge
 			? titleHeight + std::max(0, metaHeight - badgeHeight) / 2
 			: metaTop + metaHeight + Px(4);
-		_trustBadge->moveToLeft(inlineBadge ? badgeLeft : 0, badgeTop, width);
+		_trustBadge->moveToLeft(left + (inlineBadge ? badgeLeft : 0), badgeTop, width);
 		auto bottom = std::max(metaTop + metaHeight, badgeTop + badgeHeight);
 		for (const auto label : { _update, _error }) {
 			if (label) {
 				label->resizeToWidth(textWidth);
-				label->moveToLeft(0, bottom + Px(3), width);
-				bottom += Px(3) + label->height();
+				label->moveToLeft(left, bottom + Px(5), width);
+				bottom += Px(5) + label->height();
 			}
 		}
-		return bottom + Px(10);
+		return bottom + Px(12);
+	}
+
+	void onStateChanged(State was, StateChangeSource source) override {
+		Ui::SettingsButton::onStateChanged(was, source);
+		parentWidget()->update();
 	}
 
 	void paintEvent(QPaintEvent *event) override {
-		if (isOver() || isDown()) {
-			auto p = QPainter(this);
-			const auto quality = PainterHighQualityEnabler(p);
-			p.setPen(Qt::NoPen);
-			p.setBrush(isDown() ? st::settingsPluginRowPressed : st::settingsPluginRowHover);
-			p.drawRoundedRect(rect(), st::settingsPluginRowRadius, st::settingsPluginRowRadius);
-		}
 		Ui::SettingsButton::paintEvent(event);
 		auto p = QPainter(this);
 		const auto quality = PainterHighQualityEnabler(p);
@@ -177,7 +197,7 @@ protected:
 		p.setBrush(_blocked
 			? PluginTrustColor(u"blocked"_q)
 			: _loaded ? PluginTrustColor(u"verified"_q) : st::windowSubTextFg->c);
-		p.drawEllipse(style::rtlrect(0, _meta->y() + Px(4), dot, dot, width()));
+		p.drawEllipse(style::rtlrect(RowInset(), _meta->y() + Px(4), dot, dot, width()));
 		const auto &arrow = st::settingsPluginLinkArrow;
 		arrow.paint(p, width() - arrow.width() - Px(8), (height() - arrow.height()) / 2, width());
 	}
@@ -202,12 +222,26 @@ private:
 	Ui::VerticalLayout *_trustBadge = nullptr;
 	Ui::FlatLabel *_update = nullptr;
 	Ui::FlatLabel *_error = nullptr;
+	int _actionSpace = 0;
 };
 
 class ListToggle final : public Ui::SettingsButton {
 public:
 	explicit ListToggle(QWidget *parent)
 	: Ui::SettingsButton(parent, nullptr, st::settingsPluginToggleAction) {
+	}
+
+	QString accessibilityName() override {
+		return accessibleName();
+	}
+};
+
+class ListUpdateButton final : public Ui::RoundButton {
+public:
+	ListUpdateButton(QWidget *parent, QString title, const QString &name)
+	: Ui::RoundButton(parent, rpl::single(title), st::settingsPluginListUpdate) {
+		setTextTransform(Ui::RoundButtonTextTransform::NoTransform);
+		setAccessibleName(title + u" · "_q + name);
 	}
 
 	QString accessibilityName() override {
@@ -222,7 +256,8 @@ public:
 			const QJsonObject &plugin,
 			bool launchBlocked,
 			Fn<void()> open,
-			Fn<void()> toggle)
+			Fn<void()> toggle,
+			Fn<void()> applyUpdate)
 	: Ui::RpWidget(parent)
 	, _open(Ui::CreateChild<ListEntry>(this, plugin))
 	, _toggle(Ui::CreateChild<ListToggle>(this)) {
@@ -234,27 +269,65 @@ public:
 			.arg(plugin.value(u"name"_q).toString()));
 		_toggle->setClickedCallback(std::move(toggle));
 		_toggle->setDisabled((launchBlocked || blocked) && !enabled);
+		const auto offer = plugin.value(u"update"_q).toObject();
+		const auto updating = plugin.value(u"updating"_q).toBool();
+		if (!offer.isEmpty() || updating) {
+			const auto title = updating ? u"Обновляется…"_q
+				: offer.value(u"rollback"_q).toBool() ? u"Откатить"_q : u"Обновить"_q;
+			_applyUpdate = Ui::CreateChild<ListUpdateButton>(this,
+				title, plugin.value(u"name"_q).toString());
+			_applyUpdate->setClickedCallback(std::move(applyUpdate));
+			_applyUpdate->setDisabled(updating);
+			if (updating) {
+				const auto apply = [button = _applyUpdate] { button->setTextFgOverride(SecondaryText()); };
+				apply();
+				style::PaletteChanged() | rpl::on_next(apply, _applyUpdate->lifetime());
+			}
+		}
 	}
 
 protected:
 	int resizeGetHeight(int width) override {
 		const auto toggleWidth = std::min(width, st::settingsPluginToggleWidth);
-		_open->resizeToWidth(width - toggleWidth);
+		const auto openWidth = width - toggleWidth;
+		const auto actionSpace = _applyUpdate ? _applyUpdate->width() + Px(12) : 0;
+		const auto inlineAction = openWidth - RowInset() - ArrowSpace() - actionSpace >= Px(245);
+		_open->setActionSpace(inlineAction ? actionSpace : 0);
+		_open->resizeToWidth(openWidth);
 		_open->moveToLeft(0, 0, width);
 		_toggle->resizeToWidth(toggleWidth);
 		_toggle->moveToRight(0, (_open->height() - _toggle->height()) / 2, width);
-		return _open->height() + st::lineWidth;
+		auto bottom = _open->height();
+		if (_applyUpdate) {
+			if (inlineAction) {
+				_applyUpdate->moveToRight(toggleWidth + ArrowSpace(),
+					(bottom - _applyUpdate->height()) / 2, width);
+			} else {
+				_applyUpdate->moveToLeft(RowInset(), bottom - Px(2), width);
+				bottom += _applyUpdate->height() + Px(10);
+			}
+		}
+		return bottom + Px(5) + st::lineWidth;
 	}
 
 	void paintEvent(QPaintEvent *) override {
+		auto p = QPainter(this);
+		if (_open->isOver() || _open->isDown()) {
+			const auto quality = PainterHighQualityEnabler(p);
+			p.setPen(Qt::NoPen);
+			p.setBrush(_open->isDown() ? st::settingsPluginRowPressed : st::settingsPluginRowHover);
+			p.drawRoundedRect(rect().adjusted(0, 0, 0, -Px(5) - st::lineWidth),
+				st::settingsPluginRowRadius, st::settingsPluginRowRadius);
+		}
 		auto color = st::windowFg->c;
 		color.setAlphaF(st::settingsPluginDividerAlpha);
-		QPainter(this).fillRect(0, height() - st::lineWidth, width(), st::lineWidth, color);
+		p.fillRect(RowInset(), height() - st::lineWidth, width() - 2 * RowInset(), st::lineWidth, color);
 	}
 
 private:
 	const not_null<ListEntry*> _open;
 	const not_null<Ui::SettingsButton*> _toggle;
+	Ui::RoundButton *_applyUpdate = nullptr;
 };
 
 } // namespace
@@ -268,7 +341,7 @@ QString PluginErrorTitle(const QJsonObject &plugin) {
 
 not_null<Ui::InputField*> AddPluginListSearch(not_null<Ui::VerticalLayout*> layout) {
 	const auto row = layout->add(object_ptr<Ui::FixedHeightWidget>(layout, Px(38)),
-		Inset(12, 0));
+		Inset(14, 12));
 	const auto field = Ui::CreateChild<Ui::InputField>(row, st::defaultMultiSelectSearchField,
 		rpl::single(u"Поиск плагинов"_q));
 	field->setAccessibleName(u"Поиск плагинов"_q);
@@ -296,12 +369,34 @@ not_null<Ui::InputField*> AddPluginListSearch(not_null<Ui::VerticalLayout*> layo
 	return field;
 }
 
+void AddPluginListNotice(
+		not_null<Ui::VerticalLayout*> layout,
+		rpl::producer<QString> text) {
+	const auto wrap = layout->add(object_ptr<Ui::SlideWrap<Ui::VerticalLayout>>(
+		layout, object_ptr<Ui::VerticalLayout>(layout)), style::al_justify);
+	const auto card = wrap->entity()->add(object_ptr<Ui::VerticalLayout>(wrap->entity()),
+		Inset(0, 12), style::al_justify);
+	const auto label = card->add(object_ptr<Ui::FlatLabel>(card, rpl::duplicate(text),
+		st::settingsPluginCardMeta), { RowInset(), Px(9), RowInset(), Px(9) }, style::al_justify);
+	UseSecondaryText(label);
+	card->paintRequest() | rpl::on_next([=] {
+		auto p = QPainter(card);
+		const auto quality = PainterHighQualityEnabler(p);
+		p.setPen(Qt::NoPen);
+		p.setBrush(st::settingsPluginCardFill);
+		p.drawRoundedRect(card->rect(), st::settingsPluginActionRadius, st::settingsPluginActionRadius);
+	}, card->lifetime());
+	wrap->toggleOn(std::move(text) | rpl::map([](const QString &value) {
+		return !value.isEmpty();
+	}), anim::type::instant);
+}
+
 not_null<Ui::RoundButton*> AddPluginListActions(
 		not_null<Ui::VerticalLayout*> layout,
 		Fn<void()> import,
 		Fn<void()> check) {
 	return layout->add(object_ptr<Actions>(
-		layout, std::move(import), std::move(check)), Inset(12, 12))->checkButton();
+		layout, std::move(import), std::move(check)), Inset(0, 14))->checkButton();
 }
 
 void AddPluginListRows(
@@ -311,9 +406,11 @@ void AddPluginListRows(
 		bool launchBlocked,
 		Fn<void(QJsonObject)> open,
 		Fn<void(QString id, bool enabled)> setEnabled,
+		Fn<void(QString id)> applyUpdate,
 		Fn<void()> log) {
+	const auto textInset = Inset().left() + RowInset();
 	layout->add(object_ptr<Ui::FlatLabel>(layout, u"Установленные плагины"_q,
-		st::settingsPluginSectionTitle), Inset(7, 5));
+		st::settingsPluginSectionTitle), { textInset, Px(4), textInset, Px(6) });
 	auto found = false;
 	for (const auto &entry : plugins) {
 		const auto plugin = entry.toObject();
@@ -328,15 +425,16 @@ void AddPluginListRows(
 		const auto enabled = plugin.value(u"enabled"_q).toBool();
 		layout->add(object_ptr<ListRow>(layout, plugin, launchBlocked,
 			[=] { open(plugin); },
-			[=] { setEnabled(id, !enabled); }), Inset());
+			[=] { setEnabled(id, !enabled); },
+			[=] { applyUpdate(id); }), Inset(3, 0));
 	}
 	if (!found) {
-		Ui::AddDividerText(layout, rpl::single(plugins.isEmpty()
-			? u"Установленных плагинов пока нет."_q : u"Плагины не найдены."_q),
-			Inset(8, 12));
+		UseSecondaryText(layout->add(object_ptr<Ui::FlatLabel>(layout,
+			plugins.isEmpty() ? u"Установленных плагинов пока нет."_q : u"Плагины не найдены."_q,
+			st::settingsPluginCardMeta), { textInset, Px(8), textInset, Px(12) }));
 	}
 	const auto journal = Action(layout, u"Открыть журнал"_q, std::move(log));
-	journal->setPaddingOverride(Inset(10, 8));
+	journal->setPaddingOverride({ textInset, Px(12), textInset, Px(8) });
 	journal->setColorOverride(SecondaryText());
 	style::PaletteChanged() | rpl::on_next([journal] {
 		journal->setColorOverride(SecondaryText());

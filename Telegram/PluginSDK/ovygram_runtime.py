@@ -1141,6 +1141,7 @@ class Manager:
                 "author_hidden": author_hidden,
                 "previously_trusted": version.get("trust", {}).get("status") in TRUSTED,
                 "update": self.distribution.offer_for(installation_id),
+                "updating": self.distribution.pending_update(installation_id) is not None,
                 "plugin_id": record["plugin_id"], "enabled": record["enabled"],
                 "sha256": version.get("sha256"), "package_type": version.get("package_type"),
                 "legacy": version.get("format") == "legacy"}

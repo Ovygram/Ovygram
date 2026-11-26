@@ -171,6 +171,16 @@ settingsPluginInstallSecondary: RoundButton(settingsPluginLight) {
 	radius: settingsPluginActionRadius;
 	textBg: windowBgOver;
 }
+settingsPluginListUpdate: RoundButton(settingsPluginInstallSecondary) {
+	width: -24px;
+	height: 28px;
+	textTop: 5px;
+	style: TextStyle(semiboldTextStyle) {
+		font: font(13px semibold);
+	}
+	textBg: lightButtonBgOver;
+	textBgOver: lightButtonBgRipple;
+}
 settingsPluginProxySelector: RoundButton(settingsPluginLight) {
 	radius: settingsPluginProxyRadius;
 	textBg: windowBgOver;

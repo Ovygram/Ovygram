@@ -230,7 +230,16 @@ class Distribution:
             raise
         return True
 
+    def pending_update(self, installation_id):
+        return next((token for token, job in self.jobs.items()
+                     if job["operation"] == "update"
+                     and job["context"]["installation_id"] == installation_id
+                     and job["state"] == "pending"), None)
+
     def apply_offer(self, installation_id):
+        pending = self.pending_update(installation_id)
+        if pending is not None:
+            return pending
         offer = copy.deepcopy(self.offer_for(installation_id))
         if offer is None:
             raise ValueError("Предложение обновления устарело. Повторите проверку.")
