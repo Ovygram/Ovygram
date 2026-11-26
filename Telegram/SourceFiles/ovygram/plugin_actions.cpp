@@ -13,6 +13,7 @@
 #include "ui/widgets/labels.h"
 #include "window/window_controller.h"
 #include "window/window_session_controller.h"
+#include "styles/style_layers.h"
 #include "styles/style_widgets.h"
 #include "styles/style_plugin_management.h"
 
