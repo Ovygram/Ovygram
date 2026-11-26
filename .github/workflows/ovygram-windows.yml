@@ -193,6 +193,26 @@ jobs:
           path: dependency-cache/extras
           key: ${{ steps.cache-key.outputs.key }}-extras
 
+      - name: Select prepared Rust toolchain
+        if: (inputs.mode == 'build' || inputs.mode == 'plugins')
+        run: |
+          $rustRoot = Join-Path $env:GITHUB_WORKSPACE 'TBuild/ThirdParty/rust'
+          $env:RUSTUP_HOME = Join-Path $rustRoot 'rustup'
+          $env:CARGO_HOME = Join-Path $rustRoot 'cargo'
+          $cargoBin = Join-Path $env:CARGO_HOME 'bin'
+          $env:PATH = "$cargoBin;$env:PATH"
+          $sysroot = & rustc --print sysroot
+          if ($LASTEXITCODE -ne 0 -or -not $sysroot) {
+            throw 'Could not resolve the prepared Rust toolchain.'
+          }
+          if (-not (Test-Path -LiteralPath (Join-Path $sysroot 'lib/rustlib/src/rust/library/Cargo.lock'))) {
+            throw "The prepared Rust toolchain is missing rust-src: $sysroot"
+          }
+          "RUSTUP_HOME=$env:RUSTUP_HOME" >> $env:GITHUB_ENV
+          "CARGO_HOME=$env:CARGO_HOME" >> $env:GITHUB_ENV
+          $cargoBin >> $env:GITHUB_PATH
+          Write-Host "Using prepared Rust toolchain: $sysroot"
+
       - name: Configure Windows build
         if: (inputs.mode == 'build' || inputs.mode == 'plugins')
         run: python control/tools/ovygram/baseline.py configure --root "$env:GITHUB_WORKSPACE"
