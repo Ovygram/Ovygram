@@ -4,6 +4,14 @@
   native UI components and theme palette, including plugin installation,
   warnings and confirmations. Do not introduce unstyled Qt/OS message boxes.
   Plugin descriptions must remain complete, wrapping and scrolling as needed.
+- Mandatory localization rule: every user-facing string added or changed in
+  Ovygram (C++ UI, Python runtime, and plugin UI/examples) must always include
+  both Russian and English translations (with English as the fallback for any
+  other language), regardless of the language of the user's request. Use
+  `Ovygram::Tr` / `Ovygram::TrCount` / `Ovygram::I18n::TrValue` in C++,
+  `ovygram_i18n.tr` in the Python runtime, and `desktop.i18n` / `self.tr(...)`
+  (with English fallback) in plugins. Verify changed UI in the offline preview
+  with both `--lang ru` and `--lang en`.
 - The authorized scope includes both `/workspace/ovygram-info/plugin-distribution.md`
   and the complete SDK plan in `/workspace/ovygram-info/README.md`.
 - Windows builds run only through GitHub Actions and only after the owner
