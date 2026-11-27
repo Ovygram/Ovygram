@@ -122,7 +122,7 @@ class ComponentTests(unittest.TestCase):
                 self.command("start", resource=resource, arguments=[], config="")
         original = self.manager.original(self.manager.records[self.owner]["current"])
         original.write_bytes(original.read_bytes() + b"x")
-        with self.assertRaisesRegex(ValueError, "сумма"):
+        with self.assertRaisesRegex(ValueError, "checksum"):
             self.command("start", resource="bin/tool", arguments=[], config="")
         with self.assertRaises(ValueError):
             self.manager.helpers.command("another", "stop", {})
