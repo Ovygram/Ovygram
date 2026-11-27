@@ -3,6 +3,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -10,10 +11,19 @@ import time
 import zipfile
 
 
+def read_version_constant(name, repo_root=None):
+    root = Path(repo_root) if repo_root else Path(__file__).resolve().parents[2]
+    header = root / 'Telegram/SourceFiles/core/version.h'
+    content = header.read_text(encoding='utf-8')
+    match = re.search(rf'\b{re.escape(name)}\s*=\s*"([^"]+)"', content)
+    if not match:
+        raise RuntimeError(f'{name} was not found in {header}.')
+    return match.group(1)
+
+
 UPSTREAM = '4f0d56441f3ff57e8597b5c89b369a11f84007d3'
 CLIENT_VERSION = '7.4.6'
-# Keep in sync with OvygramVersionStr in Telegram/SourceFiles/core/version.h.
-OVYGRAM_VERSION = '0.1.0'
+OVYGRAM_VERSION = read_version_constant('OvygramVersionStr')
 GIB = 1024 ** 3
 # The engines set update=none for their JavaScript conformance suites.
 OPTIONAL_SUBMODULES = {
@@ -126,7 +136,15 @@ def package(source, target, plugins=False, configuration='Debug'):
         raise RuntimeError('Python host DLL is missing from the package directory.')
     target.mkdir(parents=True, exist_ok=True)
     name = 'ovygram' if plugins else 'upstream-baseline'
-    version = f'{OVYGRAM_VERSION}-{CLIENT_VERSION}' if plugins else CLIENT_VERSION
+    if plugins:
+        ovygram_version = (
+            read_version_constant('OvygramVersionStr', source)
+            if (source / 'Telegram/SourceFiles/core/version.h').is_file()
+            else OVYGRAM_VERSION
+        )
+        version = f'{ovygram_version}-{CLIENT_VERSION}'
+    else:
+        version = CLIENT_VERSION
     archive = target / f'{name}-{version}-win64-{configuration.lower()}.zip'
     with zipfile.ZipFile(archive, 'w', zipfile.ZIP_DEFLATED) as output:
         output.write(executable, binary_name)

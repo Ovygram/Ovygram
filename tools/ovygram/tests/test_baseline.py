@@ -160,12 +160,29 @@ class BaselineTests(unittest.TestCase):
         (release / 'modules/x64/TelegramWidgetHelper.exe').write_bytes(b'release helper')
         (runtime / 'ovygram_host.dll').write_bytes(b'release host')
         archive = baseline.package(self.root, self.root / 'artifacts', True, 'Release')
-        self.assertEqual(archive.name, 'ovygram-0.1.0-7.4.6-win64-release.zip')
+        self.assertEqual(
+            archive.name,
+            f'ovygram-{baseline.OVYGRAM_VERSION}-{baseline.CLIENT_VERSION}-win64-release.zip')
         with zipfile.ZipFile(archive) as source:
             self.assertEqual(source.read('Ovygram.exe'), b'release executable')
             self.assertEqual(source.read('OvygramUpdater.exe'), b'release updater')
             self.assertEqual(source.read('modules/x64/TelegramWidgetHelper.exe'), b'release helper')
             self.assertEqual(source.read('python/ovygram_host.dll'), b'release host')
+
+    def test_plugin_package_reads_version_from_source_header(self):
+        header = self.root / 'Telegram/SourceFiles/core/version.h'
+        header.parent.mkdir(parents=True)
+        header.write_text('constexpr auto OvygramVersionStr = "0.2.3";\n', encoding='utf-8')
+        release = self.root / 'out/Release'
+        runtime = release / 'python'
+        runtime.mkdir(parents=True)
+        (release / 'Ovygram.exe').write_bytes(b'release executable')
+        (release / 'OvygramUpdater.exe').write_bytes(b'release updater')
+        (release / 'modules/x64').mkdir(parents=True)
+        (release / 'modules/x64/TelegramWidgetHelper.exe').write_bytes(b'release helper')
+        (runtime / 'ovygram_host.dll').write_bytes(b'release host')
+        archive = baseline.package(self.root, self.root / 'artifacts', True, 'Release')
+        self.assertEqual(archive.name, f'ovygram-0.2.3-{baseline.CLIENT_VERSION}-win64-release.zip')
 
     def test_cache_identity_changes_with_compiler_and_recipe(self):
         recipe = self.root / 'Telegram/build/prepare/prepare.py'
