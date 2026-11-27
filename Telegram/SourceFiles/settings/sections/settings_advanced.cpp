@@ -72,6 +72,12 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "styles/style_menu_icons.h"
 #include "styles/style_settings.h"
 
+#ifdef OVYGRAM_ENABLED
+#include "ovygram/auto_update.h"
+#include "ovygram/auto_update_view.h"
+#include "ovygram/protected_ui.h"
+#endif // OVYGRAM_ENABLED
+
 #ifdef Q_OS_MACOS
 #include "base/platform/mac/base_confirm_quit.h"
 #endif // Q_OS_MACOS
@@ -1116,10 +1122,56 @@ void SubscribeToUpdateChecker(
 	}, options->lifetime());
 }
 
+#ifdef OVYGRAM_ENABLED
+void ShowOvygramUpdateChannelBox(Window::SessionController *controller) {
+	auto &updater = Ovygram::AutoUpdate::Instance();
+	const auto installed = updater.installedVersion();
+	auto versionLabel = currentVersionText();
+	if (installed.build > 0) {
+		versionLabel += u" (build #%1)"_q.arg(installed.build);
+	}
+	auto data = Ovygram::UpdateChannelBoxData{
+		.currentChannel = updater.channel(),
+		.currentVersionLabel = std::move(versionLabel),
+		.readyRelease = updater.readyRelease(),
+	};
+	auto box = Box([data = std::move(data)](not_null<Ui::GenericBox*> box) mutable {
+		Ovygram::ProtectSurface(box);
+		Ovygram::BuildUpdateChannelBox(
+			box,
+			std::move(data),
+			[](Ovygram::UpdateChannel chosen) {
+				Ovygram::AutoUpdate::Instance().setChannel(chosen);
+			});
+	});
+	if (controller) {
+		controller->show(std::move(box));
+	} else if (const auto window = Core::IsAppLaunched()
+			? Core::App().activePrimaryWindow()
+			: nullptr) {
+		window->show(std::move(box));
+	}
+}
+
+rpl::producer<QString> OvygramUpdateButtonLabel() {
+	return tr::lng_update_telegram() | rpl::map([](QString text) {
+		return text.replace(u"Telegram"_q, u"Ovygram"_q);
+	});
+}
+
+rpl::producer<QString> OvygramChannelLabel() {
+	auto &updater = Ovygram::AutoUpdate::Instance();
+	return rpl::single(updater.channel())
+		| rpl::then(updater.channelChanged())
+		| rpl::map(&Ovygram::UpdateChannelTitle);
+}
+#endif // OVYGRAM_ENABLED
+
 void BuildUpdateSection(SectionBuilder &builder, bool atTop) {
 	if (!HasUpdate()) {
 		return;
 	}
+	const auto controller = builder.controller();
 	const auto container = builder.container();
 
 	if (!atTop) {
@@ -1184,6 +1236,18 @@ void BuildUpdateSection(SectionBuilder &builder, bool atTop) {
 	auto install = (Ui::SettingsButton*)nullptr;
 	auto check = (Ui::SettingsButton*)nullptr;
 	builder.scope([&] {
+#ifdef OVYGRAM_ENABLED
+		builder.addButton({
+			.id = u"advanced/update_channel"_q,
+			.title = rpl::single(u"Канал обновлений"_q),
+			.st = &st::settingsButtonNoIcon,
+			.label = OvygramChannelLabel(),
+			.onClick = [=] {
+				ShowOvygramUpdateChannelBox(controller);
+			},
+			.keywords = { u"channel"_q, u"stable"_q, u"beta"_q, u"canary"_q, u"update"_q, u"version"_q },
+		});
+#else // OVYGRAM_ENABLED
 		install = (cAlphaVersion()
 			|| Core::BuildIsCanary
 			|| KSandbox::isInside())
@@ -1195,6 +1259,7 @@ void BuildUpdateSection(SectionBuilder &builder, bool atTop) {
 				.toggled = rpl::single(cInstallBetaVersion()),
 				.keywords = { u"beta"_q, u"update"_q, u"version"_q },
 			});
+#endif // OVYGRAM_ENABLED
 
 		check = builder.addButton({
 			.id = u"advanced/check_update"_q,
@@ -1214,7 +1279,11 @@ void BuildUpdateSection(SectionBuilder &builder, bool atTop) {
 	if (check && container) {
 		const auto update = Ui::CreateChild<Ui::SettingsButton>(
 			check,
+#ifdef OVYGRAM_ENABLED
+			OvygramUpdateButtonLabel(),
+#else // OVYGRAM_ENABLED
 			tr::lng_update_telegram(),
+#endif // OVYGRAM_ENABLED
 			st::settingsUpdate);
 		update->hide();
 		check->widthValue() | rpl::on_next([=](int width) {
@@ -1465,6 +1534,17 @@ void SetupUpdate(not_null<Ui::VerticalLayout*> container) {
 			container,
 			object_ptr<Ui::VerticalLayout>(container)));
 	const auto inner = options->entity();
+#ifdef OVYGRAM_ENABLED
+	const auto install = (Button*)nullptr;
+	const auto channelButton = Settings::AddButtonWithLabel(
+		inner,
+		rpl::single(u"Канал обновлений"_q),
+		OvygramChannelLabel(),
+		st::settingsButtonNoIcon);
+	channelButton->addClickHandler([] {
+		ShowOvygramUpdateChannelBox(nullptr);
+	});
+#else // OVYGRAM_ENABLED
 	const auto install = (cAlphaVersion()
 		|| Core::BuildIsCanary
 		|| KSandbox::isInside())
@@ -1473,6 +1553,7 @@ void SetupUpdate(not_null<Ui::VerticalLayout*> container) {
 			inner,
 			tr::lng_settings_install_beta(),
 			st::settingsButtonNoIcon));
+#endif // OVYGRAM_ENABLED
 
 	const auto check = inner->add(object_ptr<Button>(
 		inner,
@@ -1480,7 +1561,11 @@ void SetupUpdate(not_null<Ui::VerticalLayout*> container) {
 		st::settingsButtonNoIcon));
 	const auto update = Ui::CreateChild<Button>(
 		check,
+#ifdef OVYGRAM_ENABLED
+		OvygramUpdateButtonLabel(),
+#else // OVYGRAM_ENABLED
 		tr::lng_update_telegram(),
+#endif // OVYGRAM_ENABLED
 		st::settingsUpdate);
 	update->hide();
 	check->widthValue() | rpl::on_next([=](int width) {

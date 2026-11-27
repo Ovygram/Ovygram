@@ -57,6 +57,8 @@ add_executable(ovygram-ui-preview
     plugin_list.cpp
     ${src_loc}/ui/vertical_list.cpp
     ${src_loc}/ui/widgets/continuous_sliders.cpp
+    ${src_loc}/ovygram/auto_update_verify.cpp
+    ${src_loc}/ovygram/auto_update_view.cpp
     ${src_loc}/ovygram/plugin_management_view.cpp
     ${src_loc}/ovygram/plugin_install_view.cpp
     ${src_loc}/ovygram/plugin_list_view.cpp
@@ -66,7 +68,7 @@ add_executable(ovygram-ui-preview
 )
 target_compile_features(ovygram-ui-preview PRIVATE cxx_std_20)
 target_compile_definitions(ovygram-ui-preview PRIVATE OVYGRAM_PREVIEW_PYTHON="${CMAKE_CURRENT_SOURCE_DIR}/plugin.py")
-target_link_libraries(ovygram-ui-preview PRIVATE desktop-app::lib_ui Qt6::Test)
+target_link_libraries(ovygram-ui-preview PRIVATE desktop-app::lib_ui desktop-app::external_openssl Qt6::Test)
 target_include_directories(ovygram-ui-preview PRIVATE ${src_loc})
 target_precompile_headers(ovygram-ui-preview PRIVATE ${src_loc}/ui/ui_pch.h)
 

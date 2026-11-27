@@ -21,6 +21,12 @@ target_sources(Telegram PRIVATE
     SourceFiles/core/plugin_runtime_bridge.cpp
     SourceFiles/core/plugin_runtime_api.h
     SourceFiles/core/plugin_runtime.h
+    SourceFiles/ovygram/auto_update.cpp
+    SourceFiles/ovygram/auto_update.h
+    SourceFiles/ovygram/auto_update_verify.cpp
+    SourceFiles/ovygram/auto_update_verify.h
+    SourceFiles/ovygram/auto_update_view.cpp
+    SourceFiles/ovygram/auto_update_view.h
     SourceFiles/ovygram/chat_bars.h
     SourceFiles/ovygram/chat_decorations.cpp
     SourceFiles/ovygram/chat_list_filter.cpp
@@ -74,7 +80,11 @@ target_sources(Telegram PRIVATE
     SourceFiles/settings/sections/settings_plugins.cpp
     SourceFiles/settings/sections/settings_plugins.h
 )
+set(OVYGRAM_BUILD_COMMIT "" CACHE STRING "Optional git commit SHA embedded for auto-update checks")
 target_compile_definitions(Telegram PRIVATE OVYGRAM_ENABLED)
+if (OVYGRAM_BUILD_COMMIT)
+    target_compile_definitions(Telegram PRIVATE OVYGRAM_BUILD_COMMIT=${OVYGRAM_BUILD_COMMIT})
+endif()
 target_link_libraries(Telegram PRIVATE ${CMAKE_DL_LIBS})
 
 # Keep Telegram's system-only load policy for ordinary imports. The application
@@ -130,6 +140,23 @@ add_custom_target(ovygram_sdk
     VERBATIM
 )
 add_dependencies(Telegram ovygram_host ovygram_sdk)
+if (WIN32)
+    add_executable(OvygramUpdater WIN32
+        SourceFiles/_other/ovygram_updater_win.cpp
+    )
+    target_compile_features(OvygramUpdater PRIVATE cxx_std_20)
+    target_compile_definitions(OvygramUpdater PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX)
+    set_target_properties(OvygramUpdater PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY ${output_folder}
+        MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>"
+    )
+    target_link_libraries(OvygramUpdater PRIVATE
+        desktop-app::external_zlib
+        bcrypt
+        shell32
+    )
+    add_dependencies(Telegram OvygramUpdater)
+endif()
 add_custom_command(TARGET Telegram POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         "${plugin_python}/python" "$<TARGET_FILE_DIR:Telegram>/python"

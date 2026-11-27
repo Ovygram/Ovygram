@@ -28,6 +28,10 @@ November 2026; the higher it is, the more likely a merge conflict.
 | `Telegram/SourceFiles/core/application.{h,cpp}` | 2 and 3 | 59 (`.cpp`) | Plugin runtime lifetime |
 | `Telegram/SourceFiles/core/launcher.{h,cpp}` | 2 and 2 | not measured | `--disable-plugins` |
 | `Telegram/SourceFiles/settings/sections/settings_main.cpp` | 2 | 41 | Settings → Plugins entry |
+| `Telegram/SourceFiles/settings/sections/settings_advanced.cpp` | 3-channel selector button (`advanced/update_channel`), `Ovygram::BuildUpdateChannelBox` + `ProtectSurface`, Ovygram label on ready button | not measured | Settings → Advanced → Update channel picker |
+| `Telegram/SourceFiles/core/update_checker.cpp` | `OVYGRAM_AUTOUPDATE` facade delegating `Core::UpdateChecker` and `Core::checkReadyUpdate()` to `Ovygram::AutoUpdate` | not measured | Client auto-updates (`stable` / `beta` / `canary`, signed Ed25519 manifest) |
+| `Telegram/SourceFiles/platform/win/launcher_win.cpp` | `Ovygram::AutoUpdate::LaunchUpdater()` in `Launcher::launchUpdater(PerformUpdate)` | not measured | Launches `OvygramUpdater.exe` after app and plugin host exit |
+| `Telegram/SourceFiles/dialogs/dialogs_widget.cpp` | Ovygram branding on `_updateTelegram` bottom banner | not measured | Native bottom "Update Ovygram" banner |
 | `Telegram/SourceFiles/window/window_session_controller.cpp` | 2 | not measured | `chat_changed` event |
 
 ## Chat bars

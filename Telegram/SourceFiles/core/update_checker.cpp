@@ -36,6 +36,11 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "settings/settings_intro.h"
 #include "ui/layers/box_content.h"
 
+#if defined OVYGRAM_ENABLED && defined TDESKTOP_DISABLE_AUTOUPDATE && !defined OS_WIN_STORE && !defined OS_MAC_STORE
+#define OVYGRAM_AUTOUPDATE
+#include "ovygram/auto_update.h"
+#endif // OVYGRAM_ENABLED && TDESKTOP_DISABLE_AUTOUPDATE
+
 #include <QtCore/QJsonDocument>
 #include <QtCore/QJsonObject>
 #include <QtCore/QFileSystemWatcher>
@@ -85,11 +90,11 @@ constexpr auto kFlatpakPortalObjectPath = "/org/freedesktop/portal/Flatpak";
 constexpr auto kFlatpakUpdated = "/app/.updated"_cs;
 #endif // !Q_OS_WIN && !Q_OS_MACOS
 
-#ifdef TDESKTOP_DISABLE_AUTOUPDATE
+#if defined TDESKTOP_DISABLE_AUTOUPDATE && !defined OVYGRAM_AUTOUPDATE
 bool UpdaterIsDisabled = true;
-#else // TDESKTOP_DISABLE_AUTOUPDATE
+#else // TDESKTOP_DISABLE_AUTOUPDATE && !OVYGRAM_AUTOUPDATE
 bool UpdaterIsDisabled = false;
-#endif // TDESKTOP_DISABLE_AUTOUPDATE
+#endif // TDESKTOP_DISABLE_AUTOUPDATE && !OVYGRAM_AUTOUPDATE
 
 std::weak_ptr<Updater> UpdaterInstance;
 
@@ -1987,6 +1992,10 @@ Updater::~Updater() {
 }
 
 UpdateChecker::UpdateChecker()
+#ifdef OVYGRAM_AUTOUPDATE
+: _updater(nullptr) {
+}
+#else // OVYGRAM_AUTOUPDATE
 : _updater(GetUpdaterInstance()) {
 	if (IsAppLaunched() && Core::App().domain().started()) {
 		if (const auto session = Core::App().activeAccount().maybeSession()) {
@@ -1994,59 +2003,112 @@ UpdateChecker::UpdateChecker()
 		}
 	}
 }
+#endif // OVYGRAM_AUTOUPDATE
 
 rpl::producer<> UpdateChecker::checking() const {
+#ifdef OVYGRAM_AUTOUPDATE
+	return Ovygram::AutoUpdate::Instance().checking();
+#else // OVYGRAM_AUTOUPDATE
 	return _updater->checking();
+#endif // OVYGRAM_AUTOUPDATE
 }
 
 rpl::producer<> UpdateChecker::isLatest() const {
+#ifdef OVYGRAM_AUTOUPDATE
+	return Ovygram::AutoUpdate::Instance().isLatest();
+#else // OVYGRAM_AUTOUPDATE
 	return _updater->isLatest();
+#endif // OVYGRAM_AUTOUPDATE
 }
 
 auto UpdateChecker::progress() const
 -> rpl::producer<Progress> {
+#ifdef OVYGRAM_AUTOUPDATE
+	return Ovygram::AutoUpdate::Instance().progress();
+#else // OVYGRAM_AUTOUPDATE
 	return _updater->progress();
+#endif // OVYGRAM_AUTOUPDATE
 }
 
 rpl::producer<> UpdateChecker::failed() const {
+#ifdef OVYGRAM_AUTOUPDATE
+	return Ovygram::AutoUpdate::Instance().failed();
+#else // OVYGRAM_AUTOUPDATE
 	return _updater->failed();
+#endif // OVYGRAM_AUTOUPDATE
 }
 
 rpl::producer<> UpdateChecker::ready() const {
+#ifdef OVYGRAM_AUTOUPDATE
+	return Ovygram::AutoUpdate::Instance().ready();
+#else // OVYGRAM_AUTOUPDATE
 	return _updater->ready();
+#endif // OVYGRAM_AUTOUPDATE
 }
 
 void UpdateChecker::start(bool forceWait) {
+#ifdef OVYGRAM_AUTOUPDATE
+	Ovygram::AutoUpdate::Instance().start(forceWait);
+#else // OVYGRAM_AUTOUPDATE
 	_updater->start(forceWait);
+#endif // OVYGRAM_AUTOUPDATE
 }
 
 void UpdateChecker::test() {
+#ifdef OVYGRAM_AUTOUPDATE
+	Ovygram::AutoUpdate::Instance().start(false);
+#else // OVYGRAM_AUTOUPDATE
 	_updater->test();
+#endif // OVYGRAM_AUTOUPDATE
 }
 
 void UpdateChecker::setMtproto(base::weak_ptr<Main::Session> session) {
+#ifdef OVYGRAM_AUTOUPDATE
+	Q_UNUSED(session);
+#else // OVYGRAM_AUTOUPDATE
 	_updater->setMtproto(session);
+#endif // OVYGRAM_AUTOUPDATE
 }
 
 void UpdateChecker::stop() {
+#ifdef OVYGRAM_AUTOUPDATE
+	Ovygram::AutoUpdate::Instance().stop();
+#else // OVYGRAM_AUTOUPDATE
 	_updater->stop();
+#endif // OVYGRAM_AUTOUPDATE
 }
 
 auto UpdateChecker::state() const
 -> State {
+#ifdef OVYGRAM_AUTOUPDATE
+	return Ovygram::AutoUpdate::Instance().state();
+#else // OVYGRAM_AUTOUPDATE
 	return _updater->state();
+#endif // OVYGRAM_AUTOUPDATE
 }
 
 int UpdateChecker::already() const {
+#ifdef OVYGRAM_AUTOUPDATE
+	return Ovygram::AutoUpdate::Instance().already();
+#else // OVYGRAM_AUTOUPDATE
 	return _updater->already();
+#endif // OVYGRAM_AUTOUPDATE
 }
 
 int UpdateChecker::size() const {
+#ifdef OVYGRAM_AUTOUPDATE
+	return Ovygram::AutoUpdate::Instance().size();
+#else // OVYGRAM_AUTOUPDATE
 	return _updater->size();
+#endif // OVYGRAM_AUTOUPDATE
 }
 
 bool UpdateChecker::percent() const {
+#ifdef OVYGRAM_AUTOUPDATE
+	return Ovygram::AutoUpdate::Instance().percent();
+#else // OVYGRAM_AUTOUPDATE
 	return _updater->percent();
+#endif // OVYGRAM_AUTOUPDATE
 }
 
 //QString winapiErrorWrap() {
@@ -2229,7 +2291,9 @@ namespace {
 } // namespace
 
 bool checkReadyUpdate() {
-#if defined Q_OS_MACOS || defined Q_OS_WIN
+#ifdef OVYGRAM_AUTOUPDATE
+	return Ovygram::AutoUpdate::CheckReadyUpdate();
+#elif defined Q_OS_MACOS || defined Q_OS_WIN
 #ifndef TDESKTOP_DISABLE_AUTOUPDATE
 	return CheckKeptUpdatePackage();
 #else // !TDESKTOP_DISABLE_AUTOUPDATE
@@ -2351,7 +2415,11 @@ void UpdateApplication() {
 			} else if (KSandbox::isSnap()) {
 				return "https://snapcraft.io/telegram-desktop";
 			}
+#ifdef OVYGRAM_ENABLED
+			return "https://ovygram.opik.net";
+#else // OVYGRAM_ENABLED
 			return "https://desktop.telegram.org";
+#endif // OVYGRAM_ENABLED
 #endif // OS_WIN_STORE || OS_MAC_STORE
 		}();
 		UrlClickHandler::Open(url);

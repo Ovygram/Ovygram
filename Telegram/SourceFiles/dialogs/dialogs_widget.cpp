@@ -2652,9 +2652,16 @@ void Widget::checkUpdateStatus() {
 		if (_updateTelegram) {
 			return;
 		}
+#ifdef OVYGRAM_ENABLED
+		const auto bannerText = tr::lng_update_telegram(tr::now).replace(
+			u"Telegram"_q,
+			u"Ovygram"_q);
+#else // OVYGRAM_ENABLED
+		const auto bannerText = tr::lng_update_telegram(tr::now);
+#endif // OVYGRAM_ENABLED
 		_updateTelegram.create(
 			this,
-			tr::lng_update_telegram(tr::now),
+			bannerText,
 			st::dialogsUpdateButton,
 			st::dialogsInstallUpdate,
 			st::dialogsInstallUpdateOver,

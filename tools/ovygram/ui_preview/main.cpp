@@ -2,6 +2,7 @@
 #include "base/parse_helper.h"
 #include "base/unique_qptr.h"
 #include "base/concurrent_timer.h"
+#include "ovygram/auto_update_view.h"
 #include "ovygram/plugin_install_view.h"
 #include "ovygram/plugin_list_view.h"
 #include "ovygram/plugin_management_view.h"
@@ -347,6 +348,9 @@ public:
 		} else if (_scenario == u"removal"_q) {
 			showRemoval();
 			finishSoon();
+		} else if (_scenario == u"update-channel"_q || _scenario == u"update-channel-ready"_q) {
+			showUpdateChannel(_scenario == u"update-channel-ready"_q);
+			finishSoon();
 		} else if (_scenario.startsWith(u"install-"_q)) {
 			showInstaller(InstallInfo(_scenario));
 			finishSoon();
@@ -510,6 +514,38 @@ private:
 		}), Ui::LayerOption::KeepOther, anim::type::instant);
 	}
 
+	void showUpdateChannel(bool withReadyRelease) {
+		_updateChannelChoice = std::nullopt;
+		auto data = Ovygram::UpdateChannelBoxData{
+			.currentChannel = withReadyRelease
+				? Ovygram::UpdateChannel::Beta
+				: Ovygram::UpdateChannel::Stable,
+			.currentVersionLabel = u"0.1.0-7.4.6 (build #4)"_q,
+		};
+		if (withReadyRelease) {
+			data.readyRelease = Ovygram::UpdateRelease{
+				.build = 5,
+				.ovygramVersion = u"0.1.1-beta.1"_q,
+				.telegramVersion = u"7.4.6"_q,
+				.telegramVersionNum = 7004006,
+				.fileName = u"ovygram-0.1.1-beta.1-7.4.6-win64-release.zip"_q,
+				.sha256 = QString(64, 'a'),
+				.size = 54'800'000,
+				.url = u"https://github.com/Ovygram/Ovygram/releases/download/update-win64/pkg.zip"_q,
+				.commit = u"a1b2c3d4e5f6"_q,
+				.notes = u"• Добавлена система автообновлений с тремя каналами (stable / beta / canary) и проверкой подписи Ed25519.\n"
+					u"• Нативная плашка обновления в списке чатов и выбор канала в Продвинутых настройках.\n"
+					u"• Безопасная замена папки python/ при обновлении без потери данных аккаунта и плагинов."_q,
+				.sourceChannel = Ovygram::UpdateChannel::Beta,
+			};
+		}
+		_layers.showBox(Box([this, data = std::move(data)](not_null<Ui::GenericBox*> box) mutable {
+			Ovygram::BuildUpdateChannelBox(box, std::move(data), [this](Ovygram::UpdateChannel chosen) {
+				_updateChannelChoice = chosen;
+			});
+		}), Ui::LayerOption::KeepOther, anim::type::instant);
+	}
+
 	void startPlugin(const QString &plugin, const QString &menu, const QString &setting,
 		const QString &python, const QString &dependencies);
 	void handlePlugin(const QJsonObject &command);
@@ -541,6 +577,7 @@ private:
 	QJsonArray _fields;
 	QString _installChoice;
 	QString _removalChoice;
+	std::optional<Ovygram::UpdateChannel> _updateChannelChoice;
 	QProcess _process;
 	std::map<QString, std::unique_ptr<Surface>> _surfaces;
 	QPointer<QWidget> _captureWindow;
@@ -861,6 +898,18 @@ void Preview::verify() {
 		Click(second, u"Удалить"_q);
 		_layers.finishAnimating();
 		Check(_removalChoice == u"delete"_q, "Removal default action did not delete plugin data.");
+	} else if (_scenario == u"update-channel"_q || _scenario == u"update-channel-ready"_q) {
+		const auto top = const_cast<Ui::LayerWidget*>(_layers.topShownLayer());
+		Check(top && ByName(top, u"Стабильный"_q) && ByName(top, u"Бета"_q)
+			&& ByName(top, u"Ночной (Canary)"_q) && ByName(top, u"Сохранить"_q)
+			&& ByName(top, u"Отмена"_q),
+			"Update channel controls are missing.");
+		Click(top, u"Ночной (Canary)"_q);
+		Click(top, u"Сохранить"_q);
+		_layers.finishAnimating();
+		Check(_updateChannelChoice == Ovygram::UpdateChannel::Canary,
+			"Update channel box did not save selected Canary channel.");
+		showUpdateChannel(_scenario == u"update-channel-ready"_q);
 	} else if (_scenario == u"list-after"_q) {
 		const auto first = u"VLESS · Подписки (Windows)"_q;
 		const auto wiki = u"Что это? (Википедия)"_q;
@@ -987,7 +1036,7 @@ int main(int argc, char **argv) {
 	parser.setApplicationDescription(u"Open Ovygram UI with a temporary profile and sample data."_q);
 	parser.addHelpOption();
 	parser.addOptions({
-		{ u"scenario"_q, u"list-before, list-after, details, stopped, long, install-new, install-update, install-multiple, install-long, proxies, removal."_q,
+		{ u"scenario"_q, u"list-before, list-after, details, stopped, long, install-new, install-update, install-multiple, install-long, proxies, removal, update-channel, update-channel-ready."_q,
 			u"name"_q, u"details"_q },
 		{ u"palette"_q, u"Apply a plain Telegram color palette."_q, u"file"_q },
 		{ u"scale"_q, u"Ovygram UI scale in percent."_q, u"percent"_q, u"100"_q },
@@ -1007,7 +1056,7 @@ int main(int argc, char **argv) {
 		const auto scenario = parser.value(u"scenario"_q);
 		const auto plugin = parser.value(u"plugin-file"_q);
 		Check(QStringList{ u"list-before"_q, u"list-after"_q, u"details"_q, u"stopped"_q, u"long"_q, u"install-new"_q, u"install-update"_q,
-			u"install-multiple"_q, u"install-long"_q, u"proxies"_q, u"removal"_q }.contains(scenario), "Unknown preview scenario.");
+			u"install-multiple"_q, u"install-long"_q, u"proxies"_q, u"removal"_q, u"update-channel"_q, u"update-channel-ready"_q }.contains(scenario), "Unknown preview scenario.");
 		Check(!(parser.isSet(u"menu"_q) && parser.isSet(u"setting"_q)), "Choose --menu or --setting.");
 		Check(!plugin.isEmpty() || !(parser.isSet(u"menu"_q) || parser.isSet(u"setting"_q)),
 			"Use --plugin with --menu or --setting.");

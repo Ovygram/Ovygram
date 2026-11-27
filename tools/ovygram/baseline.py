@@ -118,6 +118,9 @@ def package(source, target, plugins=False, configuration='Debug'):
     helper = binary_dir / 'modules/x64/TelegramWidgetHelper.exe'
     if not helper.is_file():
         raise RuntimeError('TelegramWidgetHelper.exe is missing from the package directory.')
+    updater = binary_dir / 'OvygramUpdater.exe'
+    if plugins and not updater.is_file():
+        raise RuntimeError('OvygramUpdater.exe is missing from the package directory.')
     runtime = binary_dir / 'python'
     if plugins and not (runtime / 'ovygram_host.dll').is_file():
         raise RuntimeError('Python host DLL is missing from the package directory.')
@@ -127,6 +130,8 @@ def package(source, target, plugins=False, configuration='Debug'):
     archive = target / f'{name}-{version}-win64-{configuration.lower()}.zip'
     with zipfile.ZipFile(archive, 'w', zipfile.ZIP_DEFLATED) as output:
         output.write(executable, binary_name)
+        if plugins:
+            output.write(updater, 'OvygramUpdater.exe')
         output.write(helper, helper.relative_to(binary_dir).as_posix())
         output.writestr('TelegramForcePortable', '')
         if plugins:
@@ -346,7 +351,9 @@ def main():
                         f'Telegram/CMakeFiles/Telegram.dir/{configuration}/SourceFiles/' + unit + '.cpp.obj'
                         for unit in (
                             'core/plugin_runtime_bridge', 'core/application', 'core/launcher',
-                            'core/file_utilities', 'passport/passport_panel_edit_scans',
+                            'core/file_utilities', 'core/update_checker', 'passport/passport_panel_edit_scans',
+                            'platform/win/launcher_win',
+                            'ovygram/auto_update', 'ovygram/auto_update_verify', 'ovygram/auto_update_view',
                             'ovygram/chat_decorations', 'ovygram/chat_list_filter',
                             'ovygram/message_decorations', 'ovygram/plugin_elements',
                             'ovygram/plugin_paint', 'ovygram/plugin_ui', 'ovygram/plugin_ui_tree',
@@ -355,6 +362,7 @@ def main():
                             'ovygram/plugin_management_view', 'ovygram/plugin_proxy_view',
                             'ovygram/plugin_list_visibility', 'ovygram/plugin_media',
                             'ovygram/plugin_panel_buttons', 'ovygram/plugin_search',
+                            'settings/sections/settings_advanced',
                             'settings/sections/settings_main', 'settings/sections/settings_plugins',
                             'api/api_plugins', 'api/api_updates', 'mtproto/mtp_instance',
                             'mtproto/session', 'dialogs/dialogs_widget', 'dialogs/dialogs_inner_widget',
@@ -372,7 +380,7 @@ def main():
                             ('td_ui', 'ui/chat/attach/attach_bot_webview'),
                             ('td_iv', 'iv/iv_controller'),
                         )
-                    ), '--', '-k', '0',
+                    ), 'OvygramUpdater', '--', '-k', '0',
                 ],
             }
             if args.action.startswith('prepare-'):
@@ -386,6 +394,9 @@ def main():
                 commands['build'].extend(['--', '-k', '0'])
             if args.action == 'configure' and plugin_mode:
                 commands['configure'].extend(['-D', f'OVYGRAM_PYTHON_ROOT={root / "plugin-python"}'])
+                commit = state.get('source_commit') or os.environ.get('GITHUB_SHA', '')
+                if commit:
+                    commands['configure'].extend(['-D', f'OVYGRAM_BUILD_COMMIT={commit}'])
                 # Limit optimizer work in the C++ client on the two-core
                 # runner. Prepared Qt and media libraries keep their flags.
                 commands['configure'].extend([

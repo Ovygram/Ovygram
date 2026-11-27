@@ -12,6 +12,10 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "base/platform/base_platform_file_utilities.h"
 #include "platform/win/update_install_win.h"
 
+#if defined OVYGRAM_ENABLED && defined TDESKTOP_DISABLE_AUTOUPDATE
+#include "ovygram/auto_update.h"
+#endif // OVYGRAM_ENABLED && TDESKTOP_DISABLE_AUTOUPDATE
+
 #include <QtCore/QDateTime>
 #include <QtCore/QDir>
 #include <QtCore/QFile>
@@ -193,6 +197,15 @@ bool Launcher::launchUpdater(UpdaterLaunch action) {
 	}
 	if (action == UpdaterLaunch::PerformUpdate) {
 		_updating = true;
+#if defined OVYGRAM_ENABLED && defined TDESKTOP_DISABLE_AUTOUPDATE
+		if (Ovygram::AutoUpdate::LaunchUpdater(
+				customWorkingDir(),
+				cWorkingDir(),
+				cDataFile())) {
+			return true;
+		}
+		return relaunchAfterUpdate(false);
+#else // OVYGRAM_ENABLED && TDESKTOP_DISABLE_AUTOUPDATE
 		switch (Core::prepareReadyUpdate()) {
 		case Core::ReadyUpdateInstall::Failed:
 			return relaunchAfterUpdate(false);
@@ -201,6 +214,7 @@ bool Launcher::launchUpdater(UpdaterLaunch action) {
 		case Core::ReadyUpdateInstall::Unpacked:
 			break;
 		}
+#endif // OVYGRAM_ENABLED && TDESKTOP_DISABLE_AUTOUPDATE
 	}
 
 	const auto binaryPath = (action == UpdaterLaunch::JustRelaunch)

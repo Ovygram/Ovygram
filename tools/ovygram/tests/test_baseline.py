@@ -155,6 +155,7 @@ class BaselineTests(unittest.TestCase):
         runtime = release / 'python'
         runtime.mkdir(parents=True)
         (release / 'Ovygram.exe').write_bytes(b'release executable')
+        (release / 'OvygramUpdater.exe').write_bytes(b'release updater')
         (release / 'modules/x64').mkdir(parents=True)
         (release / 'modules/x64/TelegramWidgetHelper.exe').write_bytes(b'release helper')
         (runtime / 'ovygram_host.dll').write_bytes(b'release host')
@@ -162,6 +163,7 @@ class BaselineTests(unittest.TestCase):
         self.assertEqual(archive.name, 'ovygram-0.1.0-7.4.6-win64-release.zip')
         with zipfile.ZipFile(archive) as source:
             self.assertEqual(source.read('Ovygram.exe'), b'release executable')
+            self.assertEqual(source.read('OvygramUpdater.exe'), b'release updater')
             self.assertEqual(source.read('modules/x64/TelegramWidgetHelper.exe'), b'release helper')
             self.assertEqual(source.read('python/ovygram_host.dll'), b'release host')
 
