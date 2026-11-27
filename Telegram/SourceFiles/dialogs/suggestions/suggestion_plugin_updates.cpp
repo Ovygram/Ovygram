@@ -1,6 +1,7 @@
 #include "dialogs/suggestions/suggestion.h"
 
 #include "dialogs/ui/dialogs_top_bar_suggestion_content.h"
+#include "ovygram/i18n_rpl.h"
 #include "ovygram/plugin_updates.h"
 #include "settings/sections/settings_plugins.h"
 #include "ui/text/text_utilities.h"
@@ -27,12 +28,19 @@ Spec MakePluginUpdatesSpec() {
 			});
 			const auto update = [=] {
 				content->setContent(
-					TextWithEntities::Simple(u"Обновления плагинов"_q),
-					TextWithEntities::Simple(u"Доступно обновлений: %1. Нажмите, чтобы открыть плагины."_q
+					TextWithEntities::Simple(Ovygram::Tr(
+						u"Plugin updates"_q,
+						u"Обновления плагинов"_q)),
+					TextWithEntities::Simple(Ovygram::Tr(
+						u"Updates available: %1. Click to open Plugins."_q,
+						u"Доступно обновлений: %1. Нажмите, чтобы открыть плагины."_q)
 						.arg(Ovygram::PluginUpdateCount())));
 			};
 			update();
 			Ovygram::PluginUpdateChanges() | rpl::on_next(update, *args.lifetime);
+			Ovygram::I18n::LanguageChanges() | rpl::on_next([=](const QString &) {
+				update();
+			}, *args.lifetime);
 			args.done(content, [=] { content->prepareCollapseSnapshot(); });
 		},
 	};

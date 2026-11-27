@@ -54,13 +54,20 @@ def normalize(requirement):
     """The canonical form of one requirement, e.g. "Requests >= 2" ->
     "requests>=2". Raises ValueError for anything but name, extras and
     version clauses."""
+    from ovygram_i18n import tr
     if not isinstance(requirement, str) or len(requirement) > MAX_REQUIREMENT:
-        raise ValueError("Зависимость задаётся строкой до 200 символов.")
+        raise ValueError(tr(
+            "A dependency must be a string up to 200 characters.",
+            "Зависимость задаётся строкой до 200 символов.",
+        ))
     match = REQUIREMENT.fullmatch(requirement.strip())
     if match is None:
-        raise ValueError(
+        raise ValueError(tr(
+            f"Unsupported dependency {requirement!r}: specify a package name and "
+            "version, for example \"requests>=2.31\".",
             f"Неподдерживаемая зависимость {requirement!r}: укажите имя пакета и "
-            "версию, например \"requests>=2.31\".")
+            "версию, например \"requests>=2.31\".",
+        ))
     result = normalize_name(match["name"])
     if match["extras"]:
         extras = sorted(normalize_name(item.strip())
@@ -72,15 +79,20 @@ def normalize(requirement):
 
 
 def normalize_all(requirements):
+    from ovygram_i18n import tr
     if not isinstance(requirements, list):
-        raise ValueError("__requirements__ должен быть списком строк.")
+        raise ValueError(tr("__requirements__ must be a list of strings.", "__requirements__ должен быть списком строк."))
     if len(requirements) > MAX_REQUIREMENTS:
-        raise ValueError(f"Не больше {MAX_REQUIREMENTS} зависимостей.")
+        raise ValueError(tr(
+            f"At most {MAX_REQUIREMENTS} dependencies are allowed.",
+            f"Не больше {MAX_REQUIREMENTS} зависимостей.",
+        ))
     return sorted({normalize(item) for item in requirements})
 
 
 def default_runner(command, environment, log_path):
     """Runs pip and returns (exit code, output)."""
+    from ovygram_i18n import tr
     flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
     try:
         result = subprocess.run(
@@ -90,7 +102,10 @@ def default_runner(command, environment, log_path):
     except subprocess.TimeoutExpired as error:
         output = (error.output or b"").decode("utf-8", "replace")
         log_path.write_text(output, encoding="utf-8")
-        raise DependencyError("Установка зависимостей не уложилась в 15 минут.") from error
+        raise DependencyError(tr(
+            "Dependency installation timed out after 15 minutes.",
+            "Установка зависимостей не уложилась в 15 минут.",
+        )) from error
     output = result.stdout.decode("utf-8", "replace")
     log_path.write_text(output, encoding="utf-8")
     return result.returncode, output
@@ -99,6 +114,7 @@ def default_runner(command, environment, log_path):
 def python_command(python_dir):
     """(executable, its PYTHON* environment, whether it is the bundled one):
     the interpreter of this build, or the system one of the same version."""
+    from ovygram_i18n import tr
     python_dir = Path(python_dir)
     executable = python_dir / ("python.exe" if os.name == "nt" else "python")
     version_tag = f"{sys.version_info.major}{sys.version_info.minor}"
@@ -129,7 +145,10 @@ def python_command(python_dir):
         path = Path(candidate)
         if path.is_file():
             return str(path), {}, False
-    raise DependencyError(f"Не найден системный Python {version}.")
+    raise DependencyError(tr(
+        f"System Python {version} not found.",
+        f"Не найден системный Python {version}.",
+    ))
 
 
 class Dependencies:
@@ -219,9 +238,13 @@ class Dependencies:
 
     def interpreter(self):
         """The command and environment that run Python with pip."""
+        from ovygram_i18n import tr
         pip = self.python_dir / "pip.whl"
         if not pip.is_file():
-            raise DependencyError("В этой сборке нет pip для установки зависимостей.")
+            raise DependencyError(tr(
+                "This build does not include pip for installing dependencies.",
+                "В этой сборке нет pip для установки зависимостей.",
+            ))
         environment = {key: value for key, value in os.environ.items()
                        if not key.startswith("PYTHON")}
         environment.update(PYTHONNOUSERSITE="1", PYTHONUTF8="1", PIP_NO_INPUT="1")
@@ -234,11 +257,14 @@ class Dependencies:
         """Resolves requirements (of every enabled plugin) in the background.
         done(error) is called later from poll() on the main thread; error is
         None or a message for the user."""
+        from ovygram_i18n import tr
         self.poll()
         with self.lock:
             if self.job is not None and not self.job[0].done():
-                raise DependencyError(
-                    f"Уже устанавливаются зависимости плагина {self.job[1]}. Подождите.")
+                raise DependencyError(tr(
+                    f"Dependencies for plugin {self.job[1]} are already being installed. Please wait.",
+                    f"Уже устанавливаются зависимости плагина {self.job[1]}. Подождите.",
+                ))
             command, environment = self.interpreter()
             future = Future()
             self.job = (future, plugin_id, list(requirements), done)
@@ -270,10 +296,11 @@ class Dependencies:
 
     @staticmethod
     def explain(output):
+        from ovygram_i18n import tr
         lines = [line.rstrip() for line in output.splitlines() if line.strip()]
         errors = [line for line in lines if line.startswith("ERROR:")] or lines[-ERROR_LINES:]
-        text = "\n".join(errors[-ERROR_LINES:]) or "pip завершился с ошибкой."
-        return "Не удалось установить зависимости:\n" + text
+        text = "\n".join(errors[-ERROR_LINES:]) or tr("pip exited with an error.", "pip завершился с ошибкой.")
+        return tr("Failed to install dependencies:\n", "Не удалось установить зависимости:\n") + text
 
     def poll(self):
         """Applies a finished installation; call on the main thread."""

@@ -11,6 +11,7 @@
 #include "main/main_session.h"
 #include "media/audio/media_audio.h"
 #include "media/player/media_player_instance.h"
+#include "ovygram/i18n.h"
 #include "ovygram/plugin_install.h"
 #include "ovygram/protected_ui.h"
 
@@ -126,14 +127,14 @@ void PluginMedia::pick(
 	const auto guard = QPointer<PluginMedia>(this);
 	PickerOpen = true;
 	FileDialog::GetOpenPathChecked(Core::App().getFileDialogParent(),
-		u"Передать копию файла плагину "_q + name + u" · "_q + installationId.left(8),
+		Tr(u"Share a copy of a file with plugin "_q, u"Передать копию файла плагину "_q) + name + u" · "_q + installationId.left(8),
 		FileDialog::AllFilesFilter(),
 		[=](FileDialog::OpenResult &&result) {
 			PickerOpen = false;
 			if (!guard || !pending()) return;
 			if (!weak || Core::App().passcodeLocked()
 				|| ProtectedSurfaceExists() || InstallationUiActive()) {
-				fail(u"Аккаунт закрыт или приложение заблокировано."_q);
+				fail(Tr(u"The account is closed or the application is locked."_q, u"Аккаунт закрыт или приложение заблокировано."_q));
 				return;
 			}
 			const auto currentOwned = std::count_if(
@@ -143,7 +144,7 @@ void PluginMedia::pick(
 					return entry.second->owner == installationId;
 				});
 			if (currentOwned >= 4 || guard->_grants.size() >= 32) {
-				fail(u"Слишком много активных передач файлов."_q);
+				fail(Tr(u"Too many active file transfers."_q, u"Слишком много активных передач файлов."_q));
 				return;
 			}
 			auto grant = std::make_unique<Grant>();
@@ -162,7 +163,7 @@ void PluginMedia::pick(
 				filename = info.fileName();
 			}
 			if (!grant->device || !grant->device->open(QIODevice::ReadOnly) || grant->device->isSequential()) {
-				fail(u"Не удалось открыть выбранный обычный файл."_q);
+				fail(Tr(u"Failed to open the selected regular file."_q, u"Не удалось открыть выбранный обычный файл."_q));
 				return;
 			}
 			grant->size = grant->device->size();
@@ -176,7 +177,7 @@ void PluginMedia::pick(
 			PickerOpen = false;
 			if (!guard || !pending()) return;
 			if (!weak || Core::App().passcodeLocked() || ProtectedSurfaceExists()) {
-				fail(u"Выбор файла сейчас недоступен."_q);
+				fail(Tr(u"File selection is currently unavailable."_q, u"Выбор файла сейчас недоступен."_q));
 				return;
 			}
 			reply(QJsonValue(QJsonValue::Null));

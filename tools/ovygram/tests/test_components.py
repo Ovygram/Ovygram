@@ -190,5 +190,5 @@ class ArchiveLimitsTests(unittest.TestCase):
             with z.open("too-large", "w") as out:
                 for _ in range(65):
                     out.write(bytes(1 << 20))
-        with self.assertRaisesRegex(InvalidPlugin, "64 МиБ"):
+        with self.assertRaisesRegex(InvalidPlugin, "64 MiB"):
             read_package(buffer.getvalue(), "lifecycle.ovyzip")

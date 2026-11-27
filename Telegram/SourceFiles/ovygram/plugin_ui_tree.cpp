@@ -1,5 +1,6 @@
 #include "ovygram/plugin_ui_tree.h"
 
+#include "ovygram/i18n.h"
 #include "ovygram/plugin_paint.h"
 #include "ovygram/plugin_trust_badge.h"
 #include "ui/effects/animations.h"
@@ -1631,7 +1632,9 @@ void PluginUiTree::AddDialogButtons(
 		footerAction.release();
 		box->addButton(object_ptr<Ui::AbstractButton>::fromRaw(action));
 	}
-	box->addButton(rpl::single(action ? u"Отмена"_q : u"Закрыть"_q), [=] {
+	box->addButton(rpl::single(action
+		? Tr(u"Cancel"_q, u"Отмена"_q)
+		: Tr(u"Close"_q, u"Закрыть"_q)), [=] {
 		box->closeBox();
 	}, st::settingsPluginDialog);
 }

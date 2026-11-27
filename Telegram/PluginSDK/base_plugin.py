@@ -39,3 +39,26 @@ class BasePlugin:
 
     def run_async(self, coroutine):
         return self._desktop_context.manager.runtime.schedule(self._desktop_context, coroutine)
+
+    def get_language(self):
+        """Return Telegram's active language code (e.g. 'en', 'ru', 'de')."""
+        from ovygram_i18n import get_language
+        return get_language()
+
+    def get_base_language(self):
+        """Return the base language pack code for derived packs, or ''."""
+        from ovygram_i18n import get_base_language
+        return get_base_language()
+
+    def tr(self, key_or_map, default=None, *, language=None, **kwargs):
+        """Translate a `{lang: text}` mapping or a string key using `self.TRANSLATIONS` and `locales/<lang>.json`."""
+        from desktop import i18n
+        if isinstance(key_or_map, dict):
+            return i18n.pick(key_or_map, default, language=language, **kwargs)
+        translator = getattr(self, "_desktop_translator", None)
+        if translator is None:
+            inline = getattr(self, "TRANSLATIONS", None)
+            directory = getattr(self._desktop_context, "directory", None)
+            translator = i18n.Translator(inline if isinstance(inline, dict) else None, directory=directory)
+            self._desktop_translator = translator
+        return translator.tr(key_or_map, default=default, language=language, **kwargs)

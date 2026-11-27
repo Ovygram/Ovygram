@@ -11,7 +11,7 @@ def supports(operation: str) -> bool:
     module, separator, name = operation.partition(".")
     if not separator or not name.isidentifier() or name.startswith("_"):
         return False
-    if module not in ("actions", "client", "commands", "components", "media",
+    if module not in ("actions", "client", "commands", "components", "i18n", "media",
                       "lists", "native", "notifications", "search", "ui"):
         return False
     api = import_module(f".{module}", __name__)

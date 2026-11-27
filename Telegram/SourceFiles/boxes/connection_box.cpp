@@ -15,6 +15,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/application.h"
 #ifdef OVYGRAM_ENABLED
 #include "api/api_plugins.h"
+#include "ovygram/i18n_rpl.h"
 #endif
 #include "core/core_settings.h"
 #include "core/local_url_handlers.h"
@@ -1796,7 +1797,7 @@ void ProxiesBox::refreshButtons() {
 		addButton(tr::lng_close(), [=] { closeBox(); });
 #ifdef OVYGRAM_ENABLED
 		if (const auto plugins = Core::App().pluginClient()) {
-			addLeftButton(rpl::single(u"Прокси плагинов"_q), [=] { plugins->showPluginProxies(); });
+			addLeftButton(Ovygram::TrValue(u"Plugin proxies"_q, u"Прокси плагинов"_q), [=] { plugins->showPluginProxies(); });
 		}
 #endif
 	}

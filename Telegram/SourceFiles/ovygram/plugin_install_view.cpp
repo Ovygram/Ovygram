@@ -1,5 +1,6 @@
 #include "ovygram/plugin_install_view.h"
 
+#include "ovygram/i18n.h"
 #include "ovygram/plugin_management_view.h"
 #include "ovygram/plugin_trust_badge.h"
 #include "ui/layers/generic_box.h"
@@ -20,12 +21,12 @@ namespace Ovygram {
 namespace {
 
 QString StatusText(const QString &status) {
-	if (status == u"official"_q) return u"Официальный плагин"_q;
-	if (status == u"verified"_q) return u"Проверенный плагин"_q;
-	if (status == u"blocked"_q) return u"Опасный плагин — установка запрещена"_q;
-	if (status == u"revoked"_q) return u"Проверка отозвана"_q;
-	if (status == u"verification_unavailable"_q) return u"Проверка недоступна"_q;
-	return u"Не проверен"_q;
+	if (status == u"official"_q) return Tr(u"Official plugin"_q, u"Официальный плагин"_q);
+	if (status == u"verified"_q) return Tr(u"Verified plugin"_q, u"Проверенный плагин"_q);
+	if (status == u"blocked"_q) return Tr(u"Dangerous plugin — installation blocked"_q, u"Опасный плагин — установка запрещена"_q);
+	if (status == u"revoked"_q) return Tr(u"Verification revoked"_q, u"Проверка отозвана"_q);
+	if (status == u"verification_unavailable"_q) return Tr(u"Verification unavailable"_q, u"Проверка недоступна"_q);
+	return Tr(u"Unverified"_q, u"Не проверен"_q);
 }
 
 QString Version(const QJsonObject &metadata) {
@@ -103,7 +104,7 @@ private:
 class FileDetailsButton final : public Ui::SettingsButton {
 public:
 	explicit FileDetailsButton(QWidget *parent)
-	: Ui::SettingsButton(parent, rpl::single(u"Подробности файла"_q), st::settingsPluginInstallDetails) {
+	: Ui::SettingsButton(parent, rpl::single(Tr(u"File details"_q, u"Подробности файла"_q)), st::settingsPluginInstallDetails) {
 	}
 
 	void setExpanded(bool expanded) {
@@ -210,12 +211,13 @@ void AddInstalledRow(
 	delta->setTrailing(std::move(target));
 	line->text->add(std::move(delta), style::al_justify);
 	line->text->add(object_ptr<Ui::FlatLabel>(line->text,
-		u"Текущая версия · %1"_q.arg(StatusText(status)), st::settingsPluginInstallBadge),
+		Tr(u"Current version · %1"_q, u"Текущая версия · %1"_q).arg(StatusText(status)),
+		st::settingsPluginInstallBadge),
 		style::al_justify);
 	if (update) {
 		auto button = object_ptr<Ui::RoundButton>(
 			line,
-			rpl::single(u"Обновить"_q),
+			rpl::single(Tr(u"Update"_q, u"Обновить"_q)),
 			secondaryButton ? st::settingsPluginInstallSecondary : st::settingsPluginInstallButton);
 		button->setTextTransform(Ui::RoundButtonTextTransform::NoTransform);
 		if (secondaryButton) {
@@ -237,7 +239,7 @@ bool IsTrustedPlugin(const QString &status) {
 }
 
 not_null<Ui::VerticalLayout*> PreparePluginInstallBox(not_null<Ui::GenericBox*> box) {
-	box->setTitle(rpl::single(u"Установка плагина"_q));
+	box->setTitle(rpl::single(Tr(u"Install Plugin"_q, u"Установка плагина"_q)));
 	const auto outer = box->getDelegate()->outerContainer();
 	const auto available = outer ? outer->width() - style::ConvertScale(32) : 0;
 	box->setWidth(available > 0
@@ -255,7 +257,8 @@ Ui::RoundButton *SetPluginInstallAction(
 		Fn<void()> callback,
 		bool secondary) {
 	box->clearButtons();
-	box->addTopButton(st::settingsPluginClose, [=] { box->closeBox(); })->setAccessibleName(u"Закрыть"_q);
+	box->addTopButton(st::settingsPluginClose, [=] { box->closeBox(); })
+		->setAccessibleName(Tr(u"Close"_q, u"Закрыть"_q));
 	if (!text.isEmpty()) {
 		const auto button = box->addButton(rpl::single(std::move(text)),
 			[callback = std::move(callback)] {
@@ -268,7 +271,7 @@ Ui::RoundButton *SetPluginInstallAction(
 			StyleSecondaryButton(button, false);
 		}
 	}
-	const auto cancel = box->addLeftButton(rpl::single(u"Отмена"_q),
+	const auto cancel = box->addLeftButton(rpl::single(Tr(u"Cancel"_q, u"Отмена"_q)),
 		[=] { box->closeBox(); }, st::settingsPluginLight);
 	cancel->setTextTransform(Ui::RoundButtonTextTransform::NoTransform);
 	return cancel.data();
@@ -290,7 +293,7 @@ not_null<Ui::VerticalLayout*> AddPluginInstallCard(
 	const auto card = AddPluginCard(rows);
 	auto title = object_ptr<InstallLine>(card);
 	auto name = object_ptr<Ui::FlatLabel>(title->text,
-		metadata.value(u"name"_q).toString(), st::settingsPluginInstallTitle);
+		I18n::PluginName(metadata), st::settingsPluginInstallTitle);
 	title->text->add(std::move(name), style::al_justify);
 	title->setTrailing(VersionBadge(title, Version(metadata)));
 	card->add(std::move(title), st::settingsPluginInstallRowMargin, style::al_justify);
@@ -298,15 +301,19 @@ not_null<Ui::VerticalLayout*> AddPluginInstallCard(
 	AddPluginInstallLabel(card, u"%1 · %2 · %3"_q.arg(
 		metadata.value(u"display_author"_q).toString(metadata.value(u"author"_q).toString()),
 		metadata.value(u"id"_q).toString(metadata.value(u"plugin_id"_q).toString()),
-		metadata.value(u"release"_q).toBool() ? u"Публичная версия"_q : u"Непубличная версия"_q),
+		metadata.value(u"release"_q).toBool()
+			? Tr(u"Public release"_q, u"Публичная версия"_q)
+			: Tr(u"Unlisted version"_q, u"Непубличная версия"_q)),
 		st::settingsPluginCardMeta);
-	AddPluginInstallLabel(card, metadata.value(u"description"_q).toString());
+	AddPluginInstallLabel(card, I18n::PluginDescription(metadata));
 
 	const auto status = trust.value(u"status"_q).toString();
 	auto warning = StatusText(status);
 	auto reason = trust.value(u"reason"_q).toString();
 	if (reason.isEmpty() && status == u"unverified"_q) {
-		reason = u"файл ещё не проходил модерацию"_q;
+		reason = Tr(
+			u"this file has not been reviewed yet"_q,
+			u"файл ещё не проходил модерацию"_q);
 	}
 	if (!reason.isEmpty()) {
 		warning += u" — "_q + reason;
@@ -329,7 +336,7 @@ void AddPluginInstallChoices(
 	const auto status = trust.value(u"status"_q).toString();
 	const auto installations = info.value(u"installations"_q).toArray();
 	if (!installations.isEmpty()) {
-		AddPluginInstallLabel(rows, u"Новая версия"_q, st::settingsPluginCardMeta);
+		AddPluginInstallLabel(rows, Tr(u"New version"_q, u"Новая версия"_q), st::settingsPluginCardMeta);
 	}
 	const auto selected = AddPluginInstallCard(rows, metadata, trust);
 	AddSeparator(selected->add(object_ptr<Ui::FixedHeightWidget>(selected, st::lineWidth)));
@@ -364,7 +371,7 @@ void AddPluginInstallChoices(
 		}
 	}
 	if (!installations.isEmpty()) {
-		AddPluginInstallLabel(rows, u"Установленные экземпляры"_q, st::settingsPluginCardMeta);
+		AddPluginInstallLabel(rows, Tr(u"Installed instances"_q, u"Установленные экземпляры"_q), st::settingsPluginCardMeta);
 	}
 	for (const auto &value : installations) {
 		const auto old = value.toObject();
@@ -374,14 +381,18 @@ void AddPluginInstallChoices(
 			eligible(old) ? Fn<void()>([=] { confirm(id, false, old); }) : Fn<void()>());
 	}
 	if (!installationId.isEmpty() && !updateChoices) {
-		AddPluginInstallLabel(rows, u"ID файла не совпадает с ID обновляемого экземпляра."_q);
+		AddPluginInstallLabel(rows, Tr(
+			u"The file ID does not match the instance being updated."_q,
+			u"ID файла не совпадает с ID обновляемого экземпляра."_q));
 		return;
 	}
 
 	if (installationId.isEmpty() && (!hasTrusted || !IsTrustedPlugin(status))) {
 		const auto separate = !installations.isEmpty();
 		focusCancel(SetPluginInstallAction(box,
-			separate ? u"Установить отдельно"_q : u"Установить"_q,
+			separate
+				? Tr(u"Install separately"_q, u"Установить отдельно"_q)
+				: Tr(u"Install"_q, u"Установить"_q),
 			[=] { confirm(QString(), separate, QJsonObject()); },
 			separate));
 	}

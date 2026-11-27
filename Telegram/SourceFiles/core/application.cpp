@@ -10,6 +10,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #ifdef OVYGRAM_ENABLED
 #include "api/api_plugins.h"
 #include "core/plugin_runtime.h"
+#include "ovygram/i18n.h"
 #endif
 
 #include "data/data_abstract_structure.h"
@@ -327,6 +328,17 @@ void Application::run() {
 	_notifications = std::make_unique<Window::Notifications::System>();
 
 	startLocalStorage();
+
+#ifdef OVYGRAM_ENABLED
+	const auto syncOvygramLanguage = [=] {
+		Ovygram::I18n::SetLanguage(_langpack->id(), _langpack->baseId());
+	};
+	syncOvygramLanguage();
+	_langpack->idChanges() | rpl::on_next([=](const QString &) {
+		syncOvygramLanguage();
+	}, _lifetime);
+	_langpack->updated() | rpl::on_next(syncOvygramLanguage, _lifetime);
+#endif
 
 	style::SetCustomFont(settings().customFontFamily());
 	style::internal::StartFonts();

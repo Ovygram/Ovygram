@@ -284,9 +284,9 @@ class SettingsPlugin(BasePlugin):
         action = fields[1]["action_id"]
         link = fields[2]
         self.assertEqual(link["description"], "Also in the menu")
-        with self.assertRaisesRegex(ValueError, "устарела"):
+        with self.assertRaisesRegex(ValueError, "outdated"):
             self.manager.settings_action(second, action)
-        with self.assertRaisesRegex(ValueError, "устарела"):
+        with self.assertRaisesRegex(ValueError, "outdated"):
             self.manager.settings_action(second, link["action_id"])
         self.manager.save_settings(first, {"name": "Changed"})
         self.manager.settings_action(first, action)
@@ -304,12 +304,12 @@ class SettingsPlugin(BasePlugin):
         self.manager.disable(first)
         self.manager.enable(first)
         for old_action in (action, link["action_id"]):
-            with self.assertRaisesRegex(ValueError, "устарела"):
+            with self.assertRaisesRegex(ValueError, "outdated"):
                 self.manager.settings_action(first, old_action)
 
     def test_two_installations_of_one_id_are_isolated(self):
         first = self.manager.install(str(self.copy()))
-        with self.assertRaisesRegex(ValueError, "отдельно"):
+        with self.assertRaisesRegex(ValueError, "separately"):
             self.manager.install(str(self.copy()))
         second = self.manager.install(str(self.copy()), separate=True)
         self.assertNotEqual(first, second)
@@ -341,7 +341,7 @@ class SettingsPlugin(BasePlugin):
         version = self.manager.records[installation_id]["current"]
         entry = self.manager.directory(version) / "plugin.py"
         entry.write_text(entry.read_text(encoding="utf-8") + "\n# changed\n", encoding="utf-8")
-        with self.assertRaisesRegex(RuntimeError, "изменён"):
+        with self.assertRaisesRegex(RuntimeError, "modified"):
             self.manager.enable(installation_id)
         self.assertNotIn(installation_id, self.manager.loaded)
 

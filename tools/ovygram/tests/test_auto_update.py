@@ -200,6 +200,7 @@ int main(int argc, char **argv) {
             subprocess.check_call([
                 'g++', '-std=c++20', '-fPIC', '-Wall', '-Wextra', '-Werror',
                 f'-I{SRC}', f'-I{qt_include}', f'-I{qt_include / "QtCore"}',
+                str(SRC / 'ovygram' / 'i18n.cpp'),
                 str(SRC / 'ovygram' / 'auto_update_verify.cpp'),
                 str(driver_path),
                 f'-L{qt_lib}', f'-Wl,-rpath,{qt_lib}',

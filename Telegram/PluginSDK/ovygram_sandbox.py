@@ -122,9 +122,13 @@ _X32 = 0x40000000
 
 def seccomp_filter(machine=None):
     """The classic BPF program bubblewrap installs before it runs the host."""
+    from ovygram_i18n import tr
     machine = machine or platform.machine()
     if machine not in SYSCALLS:
-        raise SandboxError(f"Изоляция плагинов не поддерживает архитектуру {machine}.")
+        raise SandboxError(tr(
+            f"Plugin isolation does not support the {machine} architecture.",
+            f"Изоляция плагинов не поддерживает архитектуру {machine}.",
+        ))
     architecture, numbers = SYSCALLS[machine]
     program = [
         (_LOAD, 0, 0, 4),  # seccomp_data.arch
@@ -200,6 +204,7 @@ def wrap(command, environment, read_only=(), writable=(), directory=None, *, all
     through confine(). Raises SandboxError where the restrictions exist but
     can't be set up: the host must not start without them.
     """
+    from ovygram_i18n import tr
     if sys.platform == "win32":
         import ovygram_sandbox_windows as windows
         for path in writable:
@@ -210,10 +215,16 @@ def wrap(command, environment, read_only=(), writable=(), directory=None, *, all
     if not sys.platform.startswith("linux"):
         return list(command), (), {
             "active": False, "network": True,
-            "reason": "Изоляция процесса плагинов на этой платформе ещё не реализована."}
+            "reason": tr(
+                "Plugin process isolation is not implemented on this platform yet.",
+                "Изоляция процесса плагинов на этой платформе ещё не реализована.",
+            )}
     bwrap = shutil.which("bwrap")
     if bwrap is None:
-        raise SandboxError("Для запуска плагинов установите bubblewrap (bwrap).")
+        raise SandboxError(tr(
+            "Install bubblewrap (bwrap) to run plugins.",
+            "Для запуска плагинов установите bubblewrap (bwrap).",
+        ))
     program = seccomp_filter()
     scoped = landlock_abi() >= _SCOPE_ABI
     arguments = [bwrap, "--unshare-user", "--unshare-pid", "--unshare-ipc", "--unshare-uts",
@@ -252,8 +263,12 @@ def wrap(command, environment, read_only=(), writable=(), directory=None, *, all
     arguments += ["--seccomp", str(descriptor), "--", *command]
     return arguments, (descriptor,), {
         "active": True, "network": scoped and allow_network, "scoped": scoped,
-        "reason": ("Сеть отключена в предпросмотре." if not allow_network else
-                   "" if scoped else "Сеть плагинам недоступна: ядру нужен Landlock 6 (Linux 6.12).")}
+        "reason": (tr("Network is disabled in preview.", "Сеть отключена в предпросмотре.")
+                   if not allow_network else
+                   "" if scoped else tr(
+                       "Network access is unavailable for plugins: kernel needs Landlock 6 (Linux 6.12).",
+                       "Сеть плагинам недоступна: ядру нужен Landlock 6 (Linux 6.12).",
+                   ))}
 
 
 def confine(process):

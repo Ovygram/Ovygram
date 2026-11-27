@@ -34,7 +34,7 @@ namespace Api {
 // Correspond to desktop._runtime.POINT_BITS. Keep existing indices stable.
 enum class PluginEventBit : unsigned {
 	Reaction = 10, Read = 11, Topic = 12, Selection = 13,
-	DownloadStarted = 14, DownloadFinished = 15, Theme = 16,
+	DownloadStarted = 14, DownloadFinished = 15, Theme = 16, Language = 17,
 };
 
 class PluginClient final : public QObject {

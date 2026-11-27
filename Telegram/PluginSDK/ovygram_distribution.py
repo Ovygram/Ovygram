@@ -14,6 +14,7 @@ import threading
 import time
 import uuid
 
+from ovygram_i18n import tr
 from ovygram_package import IncompatiblePlugin, parse_version, version_follows
 from ovygram_registry import Registry, TRUSTED, protected_author
 
@@ -59,7 +60,10 @@ class Distribution:
             while len(self.jobs) >= 16 and stale:
                 self.jobs.pop(stale.pop(0)[1], None)
         if len(self.jobs) >= 16:
-            raise ValueError("Дождитесь завершения предыдущей проверки.")
+            raise ValueError(tr(
+                "Wait for the previous check to finish.",
+                "Дождитесь завершения предыдущей проверки.",
+            ))
         token = uuid.uuid4().hex
         self.jobs[token] = {"operation": operation, "context": context, "created": time.monotonic(),
                             "state": "pending"}
@@ -101,14 +105,17 @@ class Distribution:
         self.poll()
         job = self.jobs.get(token)
         if job is None or job["operation"] != "prepare":
-            raise ValueError("Проверка файла устарела. Выберите файл заново.")
+            raise ValueError(tr(
+                "File check expired. Select the file again.",
+                "Проверка файла устарела. Выберите файл заново.",
+            ))
         if job["state"] != "ready":
             return {"state": job["state"], "error": job.get("error", "")}
         result = job["result"]
         trust = self.registry.cached({**result, "blocked": result["trust"]["status"] == "blocked"})
         hidden = protected_author(result["metadata"]["author"], trust["status"])
         metadata = {**result["metadata"], "author_hidden": hidden,
-                    "display_author": "Неизвестный автор" if hidden else result["metadata"]["author"]}
+                    "display_author": tr("Unknown author", "Неизвестный автор") if hidden else result["metadata"]["author"]}
         return {"state": "ready", "token": token, "metadata": metadata,
                 "package_type": result["package_type"], "sha256": result["sha256"], "trust": trust,
                 "installations": [self.manager.describe(identity) for identity in
@@ -119,13 +126,19 @@ class Distribution:
         self.poll()
         job = self.jobs.get(token)
         if job is None or job["operation"] != "prepare":
-            raise ValueError("Проверка файла устарела. Выберите файл заново.")
+            raise ValueError(tr(
+                "File check expired. Select the file again.",
+                "Проверка файла устарела. Выберите файл заново.",
+            ))
         if job["state"] != "ready":
-            raise ValueError("Файл ещё не проверен.")
+            raise ValueError(tr("The file has not been checked yet.", "Файл ещё не проверен."))
         package = job["result"]
         trust = self.registry.cached({**package, "blocked": package["trust"]["status"] == "blocked"})
         if trust["status"] == "verification_unavailable" and not allow_unavailable:
-            raise ValueError("Требуется отдельное подтверждение недоступности реестра.")
+            raise ValueError(tr(
+                "Explicit confirmation is required when the registry is unavailable.",
+                "Требуется отдельное подтверждение недоступности реестра.",
+            ))
         result = self.manager.install_bytes(package["payload"], package["metadata"],
                                             package["package_type"], installation_id, separate,
                                             trust, allow_loss=allow_loss)
@@ -171,7 +184,8 @@ class Distribution:
                 trust = self.registry.check(version["metadata"], version["sha256"], version["package_type"])
                 checked[identity] = {"directory": version["directory"], "trust": trust}
                 if trust["status"] == "verification_unavailable":
-                    errors.append(record["plugin_id"] + ": " + (trust.get("reason") or "Проверка реестра недоступна."))
+                    errors.append(record["plugin_id"] + ": " + (
+                        trust.get("reason") or tr("Registry check is unavailable.", "Проверка реестра недоступна.")))
                 old = version.get("trust", {})
                 chain = trust.get("chain") or old.get("chain")
                 sequence = trust.get("release_sequence") or old.get("release_sequence")
@@ -242,18 +256,27 @@ class Distribution:
             return pending
         offer = copy.deepcopy(self.offer_for(installation_id))
         if offer is None:
-            raise ValueError("Предложение обновления устарело. Повторите проверку.")
+            raise ValueError(tr(
+                "Update offer expired. Check for updates again.",
+                "Предложение обновления устарело. Повторите проверку.",
+            ))
         record = copy.deepcopy(self.manager.records[installation_id])
         current = record["current"]
         if current["directory"] != offer["from_directory"]:
-            raise ValueError("Установленная версия уже изменилась. Повторите проверку.")
+            raise ValueError(tr(
+                "The installed version has already changed. Check for updates again.",
+                "Установленная версия уже изменилась. Повторите проверку.",
+            ))
         self.manager.check_integrity(current)
         local_payload = None
         local_suffix = None
         if offer.get("local_directory"):
             previous = record.get("previous")
             if not previous or previous["directory"] != offer["local_directory"]:
-                raise ValueError("Сохранённая версия для отката изменилась.")
+                raise ValueError(tr(
+                    "The saved rollback version has changed.",
+                    "Сохранённая версия для отката изменилась.",
+                ))
             self.manager.check_integrity(previous)
             local_payload = self.manager.original(previous).read_bytes()
             local_suffix = previous["package_type"]
@@ -263,20 +286,29 @@ class Distribution:
             source = self.registry.check(current["metadata"], current["sha256"], current["package_type"])
             if source.get("chain") != offer["chain"] or (not offer["rollback"]
                     and (source["status"] not in TRUSTED or not current["metadata"]["release"])):
-                raise ValueError("Исходная версия не подтверждена для этой цепочки.")
+                raise ValueError(tr(
+                    "The current version is not verified for this release chain.",
+                    "Исходная версия не подтверждена для этой цепочки.",
+                ))
             def candidate_package(candidate):
                 if candidate.get("local_directory"):
                     if local_payload is None:
-                        raise ValueError("Сохранённая версия для отката изменилась.")
+                        raise ValueError(tr(
+                            "The saved rollback version has changed.",
+                            "Сохранённая версия для отката изменилась.",
+                        ))
                     payload, suffix = local_payload, local_suffix
                 else:
                     url = candidate.get("url")
                     if not isinstance(url, str) or not url:
-                        raise ValueError("Отсутствует ссылка на пакет обновления.")
+                        raise ValueError(tr(
+                            "Missing update package URL.",
+                            "Отсутствует ссылка на пакет обновления.",
+                        ))
                     suffix = url.split("?", 1)[0].rsplit(".", 1)[-1]
                     payload = self.registry.package(url)
                 if suffix not in ("ovyplugin", "ovyzip"):
-                    raise ValueError("Недопустимый формат обновления.")
+                    raise ValueError(tr("Unsupported update format.", "Недопустимый формат обновления."))
                 package = self.package(payload, f"{record['plugin_id']}.{suffix}")
                 metadata, trust = package["metadata"], package["trust"]
                 target_sequence = trust.get("release_sequence")
@@ -284,18 +316,33 @@ class Distribution:
                 if metadata["id"] != record["plugin_id"] or trust["status"] not in TRUSTED \
                         or trust.get("chain") != source.get("chain") \
                         or target_sequence != candidate["release_sequence"] or metadata["version"] != expected_version:
-                    raise ValueError("Файл обновления не подтверждён сервером для этой версии и автора.")
+                    raise ValueError(tr(
+                        "The update file is not verified by the server for this version and author.",
+                        "Файл обновления не подтверждён сервером для этой версии и автора.",
+                    ))
                 if candidate.get("sha256") and package["sha256"] != candidate["sha256"]:
-                    raise ValueError("SHA-256 скачанного файла не совпадает с утверждённой версией.")
+                    raise ValueError(tr(
+                        "SHA-256 of the downloaded file does not match the approved version.",
+                        "SHA-256 скачанного файла не совпадает с утверждённой версией.",
+                    ))
                 if offer["rollback"]:
                     if target_sequence >= source["release_sequence"]:
-                        raise ValueError("Это не предыдущая безопасная версия.")
+                        raise ValueError(tr(
+                            "This is not a previous safe version.",
+                            "Это не предыдущая безопасная версия.",
+                        ))
                 elif not metadata["release"] or trust.get("publication") != "published" \
                         or not trust.get("url"):
-                    raise ValueError("Публикация обновления не подтверждена сервером.")
+                    raise ValueError(tr(
+                        "Update publication is not confirmed by the server.",
+                        "Публикация обновления не подтверждена сервером.",
+                    ))
                 elif target_sequence <= source["release_sequence"] or not version_follows(
                         parse_version(metadata["version"]), parse_version(current["metadata"]["version"])):
-                    raise ValueError("Версия обновления меньше установленной.")
+                    raise ValueError(tr(
+                        "The update version is older than the installed version.",
+                        "Версия обновления меньше установленной.",
+                    ))
                 return package
 
             try:
@@ -313,7 +360,10 @@ class Distribution:
                     return candidate_package(candidate)
                 except IncompatiblePlugin:
                     continue
-            raise ValueError("Нет совместимого опубликованного обновления для текущего Desktop SDK.")
+            raise ValueError(tr(
+                "No compatible published update for the current Desktop SDK.",
+                "Нет совместимого опубликованного обновления для текущего Desktop SDK.",
+            ))
 
         return self.submit("update", work, {"installation_id": installation_id,
                                             "directory": current["directory"]})
@@ -341,14 +391,20 @@ class Distribution:
                     identity = context["installation_id"]
                     record = self.manager.records.get(identity)
                     if record is None or record["current"]["directory"] != context["directory"]:
-                        raise ValueError("Экземпляр удалён или обновлён во время загрузки.")
+                        raise ValueError(tr(
+                            "The plugin instance was removed or updated during download.",
+                            "Экземпляр удалён или обновлён во время загрузки.",
+                        ))
                     if self.registry.cached(result)["status"] not in TRUSTED:
-                        raise ValueError("Подтверждение обновления устарело. Повторите проверку.")
+                        raise ValueError(tr(
+                            "Update verification expired. Check for updates again.",
+                            "Подтверждение обновления устарело. Повторите проверку.",
+                        ))
                     self.manager.activate_update(identity, result)
                     self.offers.pop(identity, None)
                     self.manager.distribution_state["offers"] = copy.deepcopy(self.offers)
                     self.manager.save()
-                    self.notices.append("Плагин обновлён: " + record["plugin_id"])
+                    self.notices.append(tr("Plugin updated: ", "Плагин обновлён: ") + record["plugin_id"])
             except Exception as exception:
                 self.notices.append(str(exception))
                 if operation == "check":
@@ -381,10 +437,14 @@ class Distribution:
                 except Exception as error:
                     self.notices.append(str(error))
             if trust["status"] in ("blocked", "revoked") and trust["status"] != old_status:
-                self.notices.append(record["plugin_id"] + (": опасный плагин отключён." if
-                                    trust["status"] == "blocked" else ": проверка отозвана.")
-                                    + (" Доступен безопасный откат в разделе «Плагины»." if
-                                       identity in result["offers"] else ""))
+                self.notices.append(
+                    record["plugin_id"]
+                    + (tr(": dangerous plugin disabled.", ": опасный плагин отключён.")
+                       if trust["status"] == "blocked"
+                       else tr(": verification revoked.", ": проверка отозвана."))
+                    + (tr(" Safe rollback is available in Plugins.", " Доступен безопасный откат в разделе «Плагины».")
+                       if identity in result["offers"] else "")
+                )
         self.offers = {identity: offer for identity, offer in result["offers"].items()
                        if identity in self.manager.records and self.manager.records[identity]["current"]["directory"]
                        == offer["from_directory"]}

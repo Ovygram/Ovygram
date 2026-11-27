@@ -27,6 +27,6 @@ constexpr auto AppVersionStr = "7.4.6";
 // Ovygram's own version, shown as "<Ovygram>-<Telegram>". AppVersion and
 // AppVersionStr stay the Telegram base: the server, changelogs and the
 // upstream version scripts rely on them.
-constexpr auto OvygramVersionStr = "0.1.0";
+constexpr auto OvygramVersionStr = "0.1.1";
 constexpr auto AppBetaVersion = false;
 constexpr auto AppAlphaVersion = TDESKTOP_ALPHA_VERSION;

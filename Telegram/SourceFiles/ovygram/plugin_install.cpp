@@ -3,6 +3,7 @@
 
 #include "core/application.h"
 #include "core/plugin_runtime.h"
+#include "ovygram/i18n.h"
 #include "ovygram/plugin_install_view.h"
 #include "ovygram/protected_ui.h"
 #include "ui/layers/generic_box.h"
@@ -28,7 +29,9 @@ int ActiveInstallers = 0;
 QJsonValue Request(const QJsonObject &request) {
 	const auto runtime = Core::App().pluginRuntime();
 	if (!runtime) {
-		throw std::runtime_error("Встроенный Python недоступен.");
+		throw std::runtime_error(Tr(
+			u"Built-in Python is unavailable."_q,
+			u"Встроенный Python недоступен."_q).toStdString());
 	}
 	const auto response = QJsonDocument::fromJson(QByteArray::fromStdString(
 		runtime->dispatch(QJsonDocument(request).toJson(QJsonDocument::Compact).toStdString()))).object();
@@ -63,7 +66,9 @@ public:
 		box->setFocusCallback([this] {
 			if (_cancel) _cancel->setFocus();
 		});
-		AddPluginInstallLabel(_rows, u"Чтение метаданных и проверка файла…"_q);
+		AddPluginInstallLabel(_rows, Tr(
+			u"Reading metadata and checking file…"_q,
+			u"Чтение метаданных и проверка файла…"_q));
 		_timer = new QTimer(this);
 		connect(_timer, &QTimer::timeout, this, [this] { poll(); });
 		try {
@@ -141,14 +146,23 @@ private:
 			_errorLabel = nullptr;
 			Clear(_rows);
 			AddPluginInstallCard(_rows, _info.value(u"metadata"_q).toObject(), trust);
-			if (loss) AddPluginInstallLabel(_rows, u"Вы заменяете проверенный плагин непроверенной версией. Автор и безопасность "
+			if (loss) AddPluginInstallLabel(_rows, Tr(
+				u"You are replacing a verified plugin with an unverified version. The author and safety "
+				"of the new file are not confirmed. The plugin will lose its verified status. You can cancel "
+				"replacing it and install the file separately."_q,
+				u"Вы заменяете проверенный плагин непроверенной версией. Автор и безопасность "
 				"нового файла не подтверждены. Плагин потеряет статус проверки. Можно отменить "
-				"замену и установить файл отдельно."_q);
-			if (unavailable) AddPluginInstallLabel(_rows, u"Проверка недоступна. Невозможно уточнить, заблокирован ли этот файл. "
-				"Продолжайте только если доверяете источнику."_q);
+				"замену и установить файл отдельно."_q));
+			if (unavailable) AddPluginInstallLabel(_rows, Tr(
+				u"Verification is unavailable. It is not possible to check whether this file is blocked. "
+				"Continue only if you trust the source."_q,
+				u"Проверка недоступна. Невозможно уточнить, заблокирован ли этот файл. "
+				"Продолжайте только если доверяете источнику."_q));
 			_rows->resizeToWidth(_rows->widthNoMargins());
 			_warned = true;
-			_cancel = SetPluginInstallAction(_box.data(), u"Подтверждаю установку"_q,
+			_cancel = SetPluginInstallAction(_box.data(), Tr(
+				u"Confirm installation"_q,
+				u"Подтверждаю установку"_q),
 				[=, this] { confirm(id, separate, old); });
 			if (_cancel) _cancel->setFocus();
 			return;

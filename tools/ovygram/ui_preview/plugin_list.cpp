@@ -1,5 +1,6 @@
 #include "plugin_list.h"
 
+#include "ovygram/i18n.h"
 #include "ovygram/plugin_management_view.h"
 #include "styles/style_layers.h"
 #include "styles/style_plugin_management.h"
@@ -36,8 +37,8 @@ QString UpdateLabel(const QJsonObject &plugin) {
 	}
 	const auto version = update.value(u"latest_version"_q).toString(update.value(u"version"_q).toString());
 	return update.value(u"rollback"_q).toBool()
-		? u"Установить безопасную версию %1"_q.arg(version)
-		: u"Обновить до версии %1"_q.arg(version);
+		? Ovygram::Tr(u"Install safe version %1", u"Установить безопасную версию %1").arg(version)
+		: Ovygram::Tr(u"Update to version %1", u"Обновить до версии %1").arg(version);
 }
 
 } // namespace
@@ -45,10 +46,10 @@ QString UpdateLabel(const QJsonObject &plugin) {
 Ui::InputField *AddSearch(not_null<Ui::VerticalLayout*> layout) {
 	const auto row = layout->add(object_ptr<Ui::FixedHeightWidget>(layout, Px(46)));
 	const auto field = Ui::CreateChild<Ui::InputField>(row, st::defaultMultiSelectSearchField,
-		rpl::single(u"Поиск"_q));
-	field->setAccessibleName(u"Поиск плагинов"_q);
+		rpl::single(Ovygram::Tr(u"Search", u"Поиск")));
+	field->setAccessibleName(Ovygram::Tr(u"Search plugins", u"Поиск плагинов"));
 	const auto clear = Ui::CreateChild<Ui::CrossButton>(row, st::defaultMultiSelectSearchCancel);
-	clear->setAccessibleName(u"Очистить поиск"_q);
+	clear->setAccessibleName(Ovygram::Tr(u"Clear search", u"Очистить поиск"));
 	clear->setClickedCallback([=] { field->setText({}); });
 	clear->toggle(false, anim::type::instant);
 	field->changes() | rpl::on_next([=] {
@@ -72,10 +73,10 @@ void AddActions(
 		not_null<Ui::VerticalLayout*> layout,
 		Fn<void()> import,
 		Fn<void()> check) {
-	const auto button = Action(layout, u"Импортировать плагин"_q, std::move(import));
+	const auto button = Action(layout, Ovygram::Tr(u"Import plugin", u"Импортировать плагин"), std::move(import));
 	button->setPaddingOverride({ Px(22), Px(12), Px(22), Px(12) });
 	button->setColorOverride(st::lightButtonFg->c);
-	Action(layout, u"Проверить обновления"_q, std::move(check));
+	Action(layout, Ovygram::Tr(u"Check for updates", u"Проверить обновления"), std::move(check));
 }
 
 void BuildRows(
@@ -90,12 +91,13 @@ void BuildRows(
 	Ui::AddSkip(layout);
 	Ui::AddDivider(layout);
 	Ui::AddSkip(layout);
-	Ui::AddSubsectionTitle(layout, rpl::single(u"Установленные плагины"_q));
+	Ui::AddSubsectionTitle(layout, rpl::single(Ovygram::Tr(u"Installed plugins", u"Установленные плагины")));
 	auto found = false;
 	for (const auto &entry : plugins) {
 		const auto plugin = entry.toObject();
-		const auto name = plugin.value(u"name"_q).toString();
+		const auto name = Ovygram::I18n::PluginName(plugin);
 		if (!name.contains(query, Qt::CaseInsensitive)
+			&& !plugin.value(u"name"_q).toString().contains(query, Qt::CaseInsensitive)
 			&& !plugin.value(u"plugin_id"_q).toString().contains(query, Qt::CaseInsensitive)
 			&& !plugin.value(u"author"_q).toString().contains(query, Qt::CaseInsensitive)) {
 			continue;
@@ -115,11 +117,12 @@ void BuildRows(
 	}
 	if (!found) {
 		Ui::AddDividerText(layout, rpl::single(plugins.isEmpty()
-			? u"Установленных плагинов пока нет."_q : u"Плагины не найдены."_q));
+			? Ovygram::Tr(u"No plugins installed yet.", u"Установленных плагинов пока нет.")
+			: Ovygram::Tr(u"No plugins found.", u"Плагины не найдены.")));
 	}
 	Ui::AddSkip(layout);
 	Ui::AddDivider(layout);
-	Action(layout, u"Открыть журнал"_q, std::move(log));
+	Action(layout, Ovygram::Tr(u"Open log", u"Открыть журнал"), std::move(log));
 	Ui::AddSkip(layout);
 }
 

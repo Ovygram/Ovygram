@@ -73,7 +73,11 @@ class Client:
             "installation_id": installation_id, "key": key, "value": value, "account_id": account_id}})
         message = self.channel.receive()
         if message.get("reply") != identity:
-            raise RuntimeError("Клиент нарушил порядок обмена с процессом плагинов.")
+            from ovygram_i18n import tr
+            raise RuntimeError(tr(
+                "The client violated the plugin host communication protocol.",
+                "Клиент нарушил порядок обмена с процессом плагинов.",
+            ))
         if "error" in message:
             raise ValueError(message["error"])
 
@@ -84,6 +88,9 @@ def main():
     sdk = str(Path(__file__).resolve().parent)
     if sdk not in sys.path:
         sys.path.append(sdk)
+
+    from ovygram_i18n import set_language
+    set_language(options.get("language", "en"), options.get("base_language", ""))
 
     from ovygram_channel import Channel, ChannelClosed
     if options.get("scope"):

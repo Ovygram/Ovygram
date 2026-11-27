@@ -1,5 +1,6 @@
 #include "ovygram/plugin_management_view.h"
 
+#include "ovygram/i18n.h"
 #include "ovygram/plugin_trust_badge.h"
 #include "ui/layers/generic_box.h"
 #include "ui/painter.h"
@@ -21,20 +22,20 @@ namespace {
 
 [[nodiscard]] QString PluginStatus(const QJsonObject &plugin) {
 	return plugin.value(u"loaded"_q).toBool()
-		? u"Запущен"_q
+		? Tr(u"Running"_q, u"Запущен"_q)
 		: plugin.value(u"enabled"_q).toBool()
-		? u"Включён, но не запущен"_q
-		: u"Остановлен"_q;
+		? Tr(u"Enabled, not running"_q, u"Включён, но не запущен"_q)
+		: Tr(u"Stopped"_q, u"Остановлен"_q);
 }
 
 [[nodiscard]] QString PluginMetadata(const QJsonObject &plugin) {
-	auto result = u"Версия %1 · %2 · %3"_q.arg(
+	auto result = Tr(u"Version %1 · %2 · %3"_q, u"Версия %1 · %2 · %3"_q).arg(
 		plugin.value(u"version"_q).toString().simplified(),
 		plugin.value(u"display_author"_q).toString(plugin.value(u"author"_q).toString()).simplified(),
 		plugin.value(u"plugin_id"_q).toString());
 	// Installations of one plugin ID differ by their installation_id.
 	if (plugin.value(u"instances"_q).toInt() > 1) {
-		result += u" · экземпляр %1"_q.arg(
+		result += Tr(u" · instance %1"_q, u" · экземпляр %1"_q).arg(
 			plugin.value(u"installation_id"_q).toString().left(8));
 	}
 	return result;
@@ -42,12 +43,12 @@ namespace {
 
 [[nodiscard]] QString TrustStatus(const QJsonObject &plugin) {
 	const auto status = plugin.value(u"trust"_q).toObject().value(u"status"_q).toString();
-	if (status == u"verified"_q) return u"Проверенный плагин"_q;
-	if (status == u"official"_q) return u"Официальный плагин"_q;
-	if (status == u"blocked"_q) return u"Опасный плагин / вирус — запуск запрещён"_q;
-	if (status == u"revoked"_q) return u"Непроверенный плагин — проверка отозвана"_q;
-	if (status == u"verification_unavailable"_q) return u"Проверка недоступна"_q;
-	return u"Непроверенный плагин"_q;
+	if (status == u"verified"_q) return Tr(u"Verified plugin"_q, u"Проверенный плагин"_q);
+	if (status == u"official"_q) return Tr(u"Official plugin"_q, u"Официальный плагин"_q);
+	if (status == u"blocked"_q) return Tr(u"Dangerous plugin / malware — launch blocked"_q, u"Опасный плагин / вирус — запуск запрещён"_q);
+	if (status == u"revoked"_q) return Tr(u"Unverified plugin — verification revoked"_q, u"Непроверенный плагин — проверка отозвана"_q);
+	if (status == u"verification_unavailable"_q) return Tr(u"Verification unavailable"_q, u"Проверка недоступна"_q);
+	return Tr(u"Unverified plugin"_q, u"Непроверенный плагин"_q);
 }
 
 not_null<Ui::SettingsButton*> AddAction(
@@ -134,7 +135,7 @@ void AddPluginSummary(
 		not_null<Ui::VerticalLayout*> card,
 		const QJsonObject &plugin) {
 	AddPluginLabel(card, PluginMetadata(plugin), st::settingsPluginCardMeta);
-	if (const auto description = plugin.value(u"description"_q).toString(); !description.isEmpty()) {
+	if (const auto description = I18n::PluginDescription(plugin); !description.isEmpty()) {
 		AddPluginLabel(card, description, st::settingsPluginBody)->setSelectable(true);
 	}
 	const auto trust = plugin.value(u"trust"_q).toObject();
@@ -153,7 +154,7 @@ void AddPluginSummary(
 		}
 	}
 	if (plugin.value(u"installing"_q).toBool()) {
-		AddPluginLabel(card, u"Устанавливаются зависимости…"_q, st::settingsPluginCardMeta);
+		AddPluginLabel(card, Tr(u"Installing dependencies…"_q, u"Устанавливаются зависимости…"_q), st::settingsPluginCardMeta);
 	}
 }
 
@@ -270,7 +271,9 @@ void AddPluginToggle(
 		bool blocked,
 		Fn<void()> toggle) {
 	const auto button = row->addButton(
-		enabled ? u"Отключить плагин"_q : u"Включить плагин"_q,
+		enabled
+			? Tr(u"Disable plugin"_q, u"Отключить плагин"_q)
+			: Tr(u"Enable plugin"_q, u"Включить плагин"_q),
 		st::settingsPluginToggleAction,
 		std::move(toggle));
 	button->toggleOn(rpl::single(enabled), true);
@@ -311,8 +314,8 @@ void AddPluginCardActions(
 		Fn<void()> share,
 		Fn<void()> remove) {
 	auto row = object_ptr<PluginButtonRow>(card);
-	row->addButton(u"Отправить"_q, st::settingsPluginCardAction, std::move(share));
-	row->addButton(u"Удалить"_q, st::settingsPluginCardRemove, std::move(remove));
+	row->addButton(Tr(u"Share"_q, u"Отправить"_q), st::settingsPluginCardAction, std::move(share));
+	row->addButton(Tr(u"Remove"_q, u"Удалить"_q), st::settingsPluginCardRemove, std::move(remove));
 	card->add(std::move(row));
 }
 
@@ -409,21 +412,22 @@ void AddPluginManagement(
 		Fn<void(QString)> operate,
 		Fn<void()> share,
 		Fn<void()> remove) {
-	AddDetailsSection(layout, u"Управление плагином"_q);
-	AddMenuAction(layout, u"Обновить из файла"_q, st::settingsPluginFileIcon,
+	AddDetailsSection(layout, Tr(u"Plugin management"_q, u"Управление плагином"_q));
+	AddMenuAction(layout, Tr(u"Update from file"_q, u"Обновить из файла"_q), st::settingsPluginFileIcon,
 		std::move(updateFile));
 	if (plugin.value(u"update"_q).isObject()) {
 		const auto offer = plugin.value(u"update"_q).toObject();
 		AddMenuAction(layout, offer.value(u"rollback"_q).toBool()
-			? u"Установить предыдущую безопасную версию"_q : u"Обновить из реестра"_q,
+			? Tr(u"Install previous safe version"_q, u"Установить предыдущую безопасную версию"_q)
+			: Tr(u"Update from registry"_q, u"Обновить из реестра"_q),
 			st::settingsPluginRegistryIcon,
 			[=] { operate(u"apply_update"_q); });
 	}
 	if (plugin.value(u"previous"_q).toBool()) {
-		AddMenuAction(layout, u"Откатить"_q, st::settingsPluginRollbackIcon,
+		AddMenuAction(layout, Tr(u"Roll back"_q, u"Откатить"_q), st::settingsPluginRollbackIcon,
 			[=] { operate(u"rollback"_q); });
 	}
-	AddMenuAction(layout, u"Отправить плагин"_q, st::settingsPluginShareIcon,
+	AddMenuAction(layout, Tr(u"Share plugin"_q, u"Отправить плагин"_q), st::settingsPluginShareIcon,
 		std::move(share));
 	const auto divider = layout->add(
 		object_ptr<Ui::FixedHeightWidget>(layout, st::lineWidth),
@@ -434,7 +438,7 @@ void AddPluginManagement(
 		color.setAlphaF(st::settingsPluginDividerAlpha);
 		QPainter(divider).fillRect(divider->rect(), color);
 	}, divider->lifetime());
-	AddMenuAction(layout, u"Удалить плагин"_q, st::settingsPluginRemoveIcon,
+	AddMenuAction(layout, Tr(u"Remove plugin"_q, u"Удалить плагин"_q), st::settingsPluginRemoveIcon,
 		std::move(remove), st::settingsPluginMenuRemove);
 	Ui::AddSkip(layout);
 }
@@ -444,7 +448,7 @@ void AddPluginSettings(
 		const QJsonArray &fields,
 		Fn<void(QJsonValue, bool)> activate,
 		Fn<void(QJsonObject)> save) {
-	AddDetailsSection(layout, u"Настройки плагина"_q);
+	AddDetailsSection(layout, Tr(u"Plugin settings"_q, u"Настройки плагина"_q));
 
 	auto values = std::vector<std::pair<QString, Fn<QJsonValue()>>>();
 	auto seenKeys = std::vector<QString>();
@@ -520,7 +524,7 @@ void AddPluginSettings(
 	if (values.empty()) {
 		return;
 	}
-	AddAction(layout, u"Сохранить настройки"_q, [save = std::move(save), values = std::move(values)] {
+	AddAction(layout, Tr(u"Save settings"_q, u"Сохранить настройки"_q), [save = std::move(save), values = std::move(values)] {
 		auto object = QJsonObject();
 		for (const auto &[key, value] : values) {
 			object.insert(key, value());
@@ -533,17 +537,17 @@ void BuildPluginRemovalBox(
 		not_null<Ui::GenericBox*> box,
 		rpl::producer<QString> cancel,
 		Fn<void(bool)> remove) {
-	box->setTitle(rpl::single(u"Удаление плагина"_q));
+	box->setTitle(rpl::single(Tr(u"Remove Plugin"_q, u"Удаление плагина"_q)));
 	box->addTopButton(st::settingsPluginClose, [=] { box->closeBox(); })
-		->setAccessibleName(u"Закрыть"_q);
+		->setAccessibleName(Tr(u"Close"_q, u"Закрыть"_q));
 	box->addRow(object_ptr<Ui::FlatLabel>(
 		box,
-		u"Удалить выбранный экземпляр плагина?"_q,
+		Tr(u"Remove the selected plugin instance?"_q, u"Удалить выбранный экземпляр плагина?"_q),
 		st::boxLabel));
 	const auto keepData = box->addRow(
 		object_ptr<Ui::Checkbox>(
 			box,
-			u"Сохранить настройки и данные"_q,
+			Tr(u"Keep settings and data"_q, u"Сохранить настройки и данные"_q),
 			false,
 			st::defaultBoxCheckbox),
 		style::margins(
@@ -552,7 +556,7 @@ void BuildPluginRemovalBox(
 			st::boxRowPadding.right(),
 			style::ConvertScale(4)));
 	box->addLeftButton(std::move(cancel), [=] { box->closeBox(); }, st::settingsPluginDialog);
-	box->addButton(rpl::single(u"Удалить"_q), [=] {
+	box->addButton(rpl::single(Tr(u"Remove"_q, u"Удалить"_q)), [=] {
 		const auto keep = keepData->checked();
 		const auto invoke = remove;
 		box->closeBox();

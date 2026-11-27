@@ -1,4 +1,5 @@
 #include "ovygram/plugin_list_view.h"
+#include "ovygram/i18n.h"
 #include "ovygram/plugin_trust_badge.h"
 #include "styles/style_layers.h"
 #include "styles/style_plugin_management.h"
@@ -59,26 +60,26 @@ QString UpdateLabel(const QJsonObject &plugin) {
 	}
 	const auto version = update.value(u"latest_version"_q).toString(update.value(u"version"_q).toString());
 	return update.value(u"rollback"_q).toBool()
-		? u"Доступна безопасная версия %1"_q.arg(version)
-		: u"Новая версия %1"_q.arg(version);
+		? Tr(u"Safe version %1 available"_q, u"Доступна безопасная версия %1"_q).arg(version)
+		: Tr(u"New version %1"_q, u"Новая версия %1"_q).arg(version);
 }
 
 QString TrustLabel(const QString &status) {
-	if (status == u"official"_q) return u"Официальный"_q;
-	if (status == u"verified"_q) return u"Проверен"_q;
-	if (status == u"blocked"_q) return u"Заблокирован"_q;
-	if (status == u"revoked"_q) return u"Проверка отозвана"_q;
-	if (status == u"verification_unavailable"_q) return u"Проверка недоступна"_q;
-	return u"Не проверен"_q;
+	if (status == u"official"_q) return Tr(u"Official"_q, u"Официальный"_q);
+	if (status == u"verified"_q) return Tr(u"Verified"_q, u"Проверен"_q);
+	if (status == u"blocked"_q) return Tr(u"Blocked"_q, u"Заблокирован"_q);
+	if (status == u"revoked"_q) return Tr(u"Verification revoked"_q, u"Проверка отозвана"_q);
+	if (status == u"verification_unavailable"_q) return Tr(u"Verification unavailable"_q, u"Проверка недоступна"_q);
+	return Tr(u"Unverified"_q, u"Не проверен"_q);
 }
 
 class Actions final : public Ui::RpWidget {
 public:
 	Actions(QWidget *parent, Fn<void()> import, Fn<void()> check)
 	: Ui::RpWidget(parent)
-	, _import(Ui::CreateChild<Ui::RoundButton>(this, rpl::single(u"Импортировать плагин"_q),
+	, _import(Ui::CreateChild<Ui::RoundButton>(this, rpl::single(Tr(u"Import plugin"_q, u"Импортировать плагин"_q)),
 		st::settingsPluginInstallButton))
-	, _check(Ui::CreateChild<Ui::RoundButton>(this, rpl::single(u"Проверить обновления"_q),
+	, _check(Ui::CreateChild<Ui::RoundButton>(this, rpl::single(Tr(u"Check for updates"_q, u"Проверить обновления"_q)),
 		st::settingsPluginInstallSecondary)) {
 		_import->setTextTransform(Ui::RoundButtonTextTransform::NoTransform);
 		_check->setTextTransform(Ui::RoundButtonTextTransform::NoTransform);
@@ -107,7 +108,7 @@ private:
 class ListEntry final : public Ui::SettingsButton {
 public:
 	ListEntry(QWidget *parent, const QJsonObject &plugin)
-	: Ui::SettingsButton(parent, rpl::single(plugin.value(u"name"_q).toString()), st::settingsPluginCardTitle)
+	: Ui::SettingsButton(parent, rpl::single(I18n::PluginName(plugin)), st::settingsPluginCardTitle)
 	, _loaded(plugin.value(u"loaded"_q).toBool())
 	, _blocked(plugin.value(u"trust"_q).toObject().value(u"status"_q).toString() == u"blocked"_q)
 	, _meta(Ui::CreateChild<Ui::FlatLabel>(this, summary(plugin), st::settingsPluginCardMeta)) {
@@ -204,11 +205,11 @@ protected:
 
 private:
 	QString summary(const QJsonObject &plugin) const {
-		const auto status = _blocked ? u"Запуск запрещён"_q
-			: plugin.value(u"installing"_q).toBool() ? u"Установка зависимостей…"_q
-			: _loaded ? u"Запущен"_q
-			: plugin.value(u"enabled"_q).toBool() ? u"Включён, но не запущен"_q
-			: u"Остановлен"_q;
+		const auto status = _blocked ? Tr(u"Blocked"_q, u"Запуск запрещён"_q)
+			: plugin.value(u"installing"_q).toBool() ? Tr(u"Installing dependencies…"_q, u"Установка зависимостей…"_q)
+			: _loaded ? Tr(u"Running"_q, u"Запущен"_q)
+			: plugin.value(u"enabled"_q).toBool() ? Tr(u"Enabled, not running"_q, u"Включён, но не запущен"_q)
+			: Tr(u"Stopped"_q, u"Остановлен"_q);
 		auto result = status + u" · v"_q + plugin.value(u"version"_q).toString();
 		if (plugin.value(u"instances"_q).toInt() > 1) {
 			result += u" · "_q + plugin.value(u"installation_id"_q).toString().left(8);
@@ -263,19 +264,22 @@ public:
 	, _toggle(Ui::CreateChild<ListToggle>(this)) {
 		const auto enabled = plugin.value(u"enabled"_q).toBool();
 		const auto blocked = plugin.value(u"trust"_q).toObject().value(u"status"_q).toString() == u"blocked"_q;
+		const auto displayName = I18n::PluginName(plugin);
 		_open->setClickedCallback(std::move(open));
 		_toggle->toggleOn(rpl::single(enabled), true);
-		_toggle->setAccessibleName((enabled ? u"Отключить %1"_q : u"Включить %1"_q)
-			.arg(plugin.value(u"name"_q).toString()));
+		_toggle->setAccessibleName((enabled
+			? Tr(u"Disable %1"_q, u"Отключить %1"_q)
+			: Tr(u"Enable %1"_q, u"Включить %1"_q)).arg(displayName));
 		_toggle->setClickedCallback(std::move(toggle));
 		_toggle->setDisabled((launchBlocked || blocked) && !enabled);
 		const auto offer = plugin.value(u"update"_q).toObject();
 		const auto updating = plugin.value(u"updating"_q).toBool();
 		if (!offer.isEmpty() || updating) {
-			const auto title = updating ? u"Обновляется…"_q
-				: offer.value(u"rollback"_q).toBool() ? u"Откатить"_q : u"Обновить"_q;
-			_applyUpdate = Ui::CreateChild<ListUpdateButton>(this,
-				title, plugin.value(u"name"_q).toString());
+			const auto title = updating ? Tr(u"Updating…"_q, u"Обновляется…"_q)
+				: offer.value(u"rollback"_q).toBool()
+				? Tr(u"Roll back"_q, u"Откатить"_q)
+				: Tr(u"Update"_q, u"Обновить"_q);
+			_applyUpdate = Ui::CreateChild<ListUpdateButton>(this, title, displayName);
 			_applyUpdate->setClickedCallback(std::move(applyUpdate));
 			_applyUpdate->setDisabled(updating);
 			if (updating) {
@@ -335,18 +339,19 @@ private:
 QString PluginErrorTitle(const QJsonObject &plugin) {
 	// Attribute messages from the plugin process to the plugin.
 	return plugin.value(u"error_from_plugin"_q).toBool()
-		? u"Сообщение плагина: "_q
-		: u"Ошибка: "_q;
+		? Tr(u"Plugin message: "_q, u"Сообщение плагина: "_q)
+		: Tr(u"Error: "_q, u"Ошибка: "_q);
 }
 
 not_null<Ui::InputField*> AddPluginListSearch(not_null<Ui::VerticalLayout*> layout) {
 	const auto row = layout->add(object_ptr<Ui::FixedHeightWidget>(layout, Px(38)),
 		Inset(14, 12));
+	const auto placeholder = Tr(u"Search plugins"_q, u"Поиск плагинов"_q);
 	const auto field = Ui::CreateChild<Ui::InputField>(row, st::defaultMultiSelectSearchField,
-		rpl::single(u"Поиск плагинов"_q));
-	field->setAccessibleName(u"Поиск плагинов"_q);
+		rpl::single(placeholder));
+	field->setAccessibleName(placeholder);
 	const auto clear = Ui::CreateChild<Ui::CrossButton>(row, st::settingsPluginSearchClear);
-	clear->setAccessibleName(u"Очистить поиск"_q);
+	clear->setAccessibleName(Tr(u"Clear search"_q, u"Очистить поиск"_q));
 	clear->setClickedCallback([=] { field->setText({}); });
 	clear->toggle(false, anim::type::instant);
 	field->changes() | rpl::on_next([=] {
@@ -409,13 +414,15 @@ void AddPluginListRows(
 		Fn<void(QString id)> applyUpdate,
 		Fn<void()> log) {
 	const auto textInset = Inset().left() + RowInset();
-	layout->add(object_ptr<Ui::FlatLabel>(layout, u"Установленные плагины"_q,
+	layout->add(object_ptr<Ui::FlatLabel>(layout, Tr(u"Installed plugins"_q, u"Установленные плагины"_q),
 		st::settingsPluginSectionTitle), { textInset, Px(4), textInset, Px(6) });
 	auto found = false;
 	for (const auto &entry : plugins) {
 		const auto plugin = entry.toObject();
 		const auto name = plugin.value(u"name"_q).toString();
+		const auto localizedName = I18n::PluginName(plugin);
 		if (!name.contains(query, Qt::CaseInsensitive)
+			&& !localizedName.contains(query, Qt::CaseInsensitive)
 			&& !plugin.value(u"plugin_id"_q).toString().contains(query, Qt::CaseInsensitive)
 			&& !plugin.value(u"author"_q).toString().contains(query, Qt::CaseInsensitive)) {
 			continue;
@@ -430,10 +437,12 @@ void AddPluginListRows(
 	}
 	if (!found) {
 		UseSecondaryText(layout->add(object_ptr<Ui::FlatLabel>(layout,
-			plugins.isEmpty() ? u"Установленных плагинов пока нет."_q : u"Плагины не найдены."_q,
+			plugins.isEmpty()
+				? Tr(u"No plugins installed yet."_q, u"Установленных плагинов пока нет."_q)
+				: Tr(u"No plugins found."_q, u"Плагины не найдены."_q),
 			st::settingsPluginCardMeta), { textInset, Px(8), textInset, Px(12) }));
 	}
-	const auto journal = Action(layout, u"Открыть журнал"_q, std::move(log));
+	const auto journal = Action(layout, Tr(u"Open log"_q, u"Открыть журнал"_q), std::move(log));
 	journal->setPaddingOverride({ textInset, Px(12), textInset, Px(8) });
 	journal->setColorOverride(SecondaryText());
 	style::PaletteChanged() | rpl::on_next([journal] {

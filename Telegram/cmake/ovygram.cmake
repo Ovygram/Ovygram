@@ -32,6 +32,9 @@ target_sources(Telegram PRIVATE
     SourceFiles/ovygram/chat_list_filter.cpp
     SourceFiles/ovygram/chat_list_filter.h
     SourceFiles/ovygram/chat_decorations.h
+    SourceFiles/ovygram/i18n.cpp
+    SourceFiles/ovygram/i18n.h
+    SourceFiles/ovygram/i18n_rpl.h
     SourceFiles/ovygram/message_decorations.cpp
     SourceFiles/ovygram/message_decorations.h
     SourceFiles/ovygram/plugin_commands.cpp

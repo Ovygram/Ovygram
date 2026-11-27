@@ -18,7 +18,11 @@ def main():
             from ovygram_sandbox import apply_scope
             apply_scope()
         os.execve(binary, [binary, *args], {"HOME": "/tmp", "TMPDIR": "/tmp", "LANG": "C.UTF-8"})
-    raise RuntimeError("Нет изоляции компонента для этой платформы.")
+    from ovygram_i18n import tr
+    raise RuntimeError(tr(
+        "Component isolation is not available on this platform.",
+        "Нет изоляции компонента для этой платформы.",
+    ))
 
 
 if __name__ == "__main__":

@@ -192,7 +192,7 @@ class DistributionTests(unittest.TestCase):
         self.addCleanup(self.manager.shutdown)
         self.assertIsNone(self.manager.describe(identity)["update"])
         self.assertEqual(self.manager.distribution.notification()["count"], 0)
-        with self.assertRaisesRegex(ValueError, "устарело"):
+        with self.assertRaisesRegex(ValueError, "expired"):
             self.manager.distribution.apply_offer(identity)
 
     def test_missing_release_prepares_and_installs_as_nonpublic(self):
@@ -237,7 +237,7 @@ class DistributionTests(unittest.TestCase):
                 self.now = issued - timedelta(seconds=seconds)
                 self.registry.validate(answer)
         self.now = issued - timedelta(seconds=61)
-        with self.assertRaisesRegex(ValueError, "время"):
+        with self.assertRaisesRegex(ValueError, "timestamp"):
             self.registry.validate(answer)
         self.now = issued + timedelta(days=7)
         with self.assertRaises(ValueError):
@@ -275,13 +275,13 @@ class DistributionTests(unittest.TestCase):
 
     def test_blocked_install_is_refused(self):
         self.approve(self.source(), status="blocked")
-        with self.assertRaisesRegex(ValueError, "запрещена"):
+        with self.assertRaisesRegex(ValueError, "installation blocked"):
             self.install()
         self.assertFalse(self.manager.records)
 
     def test_offline_requires_separate_confirmation(self):
         self.offline = True
-        with self.assertRaisesRegex(ValueError, "подтверждение"):
+        with self.assertRaisesRegex(ValueError, "confirmation"):
             self.install()
         identity = self.install(allow_unavailable=True)
         self.assertEqual(self.manager.describe(identity)["trust"]["status"], "verification_unavailable")
@@ -297,7 +297,7 @@ class DistributionTests(unittest.TestCase):
     def test_separate_trusted_duplicate_is_refused(self):
         self.approve(self.source())
         self.install()
-        with self.assertRaisesRegex(ValueError, "Два проверенных"):
+        with self.assertRaisesRegex(ValueError, "Two verified"):
             self.install(separate=True)
 
     def test_trust_loss_requires_confirmation_and_separate_data_is_empty(self):
@@ -305,7 +305,7 @@ class DistributionTests(unittest.TestCase):
         identity = self.install()
         self.manager.set_setting(identity, "secret", "private")
         unknown = self.source("1.1")
-        with self.assertRaisesRegex(ValueError, "потери проверки"):
+        with self.assertRaisesRegex(ValueError, "unverified"):
             self.install(unknown, installation_id=identity)
         separate = self.install(unknown, separate=True)
         self.assertEqual(self.manager.records[separate]["settings"], {})
@@ -322,7 +322,7 @@ class DistributionTests(unittest.TestCase):
         self.assertNotIn(identity, self.manager.loaded)
         self.offline = True
         self.check()
-        with self.assertRaisesRegex(ValueError, "запрещён"):
+        with self.assertRaisesRegex(ValueError, "launch blocked"):
             self.manager.enable(identity)
         self.assertEqual(self.manager.describe(identity)["trust"]["status"], "blocked")
 
@@ -345,7 +345,7 @@ class DistributionTests(unittest.TestCase):
         second = self.source("1.1.0")
         self.approve(second, "1.1.0", 2)
         self.install(second, installation_id=identity)
-        with self.assertRaisesRegex(ValueError, "отозвана"):
+        with self.assertRaisesRegex(ValueError, "revoked"):
             self.manager.rollback(identity)
         self.assertEqual(self.manager.describe(identity)["version"], "1.1.0")
 
@@ -378,7 +378,7 @@ class DistributionTests(unittest.TestCase):
         for filename in ("injected.py", "injected.pyc", "native.so"):
             path = directory / filename
             path.write_bytes(b"injected")
-            with self.assertRaisesRegex(RuntimeError, "посторонний"):
+            with self.assertRaisesRegex(RuntimeError, "unexpected file"):
                 self.manager.enable(identity)
             path.unlink()
 
@@ -654,7 +654,7 @@ class WindowsRegistryCryptoTests(unittest.TestCase):
                               side_effect=lambda path: load_crypto(actual_library)) as load:
                     verify_ed25519(public, signature, b'')
                     load.assert_called_once_with(str(directory / 'libcrypto-3.dll'))
-                    with self.assertRaisesRegex(ValueError, 'Подпись реестра'):
+                    with self.assertRaisesRegex(ValueError, 'Registry signature'):
                         verify_ed25519(public, signature, b'changed payload')
 
 

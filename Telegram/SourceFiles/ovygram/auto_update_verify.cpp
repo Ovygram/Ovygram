@@ -1,5 +1,7 @@
 #include "ovygram/auto_update_verify.h"
 
+#include "ovygram/i18n.h"
+
 #include <QtCore/QJsonArray>
 #include <QtCore/QJsonDocument>
 #include <QtCore/QJsonValue>
@@ -263,24 +265,27 @@ std::optional<UpdateChannel> UpdateChannelFromName(const QString &name) {
 
 QString UpdateChannelTitle(UpdateChannel channel) {
 	switch (channel) {
-	case UpdateChannel::Stable: return QStringLiteral("Стабильный");
-	case UpdateChannel::Beta: return QStringLiteral("Бета");
-	case UpdateChannel::Canary: return QStringLiteral("Ночной (Canary)");
+	case UpdateChannel::Stable: return Tr(u"Stable", u"Стабильный");
+	case UpdateChannel::Beta: return Tr(u"Beta", u"Бета");
+	case UpdateChannel::Canary: return Tr(u"Canary", u"Ночной (Canary)");
 	}
-	return QStringLiteral("Стабильный");
+	return Tr(u"Stable", u"Стабильный");
 }
 
 QString UpdateChannelDescription(UpdateChannel channel) {
 	switch (channel) {
 	case UpdateChannel::Stable:
-		return QStringLiteral(
-			"Проверенные релизы для повседневного использования.");
+		return Tr(
+			u"Verified releases for everyday use.",
+			u"Проверенные релизы для повседневного использования.");
 	case UpdateChannel::Beta:
-		return QStringLiteral(
-			"Предрелизные сборки с новыми функциями до выхода в стабильный канал.");
+		return Tr(
+			u"Pre-release builds with new features before they reach Stable.",
+			u"Предрелизные сборки с новыми функциями до выхода в стабильный канал.");
 	case UpdateChannel::Canary:
-		return QStringLiteral(
-			"Свежие тестовые сборки из GitHub Actions. Возможны ошибки и нестабильность.");
+		return Tr(
+			u"Fresh test builds from GitHub Actions. May contain bugs and instability.",
+			u"Свежие тестовые сборки из GitHub Actions. Возможны ошибки и нестабильность.");
 	}
 	return QString();
 }

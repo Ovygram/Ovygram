@@ -27,12 +27,17 @@ TYPES = ("str", "int", "float", "bool")
 KINDS = ("user", "chat", "channel")
 TRUE = ("true", "yes", "on", "1", "да")
 FALSE = ("false", "no", "off", "0", "нет")
+from ovygram_i18n import tr
+
 INACTIVE = {"active": False, "items": [], "selected": 0, "ghost": "", "footer": "", "error": False}
 
 
 def _text(value, limit, name):
     if not isinstance(value, str) or len(value) > limit or any(ord(char) < 32 for char in value):
-        raise ValueError(f"Некорректное поле {name} в описании команды.")
+        raise ValueError(tr(
+            f"Invalid field {name} in command definition.",
+            f"Некорректное поле {name} в описании команды.",
+        ))
     return value
 
 
@@ -41,9 +46,12 @@ def _scalar(value, kind):
     argument."""
     expected = {"str": str, "int": int, "float": (int, float), "bool": bool}[kind]
     if isinstance(value, bool) != (kind == "bool") or not isinstance(value, expected):
-        raise ValueError("Значение аргумента не соответствует его типу.")
+        raise ValueError(tr(
+            "Argument value does not match its type.",
+            "Значение аргумента не соответствует его типу.",
+        ))
     if isinstance(value, float) and not math.isfinite(value):
-        raise ValueError("Значение аргумента не является числом.")
+        raise ValueError(tr("Argument value is not a finite number.", "Значение аргумента не является числом."))
     if isinstance(value, str):
         _text(value, MAX_VALUE, "choices")
     return value
@@ -52,36 +60,39 @@ def _scalar(value, kind):
 def checked(commands):
     """The declarations of one plugin, normalized; ValueError otherwise."""
     if not isinstance(commands, list) or len(commands) > MAX_COMMANDS:
-        raise ValueError("Некорректный список команд.")
+        raise ValueError(tr("Invalid command list.", "Некорректный список команд."))
     result = []
     names = set()
     for command in commands:
         if not isinstance(command, dict):
-            raise ValueError("Некорректное описание команды.")
+            raise ValueError(tr("Invalid command definition.", "Некорректное описание команды."))
         aliases = command.get("aliases", [])
         if not isinstance(aliases, list) or len(aliases) > 8:
-            raise ValueError("Некорректные псевдонимы команды.")
+            raise ValueError(tr("Invalid command aliases.", "Некорректные псевдонимы команды."))
         titles = [command.get("name"), *aliases]
         for title in titles:
             if not isinstance(title, str) or not NAME.fullmatch(title) or title.casefold() in names:
-                raise ValueError(f"Недопустимое или повторное имя команды: {title!r}.")
+                raise ValueError(tr(
+                    f"Invalid or duplicate command name: {title!r}.",
+                    f"Недопустимое или повторное имя команды: {title!r}.",
+                ))
             names.add(title.casefold())
         kinds = command.get("kinds", [])
         if not isinstance(kinds, list) or any(kind not in KINDS for kind in kinds):
-            raise ValueError("Некорректный список типов чатов команды.")
+            raise ValueError(tr("Invalid command chat kinds list.", "Некорректный список типов чатов команды."))
         declared = command.get("args", [])
         if not isinstance(declared, list) or len(declared) > MAX_ARGS:
-            raise ValueError("Некорректный список аргументов команды.")
+            raise ValueError(tr("Invalid command arguments list.", "Некорректный список аргументов команды."))
         args = []
         optional = False
         for index, arg in enumerate(declared):
             if not isinstance(arg, dict) or arg.get("type") not in TYPES:
-                raise ValueError("Некорректное описание аргумента.")
+                raise ValueError(tr("Invalid argument definition.", "Некорректное описание аргумента."))
             kind = arg["type"]
             choices = arg.get("choices")
             if choices is not None:
                 if not isinstance(choices, list) or not 0 < len(choices) <= MAX_CHOICES:
-                    raise ValueError("Некорректный список значений аргумента.")
+                    raise ValueError(tr("Invalid argument choices list.", "Некорректный список значений аргумента."))
                 choices = [_scalar(choice, kind) for choice in choices]
             entry = {
                 "name": _text(arg.get("name"), 32, "name"), "type": kind, "choices": choices,
@@ -91,11 +102,17 @@ def checked(commands):
                 "default": _scalar(arg["default"], kind) if arg.get("default") is not None else None,
             }
             if not entry["name"]:
-                raise ValueError("У аргумента команды нет имени.")
+                raise ValueError(tr("Command argument has no name.", "У аргумента команды нет имени."))
             if optional and not entry["optional"]:
-                raise ValueError("Обязательный аргумент не может идти после необязательного.")
+                raise ValueError(tr(
+                    "A required argument cannot follow an optional one.",
+                    "Обязательный аргумент не может идти после необязательного.",
+                ))
             if entry["rest"] and (index != len(declared) - 1 or kind != "str"):
-                raise ValueError("Остаток строки забирает только последний строковый аргумент.")
+                raise ValueError(tr(
+                    "Only the last string argument can capture the rest of the line.",
+                    "Остаток строки забирает только последний строковый аргумент.",
+                ))
             optional = entry["optional"]
             args.append(entry)
         result.append({
@@ -168,13 +185,24 @@ def convert(arg, raw):
         else:
             value = raw
     except ValueError:
-        expected = {"int": "целое число", "float": "число", "bool": "true или false"}[kind]
-        raise ValueError(f"{arg['name']}: ожидается {expected}.") from None
+        expected = {
+            "int": tr("an integer", "целое число"),
+            "float": tr("a number", "число"),
+            "bool": tr("true or false", "true или false"),
+        }[kind]
+        raise ValueError(tr(
+            f"{arg['name']}: expected {expected}.",
+            f"{arg['name']}: ожидается {expected}.",
+        )) from None
     if arg["choices"] is not None:
         for choice in arg["choices"]:
             if choice == value or (isinstance(choice, str) and choice.casefold() == raw.casefold()):
                 return choice
-        raise ValueError(f"{arg['name']}: допустимо {', '.join(map(str, arg['choices'][:8]))}.")
+        allowed = ", ".join(map(str, arg["choices"][:8]))
+        raise ValueError(tr(
+            f"{arg['name']}: allowed values: {allowed}.",
+            f"{arg['name']}: допустимо {allowed}.",
+        ))
     return value
 
 
@@ -318,7 +346,7 @@ class Engine:
         index = len(done)
         if index >= len(args):
             if current or index > len(args):
-                return [], [], "Лишний аргумент. " + footer, True, None, (installation_id, name, -1)
+                return [], [], tr("Extra argument. ", "Лишний аргумент. ") + footer, True, None, (installation_id, name, -1)
             return [], [], footer, False, None, (installation_id, name, index)
         arg = args[index]
         if arg["description"]:
@@ -462,7 +490,10 @@ class Engine:
             if current or source[start:].startswith('"'):
                 done.append(current)
             if len(done) > len(args):
-                return {"error": f"Лишний аргумент. /{name} {usage(args)}"}
+                return {"error": tr(
+                    f"Extra argument. /{name} {usage(args)}",
+                    f"Лишний аргумент. /{name} {usage(args)}",
+                )}
             values = []
             for index, arg in enumerate(args):
                 if index < len(done):
@@ -473,5 +504,8 @@ class Engine:
                 elif arg["optional"]:
                     values.append(arg["default"])
                 else:
-                    return {"error": f"Не хватает аргумента. /{name} {usage(args)}"}
+                    return {"error": tr(
+                        f"Missing argument. /{name} {usage(args)}",
+                        f"Не хватает аргумента. /{name} {usage(args)}",
+                    )}
             return {"installation_id": installation_id, "name": command["name"], "values": values}

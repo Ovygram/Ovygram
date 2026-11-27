@@ -108,23 +108,30 @@ class Helpers:
                 self.stop(owner)
 
     def start(self, owner, resource, arguments, config):
+        from ovygram_i18n import tr
         if owner in self.children:
-            raise ValueError("Сначала остановите работающий компонент.")
+            raise ValueError(tr("Stop the running component first.", "Сначала остановите работающий компонент."))
         if not isinstance(resource, str) or len(resource) > 240:
-            raise ValueError("Недопустимое имя компонента.")
+            raise ValueError(tr("Invalid component name.", "Недопустимое имя компонента."))
         resource = archive_path(resource).as_posix()
         if not isinstance(arguments, list) or len(arguments) > 32 or not all(
                 isinstance(arg, str) and len(arg) <= 1024 and "\x00" not in arg for arg in arguments):
-            raise ValueError("Недопустимые аргументы компонента.")
+            raise ValueError(tr("Invalid component arguments.", "Недопустимые аргументы компонента."))
         if not isinstance(config, str) or len(config.encode()) > 256 * 1024:
-            raise ValueError("Конфигурация превышает 256 КиБ.")
+            raise ValueError(tr("Configuration exceeds 256 KiB.", "Конфигурация превышает 256 КиБ."))
         version = self.manager.records[owner]["current"]
         if version["package_type"] != "ovyzip" or not version.get("sha256"):
-            raise ValueError("Компонент должен входить в установленный .ovyzip.")
+            raise ValueError(tr(
+                "Component must be part of an installed .ovyzip package.",
+                "Компонент должен входить в установленный .ovyzip.",
+            ))
         with self.manager.original(version).open("rb") as stream:
             package = stream.read(MAX_PACKAGE + 1)
         if len(package) > MAX_PACKAGE or hashlib.sha256(package).hexdigest() != version["sha256"]:
-            raise ValueError("Контрольная сумма установленного архива изменилась.")
+            raise ValueError(tr(
+                "The checksum of the installed archive has changed.",
+                "Контрольная сумма установленного архива изменилась.",
+            ))
         directory = tempfile.TemporaryDirectory(dir=self.manager.root, prefix="helper-")
         process = guard = None
         try:
@@ -139,7 +146,10 @@ class Helpers:
             with binary.open("rb") as stream:
                 magic = stream.read(4)
             if not (magic.startswith(b"MZ") if os.name == "nt" else magic == b"\x7fELF"):
-                raise ValueError("Формат компонента не подходит для этой ОС.")
+                raise ValueError(tr(
+                    "Component format is not compatible with this OS.",
+                    "Формат компонента не подходит для этой ОС.",
+                ))
             if os.name != "nt":
                 binary.chmod(0o500)
             python, environment, bundled = python_command(self.manager.python_dir)
@@ -154,7 +164,10 @@ class Helpers:
                 args, environment, read_only=read_only, directory=folder, allow_network=allow_network)
             try:
                 if not report["active"]:
-                    raise SandboxError("Для запуска компонента нужна системная песочница.")
+                    raise SandboxError(tr(
+                        "System sandbox is required to run a component.",
+                        "Для запуска компонента нужна системная песочница.",
+                    ))
                 if os.name == "nt":
                     environment["SystemRoot"] = os.environ.get("SystemRoot", r"C:\Windows")
                 argv.extend([str(int(bool(report.get("scoped")))), str(binary), *arguments])
@@ -185,10 +198,14 @@ class Helpers:
             raise
 
     def command(self, installation_id, operation, params):
+        from ovygram_i18n import tr
         owner = installation_id
         self.poll()
         if owner not in self.manager._loaded or not self.manager.host.status()["active"]:
-            raise ValueError("Нужен активный плагин в системной песочнице.")
+            raise ValueError(tr(
+                "An active plugin inside the system sandbox is required.",
+                "Нужен активный плагин в системной песочнице.",
+            ))
         if operation == "start":
             self.start(owner, params.get("resource"), params.get("arguments"), params.get("config"))
         elif operation == "stop":
@@ -199,21 +216,30 @@ class Helpers:
             return self.manager.host.status()["network"]
         elif operation in ("offer", "offer_http"):
             if owner not in self.children or not self.manager.host.status()["network"]:
-                raise ValueError("Сетевой компонент недоступен.")
+                raise ValueError(tr("Network component is unavailable.", "Сетевой компонент недоступен."))
             port, user, password = (params.get(key) for key in ("port", "user", "password"))
             if type(port) is not int or not 1024 <= port <= 65535 or not all(
                     isinstance(v, str) and v.isascii() and v.isprintable() and 1 <= len(v) <= 255
                     for v in (user, password)):
-                raise ValueError("Укажите локальный порт и учётные данные прокси.")
+                raise ValueError(tr(
+                    "Specify a local port and proxy credentials.",
+                    "Укажите локальный порт и учётные данные прокси.",
+                ))
             protocol = "http" if operation == "offer_http" else "socks5"
             supported = ("pages", "mini_apps") if protocol == "http" else ("default", "api", "files")
             scopes = params.get("routes", list(supported))
             label = params.get("label", "")
             if not isinstance(label, str) or len(label) > 24 or any(not (c.isalnum() or c in " -_") for c in label):
-                raise ValueError("Недопустимое название для индикатора прокси.")
+                raise ValueError(tr(
+                    "Invalid proxy indicator label.",
+                    "Недопустимое название для индикатора прокси.",
+                ))
             if (not isinstance(scopes, list) or not 0 < len(scopes) <= len(supported)
                     or any(scope not in supported for scope in scopes) or len(set(scopes)) != len(scopes)):
-                raise ValueError("Недопустимые области маршрутизации для выбранного протокола.")
+                raise ValueError(tr(
+                    "Invalid routing scopes for the selected protocol.",
+                    "Недопустимые области маршрутизации для выбранного протокола.",
+                ))
             key = owner + ":http" if protocol == "http" else owner
             self.offers[key] = dict(token=uuid.uuid4().hex, port=port, user=user, password=password,
                                     protocol=protocol, routes=scopes, label=label.strip(),
@@ -221,5 +247,5 @@ class Helpers:
                                     plugin_id=self.manager.records[owner]["plugin_id"], owner=owner)
             self.manager.notify({"id": uuid.uuid4().hex, "method": "proxy.refresh"})
         else:
-            raise ValueError("Неизвестная операция компонента.")
+            raise ValueError(tr("Unknown component operation.", "Неизвестная операция компонента."))
         return True

@@ -20,15 +20,19 @@ import unicodedata
 import urllib.parse
 import urllib.request
 
+from ovygram_i18n import tr
 from ovygram_package import MAX_PACKAGE
 
 TRUSTED = frozenset(("verified", "official"))
 STATUSES = TRUSTED | {"unverified", "revoked", "blocked"}
-UNAVAILABLE = "Не удалось проверить плагин"
 MAX_CLOCK_SKEW = timedelta(seconds=60)
 _EVP_PKEY_ED25519 = 1087
 _CRYPTO_LOCK = threading.Lock()
 _CRYPTO_CACHE = {}
+
+
+def _unavailable_text():
+    return tr("Failed to verify the plugin", "Не удалось проверить плагин")
 
 
 def _load_crypto():
@@ -61,7 +65,7 @@ def _load_crypto():
                     crypto = loaded
                     break
         if crypto is None:
-            raise ValueError("OpenSSL libcrypto недоступна.")
+            raise ValueError(tr("OpenSSL libcrypto is unavailable.", "OpenSSL libcrypto недоступна."))
         has_ex = hasattr(crypto, "EVP_PKEY_new_raw_public_key_ex")
         if has_ex:
             crypto.EVP_PKEY_new_raw_public_key_ex.argtypes = [
@@ -94,7 +98,7 @@ def canonical(document):
 
 def verify_ed25519(key, signature, payload):
     if len(key) != 32 or len(signature) != 64:
-        raise ValueError("Некорректная подпись реестра.")
+        raise ValueError(tr("Invalid registry signature.", "Некорректная подпись реестра."))
     crypto, has_ex = _load_crypto()
     public = (crypto.EVP_PKEY_new_raw_public_key_ex(None, b"ED25519", None, key, len(key))
               if has_ex else crypto.EVP_PKEY_new_raw_public_key(_EVP_PKEY_ED25519, None, key, len(key)))
@@ -103,7 +107,10 @@ def verify_ed25519(key, signature, payload):
         if not public or not context or crypto.EVP_DigestVerifyInit(
                 context, None, None, None, public) != 1 or crypto.EVP_DigestVerify(
                     context, signature, len(signature), payload, len(payload)) != 1:
-            raise ValueError("Подпись реестра не прошла проверку.")
+            raise ValueError(tr(
+                "Registry signature verification failed.",
+                "Подпись реестра не прошла проверку.",
+            ))
     finally:
         if context:
             crypto.EVP_MD_CTX_free(context)
@@ -114,7 +121,10 @@ def verify_ed25519(key, signature, payload):
 def https_url(url):
     parts = urllib.parse.urlsplit(url)
     if parts.scheme != "https" or not parts.hostname or parts.username or parts.password or parts.fragment:
-        raise ValueError("Для реестра и пакетов требуется HTTPS URL.")
+        raise ValueError(tr(
+            "An HTTPS URL is required for the registry and packages.",
+            "Для реестра и пакетов требуется HTTPS URL.",
+        ))
     return url
 
 
@@ -131,7 +141,10 @@ def download(url, limit):
         https_url(response.geturl())
         data = response.read(limit + 1)
     if len(data) > limit:
-        raise ValueError("Ответ сервера превышает допустимый размер.")
+        raise ValueError(tr(
+            "Server response exceeds the allowed size.",
+            "Ответ сервера превышает допустимый размер.",
+        ))
     return data
 
 
@@ -139,7 +152,7 @@ def unique_object(pairs):
     result = {}
     for key, value in pairs:
         if key in result:
-            raise ValueError("Повторяющееся поле JSON.")
+            raise ValueError(tr("Duplicate JSON field.", "Повторяющееся поле JSON."))
         result[key] = value
     return result
 
@@ -148,12 +161,12 @@ def json_document(payload):
     document = json.loads(payload, object_pairs_hook=unique_object,
                           parse_constant=lambda value: (_ for _ in ()).throw(ValueError(value)))
     if not isinstance(document, dict):
-        raise ValueError("Ожидается объект JSON.")
+        raise ValueError(tr("Expected a JSON object.", "Ожидается объект JSON."))
     return document
 
 
-def unavailable(reason=UNAVAILABLE):
-    return {"status": "verification_unavailable", "reason": reason,
+def unavailable(reason=None):
+    return {"status": "verification_unavailable", "reason": reason or _unavailable_text(),
             "chain": None, "release_sequence": None}
 
 
@@ -174,7 +187,10 @@ class Registry:
     def validate(self, answer):
         key = base64.b64decode(self.keys[answer["key_id"]], validate=True)
         if hashlib.sha256(key).hexdigest()[:16] != answer["key_id"]:
-            raise ValueError("ID ключа не совпадает с закреплённым ключом.")
+            raise ValueError(tr(
+                "Key ID does not match the pinned public key.",
+                "ID ключа не совпадает с закреплённым ключом.",
+            ))
         verify_ed25519(key, base64.b64decode(answer["signature"], validate=True), canonical(answer))
         issued = datetime.fromisoformat(answer["issued_at"].replace("Z", "+00:00"))
         expires = datetime.fromisoformat(answer["expires_at"].replace("Z", "+00:00"))
@@ -184,26 +200,41 @@ class Registry:
         if issued.tzinfo is None or expires.tzinfo is None or not issued < expires \
                 or issued > now + MAX_CLOCK_SKEW or now >= expires \
                 or (expires - issued).total_seconds() > 8 * 86400:
-            raise ValueError("Ответ реестра устарел или имеет некорректное время.")
+            raise ValueError(tr(
+                "Registry response is expired or has an invalid timestamp.",
+                "Ответ реестра устарел или имеет некорректное время.",
+            ))
         return answer
 
     def signed(self, path):
         if not self.url or not self.keys:
-            raise ValueError("Реестр не настроен: требуются URL и закреплённый публичный ключ.")
+            raise ValueError(tr(
+                "Registry is not configured: URL and pinned public key are required.",
+                "Реестр не настроен: требуются URL и закреплённый публичный ключ.",
+            ))
         return self.validate(json_document(self.fetch(self.url + path, 2 * 1024 * 1024)))
 
     def match(self, answer, metadata, digest, kind):
         if (answer.get("plugin_id"), answer.get("sha256"), answer.get("package_type")) != (
                 metadata["id"], digest, kind) or answer.get("status") not in STATUSES:
-            raise ValueError("Ответ реестра относится к другому файлу.")
+            raise ValueError(tr(
+                "Registry response belongs to a different file.",
+                "Ответ реестра относится к другому файлу.",
+            ))
         if answer["status"] in TRUSTED:
             if answer.get("version") != metadata["version"] \
                     or answer.get("release") is not metadata["release"] \
                     or type(answer.get("chain")) is not int or answer["chain"] < 1 \
                     or type(answer.get("release_sequence")) is not int or answer["release_sequence"] < 1:
-                raise ValueError("Подтверждённые метаданные не совпадают с пакетом.")
+                raise ValueError(tr(
+                    "Verified metadata does not match the package.",
+                    "Подтверждённые метаданные не совпадают с пакетом.",
+                ))
             if answer["status"] == "official" and metadata["author"] != "Ovygram":
-                raise ValueError("Некорректное подтверждение официального автора.")
+                raise ValueError(tr(
+                    "Invalid verification for official author.",
+                    "Некорректное подтверждение официального автора.",
+                ))
         return answer
 
     def check(self, metadata, digest, kind):
@@ -218,14 +249,14 @@ class Registry:
         answer = version.get("trust", {})
         if version.get("verification_unavailable") or answer.get("status") == "verification_unavailable":
             failure = version.get("verification_failure") or answer
-            result = unavailable(failure.get("reason") or UNAVAILABLE)
+            result = unavailable(failure.get("reason") or _unavailable_text())
             return {**result, "status": "blocked"} if version.get("blocked") else result
         try:
             return self.match(self.validate(answer), version["metadata"], version["sha256"],
                               version["package_type"])
         except Exception as error:
             # An outage/expiry must never remove a known block.
-            result = unavailable(str(error) or UNAVAILABLE)
+            result = unavailable(str(error) or _unavailable_text())
             return {**result, "status": "blocked"} if version.get("blocked") else result
 
     def index(self):
@@ -233,7 +264,7 @@ class Registry:
             return {}
         result = json_document(self.fetch(https_url(self.index_url), 2 * 1024 * 1024))["plugins"]
         if not isinstance(result, dict):
-            raise ValueError("Некорректный индекс плагинов.")
+            raise ValueError(tr("Invalid plugin index.", "Некорректный индекс плагинов."))
         return result
 
     def chain(self, chain, plugin_id):
@@ -242,7 +273,10 @@ class Registry:
             answer = self.signed(f"/v1/chains/{int(chain)}?limit=500&after={cursor}")
             if answer.get("chain") != chain or answer.get("plugin_id") != plugin_id \
                     or not isinstance(answer.get("versions"), list):
-                raise ValueError("Ответ относится к другой цепочке автора.")
+                raise ValueError(tr(
+                    "Response belongs to a different author chain.",
+                    "Ответ относится к другой цепочке автора.",
+                ))
             versions.extend(answer["versions"])
             if len(versions) > 10000:
                 break
@@ -250,15 +284,21 @@ class Registry:
             if next_cursor is None:
                 return versions
             if type(next_cursor) is not int or next_cursor <= cursor:
-                raise ValueError("Некорректный курсор истории версий.")
+                raise ValueError(tr(
+                    "Invalid version history cursor.",
+                    "Некорректный курсор истории версий.",
+                ))
             cursor = next_cursor
-        raise ValueError("История версий слишком велика.")
+        raise ValueError(tr("Version history is too large.", "История версий слишком велика."))
 
     def info(self, url, plugin_id):
         # Discovery only: every selected package still needs a signed check.
         answer = json_document(self.fetch(https_url(url), 2 * 1024 * 1024))
         if answer.get("id") != plugin_id or not isinstance(answer.get("versions"), list):
-            raise ValueError("Карточка версий относится к другому плагину.")
+            raise ValueError(tr(
+                "Version card belongs to a different plugin.",
+                "Карточка версий относится к другому плагину.",
+            ))
         return answer["versions"]
 
     def package(self, url):

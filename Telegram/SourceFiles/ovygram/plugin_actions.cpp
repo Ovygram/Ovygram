@@ -2,6 +2,7 @@
 
 #include "base/global_shortcuts.h"
 #include "base/weak_ptr.h"
+#include "ovygram/i18n.h"
 #include "ovygram/plugin_install.h"
 #include "ovygram/plugin_widgets.h"
 #include "core/application.h"
@@ -154,12 +155,14 @@ void Configure(const QString &id, quint64 generation) {
 		|| ProtectedSurfaceExists()) return;
 	const auto key = SettingsKey(i->second);
 	const auto label = Label(i->second);
-	const auto current = i->second.binding ? i->second.binding->toDisplayString() : u"Не задано"_q;
+	const auto current = i->second.binding
+		? i->second.binding->toDisplayString()
+		: Tr(u"Not set"_q, u"Не задано"_q);
 	controller->window().activate();
 	controller->show(Box([=](not_null<Ui::GenericBox*> box) {
 		ProtectSurface(box);
 		box->setWidth(style::ConvertScale(380));
-		box->setTitle(rpl::single(u"Сочетание клавиш плагина"_q));
+		box->setTitle(rpl::single(Tr(u"Plugin keyboard shortcut"_q, u"Сочетание клавиш плагина"_q)));
 		box->addTopButton(st::settingsPluginClose, [=] { box->closeBox(); });
 		box->addRow(object_ptr<Ui::FlatLabel>(box, label, st::boxLabel));
 		const auto field = box->addRow(object_ptr<Ui::FlatLabel>(box, current, st::boxLabel));
@@ -174,16 +177,16 @@ void Configure(const QString &id, quint64 generation) {
 		QObject::connect(qApp, &QGuiApplication::applicationStateChanged, box.get(), [=](Qt::ApplicationState s) {
 			if (s != Qt::ApplicationActive && *recorder) {
 				(*recorder)->stopRecording();
-				field->setText(u"Запись остановлена"_q);
+				field->setText(Tr(u"Recording stopped"_q, u"Запись остановлена"_q));
 			}
 		});
 		Core::App().passcodeLockChanges() | rpl::on_next([=](bool locked) {
 			if (locked) box->closeBox();
 		}, box->lifetime());
-		box->addButton(rpl::single(u"Записать"_q), [=] {
+		box->addButton(rpl::single(Tr(u"Record"_q, u"Записать"_q)), [=] {
 			if (!Get().entries.contains(id) || Core::App().passcodeLocked()
 				|| !base::GlobalShortcutsAvailable() || !base::GlobalShortcutsAllowed()) {
-				field->setText(u"Глобальные сочетания недоступны"_q);
+				field->setText(Tr(u"Global shortcuts are unavailable"_q, u"Глобальные сочетания недоступны"_q));
 				return;
 			}
 			if (!*recorder) {
@@ -191,24 +194,26 @@ void Configure(const QString &id, quint64 generation) {
 			} else {
 				(*recorder)->stopRecording();
 			}
-			field->setText(u"Нажмите и отпустите сочетание клавиш"_q);
+			field->setText(Tr(u"Press and release a key combination"_q, u"Нажмите и отпустите сочетание клавиш"_q));
 			(*recorder)->startRecording(nullptr, crl::guard(box, [=](base::GlobalShortcut value) {
 				if (Core::App().passcodeLocked() || !box->window()->isActiveWindow()) return;
 				if (!value || !Watch(id, generation, value)) {
-					field->setText(u"Выберите свободное сочетание из 2–4 клавиш"_q);
+					field->setText(Tr(
+						u"Choose an unused combination of 2–4 keys"_q,
+						u"Выберите свободное сочетание из 2–4 клавиш"_q));
 					return;
 				}
 				Settings().setValue(key, value->serialize());
 				field->setText(value->toDisplayString());
 			}));
 		}, st::settingsPluginDialog);
-		box->addLeftButton(rpl::single(u"Сбросить"_q), [=] {
+		box->addLeftButton(rpl::single(Tr(u"Reset"_q, u"Сбросить"_q)), [=] {
 			if (*recorder) (*recorder)->stopRecording();
 			if (Watch(id, generation, nullptr)) Settings().remove(key);
 			ReleaseIdleWatcher();
 			box->closeBox();
 		}, st::settingsPluginDialog);
-		box->addButton(rpl::single(u"Закрыть"_q), [=] { box->closeBox(); }, st::settingsPluginDialog);
+		box->addButton(rpl::single(Tr(u"Close"_q, u"Закрыть"_q)), [=] { box->closeBox(); }, st::settingsPluginDialog);
 	}));
 }
 
@@ -321,7 +326,7 @@ void FillTray(Platform::Tray &tray) {
 			tray.addAction(rpl::single(Label(action)), [=] { Run(id, generation, u"tray"_q); });
 		}
 		if (action.global && base::GlobalShortcutsAvailable()) {
-			tray.addAction(rpl::single(u"Сочетание — "_q + Label(action)), [=] { Configure(id, generation); });
+			tray.addAction(rpl::single(Tr(u"Shortcut — "_q, u"Сочетание — "_q) + Label(action)), [=] { Configure(id, generation); });
 		}
 	}
 }
@@ -337,7 +342,7 @@ void OpenLink(Window::SessionController *controller, const QString &owner, const
 		const auto session = base::make_weak(&controller->session());
 		controller->show(Box([=](not_null<Ui::GenericBox*> box) {
 			ProtectSurface(box);
-			box->setTitle(rpl::single(u"Вызов действия плагина"_q));
+			box->setTitle(rpl::single(Tr(u"Run plugin action"_q, u"Вызов действия плагина"_q)));
 			box->addTopButton(st::settingsPluginClose, [=] { box->closeBox(); });
 			box->addRow(object_ptr<Ui::FlatLabel>(box, label, st::boxLabel));
 			const auto confirmed = std::make_shared<bool>(false);
@@ -351,15 +356,15 @@ void OpenLink(Window::SessionController *controller, const QString &owner, const
 					}
 				});
 			});
-			box->addLeftButton(rpl::single(u"Отмена"_q), [=] { box->closeBox(); }, st::settingsPluginDialog);
-			box->addButton(rpl::single(u"Выполнить"_q), [=] {
+			box->addLeftButton(rpl::single(Tr(u"Cancel"_q, u"Отмена"_q)), [=] { box->closeBox(); }, st::settingsPluginDialog);
+			box->addButton(rpl::single(Tr(u"Run"_q, u"Выполнить"_q)), [=] {
 				*confirmed = true;
 				box->closeBox();
 			}, st::settingsPluginDialog);
 		}));
 		return;
 	}
-	controller->showToast(u"Действие плагина недоступно"_q);
+	controller->showToast(Tr(u"Plugin action is unavailable"_q, u"Действие плагина недоступно"_q));
 }
 
 } // namespace Ovygram::Actions

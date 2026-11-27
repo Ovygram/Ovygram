@@ -1,5 +1,6 @@
 #include "ovygram/plugin_panel_buttons.h"
 
+#include "ovygram/i18n.h"
 #include "ovygram/plugin_install.h"
 #include "ovygram/plugin_menus.h"
 #include "ovygram/plugin_widgets.h"
@@ -325,7 +326,7 @@ int Prepare(QWidget *owner, PeerData *peer, int availableWidth, int rowHeight) {
 	if (!host->more) {
 		host->more = new Ui::RoundButton(owner, rpl::single(u"…"_q), st::settingsPluginProxySelector);
 		host->more->setFullWidth(host->more->height());
-		host->more->setAccessibleName(u"Другие действия плагинов"_q);
+		host->more->setAccessibleName(Tr(u"More plugin actions"_q, u"Другие действия плагинов"_q));
 		host->more->setFocusPolicy(Qt::StrongFocus);
 		host->more->setClickedCallback([owner] {
 			const auto host = Find(owner);

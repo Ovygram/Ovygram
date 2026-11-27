@@ -3,6 +3,7 @@
 #include "base/unique_qptr.h"
 #include "base/concurrent_timer.h"
 #include "ovygram/auto_update_view.h"
+#include "ovygram/i18n.h"
 #include "ovygram/plugin_install_view.h"
 #include "ovygram/plugin_list_view.h"
 #include "ovygram/plugin_management_view.h"
@@ -131,14 +132,26 @@ void ApplyPalette(const QString &path) {
 
 QJsonObject SamplePlugin() {
 	return {
-		{ u"name"_q, u"Прокси-туннель (Windows)"_q },
+		{ u"name"_q, u"Proxy Tunnel (Windows)"_q },
+		{ u"name_i18n"_q, QJsonObject{
+			{ u"en"_q, u"Proxy Tunnel (Windows)"_q },
+			{ u"ru"_q, u"Прокси-туннель (Windows)"_q },
+		} },
 		{ u"id"_q, u"proxy_tunnel_windows"_q },
 		{ u"plugin_id"_q, u"proxy_tunnel_windows"_q },
 		{ u"version"_q, u"1.0.3"_q },
-		{ u"display_author"_q, u"Неизвестный автор"_q },
+		{ u"display_author"_q, Ovygram::Tr(u"Unknown author", u"Неизвестный автор") },
 		{ u"description"_q,
-			u"Импорт профилей прокси из HTTPS-подписок, текста, Base64 и JSON. "
-			u"Поиск серверов и автообновление."_q },
+			u"Import proxy profiles from HTTPS subscriptions, text, Base64 and JSON. "
+			u"Server search and automatic updates."_q },
+		{ u"description_i18n"_q, QJsonObject{
+			{ u"en"_q,
+				u"Import proxy profiles from HTTPS subscriptions, text, Base64 and JSON. "
+				u"Server search and automatic updates."_q },
+			{ u"ru"_q,
+				u"Импорт профилей прокси из HTTPS-подписок, текста, Base64 и JSON. "
+				u"Поиск серверов и автообновление."_q },
+		} },
 		{ u"release"_q, true },
 		{ u"enabled"_q, true },
 		{ u"loaded"_q, true },
@@ -149,27 +162,47 @@ QJsonObject SamplePlugin() {
 
 QJsonArray SamplePluginList() {
 	auto subscriptions = SamplePlugin();
-	subscriptions.insert(u"name"_q, u"VLESS · Подписки (Windows)"_q);
+	subscriptions.insert(u"name"_q, u"VLESS · Subscriptions (Windows)"_q);
+	subscriptions.insert(u"name_i18n"_q, QJsonObject{
+		{ u"en"_q, u"VLESS · Subscriptions (Windows)"_q },
+		{ u"ru"_q, u"VLESS · Подписки (Windows)"_q },
+	});
 	subscriptions.insert(u"version"_q, u"1.0.8"_q);
 	subscriptions.insert(u"installation_id"_q, u"8e88c753"_q);
 	return {
 		QJsonObject{
-			{ u"name"_q, u"Палитра Ovygram"_q },
+			{ u"name"_q, u"Ovygram Palette"_q },
+			{ u"name_i18n"_q, QJsonObject{
+				{ u"en"_q, u"Ovygram Palette"_q },
+				{ u"ru"_q, u"Палитра Ovygram"_q },
+			} },
 			{ u"installation_id"_q, u"c65e509c"_q },
 			{ u"plugin_id"_q, u"palette_lab"_q },
 			{ u"version"_q, u"1.1.0"_q },
-			{ u"description"_q, u"Добавляет команды для работы с цветом."_q },
+			{ u"description"_q, u"Adds commands for working with colors."_q },
+			{ u"description_i18n"_q, QJsonObject{
+				{ u"en"_q, u"Adds commands for working with colors."_q },
+				{ u"ru"_q, u"Добавляет команды для работы с цветом."_q },
+			} },
 			{ u"enabled"_q, true },
 			{ u"loaded"_q, true },
 			{ u"trust"_q, QJsonObject{ { u"status"_q, u"unverified"_q } } },
 		},
 		subscriptions,
 		QJsonObject{
-			{ u"name"_q, u"Что это? (Википедия)"_q },
+			{ u"name"_q, u"What is this? (Wikipedia)"_q },
+			{ u"name_i18n"_q, QJsonObject{
+				{ u"en"_q, u"What is this? (Wikipedia)"_q },
+				{ u"ru"_q, u"Что это? (Википедия)"_q },
+			} },
 			{ u"installation_id"_q, u"1c03ee79"_q },
 			{ u"plugin_id"_q, u"wikipedia"_q },
 			{ u"version"_q, u"1.0.1"_q },
-			{ u"description"_q, u"Ищет выделенный текст в Википедии."_q },
+			{ u"description"_q, u"Looks up selected text on Wikipedia."_q },
+			{ u"description_i18n"_q, QJsonObject{
+				{ u"en"_q, u"Looks up selected text on Wikipedia."_q },
+				{ u"ru"_q, u"Ищет выделенный текст в Википедии."_q },
+			} },
 			{ u"trust"_q, QJsonObject{ { u"status"_q, u"verified"_q } } },
 			{ u"update"_q, QJsonObject{ { u"latest_version"_q, u"1.0.2"_q } } },
 		},
@@ -181,15 +214,17 @@ QJsonArray SampleSettings(bool longForm) {
 		{ u"kind"_q, u"link"_q },
 		{ u"key"_q, u"open"_q },
 		{ u"action_id"_q, u"sample-settings"_q },
-		{ u"text"_q, u"Открыть «Прокси-туннель»"_q },
-		{ u"description"_q, u"Также доступно из бокового меню над списком чатов"_q },
+		{ u"text"_q, Ovygram::Tr(u"Open \"Proxy Tunnel\"", u"Открыть «Прокси-туннель»") },
+		{ u"description"_q, Ovygram::Tr(
+			u"Also available from the side menu above the chat list",
+			u"Также доступно из бокового меню над списком чатов") },
 	} };
 	if (longForm) {
 		for (auto index = 1; index <= 18; ++index) {
 			fields.append(QJsonObject{
 				{ u"kind"_q, u"switch"_q },
 				{ u"key"_q, QString::number(index) },
-				{ u"text"_q, u"Настройка %1"_q.arg(index) },
+				{ u"text"_q, Ovygram::Tr(u"Setting %1", u"Настройка %1").arg(index) },
 				{ u"value"_q, index % 2 == 0 },
 			});
 		}
@@ -200,9 +235,11 @@ QJsonArray SampleSettings(bool longForm) {
 QJsonObject InstallInfo(const QString &scenario) {
 	auto metadata = SamplePlugin();
 	if (scenario == u"install-long"_q) {
+		const auto base = Ovygram::I18n::PluginDescription(metadata);
 		metadata.insert(u"description"_q,
-			(metadata.value(u"description"_q).toString() + u"\n\n"_q).repeated(12)
-			+ u"Конец полного описания."_q);
+			(base + u"\n\n"_q).repeated(12)
+			+ Ovygram::Tr(u"End of full description.", u"Конец полного описания."));
+		metadata.remove(u"description_i18n"_q);
 	}
 	auto old = metadata;
 	old.insert(u"version"_q, u"1.0.2"_q);
@@ -235,9 +272,9 @@ public:
 	, _close(Ui::CreateChild<Ui::IconButton>(this, st::boxTitleClose))
 	, _scroll(Ui::CreateChild<Ui::ScrollArea>(this, st::boxScroll))
 	, _content(_scroll->setOwnedWidget(object_ptr<Ui::VerticalLayout>(_scroll))) {
-		_back->setAccessibleName(u"Назад"_q);
+		_back->setAccessibleName(Ovygram::Tr(u"Back", u"Назад"));
 		_back->setVisible(hasBack);
-		_close->setAccessibleName(u"Закрыть"_q);
+		_close->setAccessibleName(Ovygram::Tr(u"Close", u"Закрыть"));
 		_back->setClickedCallback([this] { closeLayer(); });
 		_close->setClickedCallback([this] { closeLayer(); });
 	}
@@ -389,7 +426,7 @@ private:
 	void showDetails(QJsonObject plugin, QJsonArray fields) {
 		_plugin = std::move(plugin);
 		_fields = std::move(fields);
-		auto layer = object_ptr<SettingsLayer>(&_layers, _plugin.value(u"name"_q).toString(),
+		auto layer = object_ptr<SettingsLayer>(&_layers, Ovygram::I18n::PluginName(_plugin),
 			st::settingsPluginsLayerWidth);
 		if (_list) {
 			layer->setBackCallback([this] {
@@ -439,11 +476,11 @@ private:
 
 	void showInstaller(QJsonObject info) {
 		if (!_details && !_list) {
-			auto background = object_ptr<SettingsLayer>(&_layers, u"Плагины"_q,
+			auto background = object_ptr<SettingsLayer>(&_layers, Ovygram::Tr(u"Plugins", u"Плагины"),
 				st::settingsPluginsLayerWidth + style::ConvertScale(36));
 			const auto card = Ovygram::AddPluginCard(background->content());
 			Ui::AddSkip(card, style::ConvertScale(12));
-			Ovygram::AddPluginHeader(card, u"Расширения рабочего стола"_q, [] {}, true, false, [] {});
+			Ovygram::AddPluginHeader(card, Ovygram::Tr(u"Desktop Extensions", u"Расширения рабочего стола"), [] {}, true, false, [] {});
 			Ovygram::AddPluginSummary(card, SamplePlugin());
 			Ui::AddSkip(background->content(), style::ConvertScale(110));
 			_layers.showSpecialLayer(std::move(background), anim::type::instant);
@@ -470,7 +507,7 @@ private:
 	void showProxies() {
 		const auto state = std::make_shared<Ovygram::ProxyViewState>();
 		const auto routes = QJsonArray{u"default"_q, u"api"_q, u"files"_q, u"pages"_q, u"mini_apps"_q};
-		const auto offer = QJsonObject{ {u"label"_q, u"Прокси-туннель"_q}, {u"owner"_q, u"8e88c753"_q},
+		const auto offer = QJsonObject{ {u"label"_q, Ovygram::Tr(u"Proxy Tunnel", u"Прокси-туннель")}, {u"owner"_q, u"8e88c753"_q},
 			{u"token"_q, u"demo"_q}, {u"routes"_q, routes} };
 		state->offers.push_back(offer);
 		for (const auto &value : routes) {
@@ -496,9 +533,10 @@ private:
 
 	void showSampleSettings() {
 		_layers.showBox(Box([](not_null<Ui::GenericBox*> box) {
-			box->setTitle(u"Прокси-туннель"_q);
-			box->addRow(object_ptr<Ui::FlatLabel>(box, u"Тестовый раздел подписок"_q, st::boxLabel));
-			box->addButton(rpl::single(u"Закрыть"_q), [=] { box->closeBox(); });
+			box->setTitle(Ovygram::Tr(u"Proxy Tunnel", u"Прокси-туннель"));
+			box->addRow(object_ptr<Ui::FlatLabel>(box,
+				Ovygram::Tr(u"Sample subscriptions section", u"Тестовый раздел подписок"), st::boxLabel));
+			box->addButton(rpl::single(Ovygram::Tr(u"Close", u"Закрыть")), [=] { box->closeBox(); });
 		}), Ui::LayerOption::KeepOther, anim::type::instant);
 	}
 
@@ -508,7 +546,7 @@ private:
 		}
 		_removalChoice = QString();
 		_layers.showBox(Box([this](not_null<Ui::GenericBox*> box) {
-			Ovygram::BuildPluginRemovalBox(box, rpl::single(u"Отмена"_q), [this](bool keepData) {
+			Ovygram::BuildPluginRemovalBox(box, rpl::single(Ovygram::Tr(u"Cancel", u"Отмена")), [this](bool keepData) {
 				_removalChoice = keepData ? u"keep"_q : u"delete"_q;
 			});
 		}), Ui::LayerOption::KeepOther, anim::type::instant);
@@ -533,9 +571,13 @@ private:
 				.size = 54'800'000,
 				.url = u"https://github.com/Ovygram/Ovygram/releases/download/update-win64/pkg.zip"_q,
 				.commit = u"a1b2c3d4e5f6"_q,
-				.notes = u"• Добавлена система автообновлений с тремя каналами (stable / beta / canary) и проверкой подписи Ed25519.\n"
+				.notes = Ovygram::Tr(
+					u"• Added three-channel auto-updates (stable / beta / canary) with Ed25519 signature verification.\n"
+					u"• Native update banner in the chat list and channel selector in Advanced settings.\n"
+					u"• Safe python/ folder replacement during update without losing account or plugin data.",
+					u"• Добавлена система автообновлений с тремя каналами (stable / beta / canary) и проверкой подписи Ed25519.\n"
 					u"• Нативная плашка обновления в списке чатов и выбор канала в Продвинутых настройках.\n"
-					u"• Безопасная замена папки python/ при обновлении без потери данных аккаунта и плагинов."_q,
+					u"• Безопасная замена папки python/ при обновлении без потери данных аккаунта и плагинов."),
 				.sourceChannel = Ovygram::UpdateChannel::Beta,
 			};
 		}
@@ -590,28 +632,31 @@ void Preview::showListNotice(QString title, QString body) {
 	_layers.showBox(Box([=](not_null<Ui::GenericBox*> box) {
 		box->setTitle(rpl::single(title));
 		box->addRow(object_ptr<Ui::FlatLabel>(box, body, st::boxLabel));
-		box->addButton(rpl::single(u"Закрыть"_q), [=] { box->closeBox(); });
+		box->addButton(rpl::single(Ovygram::Tr(u"Close", u"Закрыть")), [=] { box->closeBox(); });
 	}), Ui::LayerOption::KeepOther, anim::type::instant);
 }
 
 void Preview::showPluginList() {
 	const auto before = _scenario == u"list-before"_q;
-	auto layer = object_ptr<SettingsLayer>(&_layers, u"Плагины"_q, st::settingsPluginsLayerWidth, false);
+	auto layer = object_ptr<SettingsLayer>(&_layers, Ovygram::Tr(u"Plugins", u"Плагины"), st::settingsPluginsLayerWidth, false);
 	_list = layer.data();
 	const auto layout = _list->content();
 	const auto import = [this] { showInstaller(InstallInfo(u"install-new"_q)); };
 	if (before) {
 		_listSearch = PreviewPluginList::AddSearch(layout);
 		PreviewPluginList::AddActions(layout, import, [this] {
-			showListNotice(u"Обновления плагинов"_q, u"Доступно одно обновление."_q);
+			showListNotice(
+				Ovygram::Tr(u"Plugin updates", u"Обновления плагинов"),
+				Ovygram::Tr(u"One update is available.", u"Доступно одно обновление."));
 		});
 	} else {
 		const auto check = [this] {
 			const auto hasUpdate = std::any_of(_listPlugins.cbegin(), _listPlugins.cend(), [](const QJsonValue &entry) {
 				return entry.toObject().value(u"update"_q).isObject();
 			});
-			_listNotice = hasUpdate ? u"Найдены новые или безопасные версии: 1."_q
-				: u"Проверка завершена. Новых проверенных версий нет."_q;
+			_listNotice = hasUpdate
+				? Ovygram::Tr(u"New or safe versions found: 1.", u"Найдены новые или безопасные версии: 1.")
+				: Ovygram::Tr(u"Check completed. No new verified versions.", u"Проверка завершена. Новых проверенных версий нет.");
 			_list->parentResized();
 		};
 		_listSearch = Ovygram::AddPluginListSearch(layout);
@@ -650,10 +695,18 @@ void Preview::buildPluginList() {
 			buildPluginList();
 		});
 	};
-	const auto log = [this] { showListNotice(u"Журнал плагинов"_q, u"Журнал тестового профиля пуст."_q); };
+	const auto log = [this] {
+		showListNotice(
+			Ovygram::Tr(u"Plugin log", u"Журнал плагинов"),
+			Ovygram::Tr(u"The sample profile log is empty.", u"Журнал тестового профиля пуст."));
+	};
 	if (_scenario == u"list-before"_q) {
 		PreviewPluginList::BuildRows(_listRows, _listPlugins, query, open, setEnabled,
-			[this] { showListNotice(u"Отправить плагин"_q, u"Выбор получателя доступен в клиенте."_q); },
+			[this] {
+				showListNotice(
+					Ovygram::Tr(u"Share plugin", u"Отправить плагин"),
+					Ovygram::Tr(u"Recipient picker is available in the client.", u"Выбор получателя доступен в клиенте."));
+			},
 			[this] { showRemoval(); },
 			log);
 	} else {
@@ -718,7 +771,8 @@ void Preview::startPlugin(
 	});
 	_process.start(python, {
 		u"-B"_q, QString::fromUtf8(OVYGRAM_PREVIEW_PYTHON),
-		QFileInfo(plugin).absoluteFilePath(), menu, setting, dependencies
+		QFileInfo(plugin).absoluteFilePath(), menu, setting, dependencies,
+		Ovygram::I18n::Language()
 	});
 	QTimer::singleShot(10000, this, [this] {
 		if (!_exiting && !_details && _surfaces.empty()) {
@@ -836,7 +890,7 @@ void Preview::showPluginSurface(const QJsonObject &command) {
 			const auto defaultWidth = (kind == u"section"_q) ? st::settingsPluginsLayerWidth : st::boxWidth;
 			box->setWidth(std::min(available, requested ? style::ConvertScale(std::clamp(requested, 320, 960)) : defaultWidth));
 			box->setMaxHeight(height() - style::ConvertScale(118));
-			box->addTopButton(st::boxTitleClose, [=] { box->closeBox(); })->setAccessibleName(u"Закрыть"_q);
+			box->addTopButton(st::boxTitleClose, [=] { box->closeBox(); })->setAccessibleName(Ovygram::Tr(u"Close", u"Закрыть"));
 			if (const auto cap = command.value(u"max_content_width"_q).toInt(); cap > 0) {
 				*wrapper = Ovygram::PluginUiTree::CenterContent(box, std::move(*wrapper), 0, cap);
 			}
@@ -877,58 +931,69 @@ void Preview::finishSoon() {
 
 void Preview::verify() {
 	if (_scenario == u"proxies"_q) {
-		const auto reset = dynamic_cast<Ui::RoundButton*>(ByName(this, u"Сбросить маршрут: Запросы Telegram"_q));
+		const auto resetApi = Ovygram::Tr(u"Reset route: Telegram requests", u"Сбросить маршрут: Запросы Telegram");
+		const auto reset = dynamic_cast<Ui::RoundButton*>(ByName(this, resetApi));
 		Check(reset && !reset->isDisabled(), "The assigned route cannot be reset.");
-		Click(this, u"Сбросить маршрут: Запросы Telegram"_q);
+		Click(this, resetApi);
 		Check(reset->isDisabled(), "Reset did not restore the default route.");
-		Click(this, u"Сбросить все"_q);
-		const auto defaultReset = dynamic_cast<Ui::RoundButton*>(ByName(this, u"Сбросить маршрут: Прокси по умолчанию"_q));
+		Click(this, Ovygram::Tr(u"Reset all", u"Сбросить все"));
+		const auto defaultReset = dynamic_cast<Ui::RoundButton*>(ByName(this,
+			Ovygram::Tr(u"Reset route: Default proxy", u"Сбросить маршрут: Прокси по умолчанию")));
 		Check(defaultReset && defaultReset->isDisabled(), "Reset all did not clear the routes.");
 	} else if (_scenario == u"removal"_q) {
 		const auto top = const_cast<Ui::LayerWidget*>(_layers.topShownLayer());
-		Check(top && ByName(top, u"Отмена"_q) && ByName(top, u"Удалить"_q)
-			&& ByName(top, u"Сохранить настройки и данные"_q),
+		const auto cancel = Ovygram::Tr(u"Cancel", u"Отмена");
+		const auto remove = Ovygram::Tr(u"Remove", u"Удалить");
+		const auto keep = Ovygram::Tr(u"Keep settings and data", u"Сохранить настройки и данные");
+		Check(top && ByName(top, cancel) && ByName(top, remove) && ByName(top, keep),
 			"Removal box controls are missing.");
-		Click(top, u"Сохранить настройки и данные"_q);
-		Click(top, u"Удалить"_q);
+		Click(top, keep);
+		Click(top, remove);
 		_layers.finishAnimating();
 		Check(_removalChoice == u"keep"_q, "Removal checkbox did not preserve plugin data.");
 		showRemoval();
 		const auto second = const_cast<Ui::LayerWidget*>(_layers.topShownLayer());
-		Click(second, u"Удалить"_q);
+		Click(second, remove);
 		_layers.finishAnimating();
 		Check(_removalChoice == u"delete"_q, "Removal default action did not delete plugin data.");
 	} else if (_scenario == u"update-channel"_q || _scenario == u"update-channel-ready"_q) {
 		const auto top = const_cast<Ui::LayerWidget*>(_layers.topShownLayer());
-		Check(top && ByName(top, u"Стабильный"_q) && ByName(top, u"Бета"_q)
-			&& ByName(top, u"Ночной (Canary)"_q) && ByName(top, u"Сохранить"_q)
-			&& ByName(top, u"Отмена"_q),
+		const auto stable = Ovygram::UpdateChannelTitle(Ovygram::UpdateChannel::Stable);
+		const auto beta = Ovygram::UpdateChannelTitle(Ovygram::UpdateChannel::Beta);
+		const auto canary = Ovygram::UpdateChannelTitle(Ovygram::UpdateChannel::Canary);
+		const auto save = Ovygram::Tr(u"Save", u"Сохранить");
+		const auto cancel = Ovygram::Tr(u"Cancel", u"Отмена");
+		Check(top && ByName(top, stable) && ByName(top, beta)
+			&& ByName(top, canary) && ByName(top, save) && ByName(top, cancel),
 			"Update channel controls are missing.");
-		Click(top, u"Ночной (Canary)"_q);
-		Click(top, u"Сохранить"_q);
+		Click(top, canary);
+		Click(top, save);
 		_layers.finishAnimating();
 		Check(_updateChannelChoice == Ovygram::UpdateChannel::Canary,
 			"Update channel box did not save selected Canary channel.");
 		showUpdateChannel(_scenario == u"update-channel-ready"_q);
 	} else if (_scenario == u"list-after"_q) {
-		const auto first = u"VLESS · Подписки (Windows)"_q;
-		const auto wiki = u"Что это? (Википедия)"_q;
-		const auto update = u"Обновить · "_q + wiki;
-		const auto enableWiki = u"Включить "_q + wiki;
-		const auto disableWiki = u"Отключить "_q + wiki;
+		const auto first = Ovygram::Tr(u"VLESS · Subscriptions (Windows)", u"VLESS · Подписки (Windows)");
+		const auto wiki = Ovygram::Tr(u"What is this? (Wikipedia)", u"Что это? (Википедия)");
+		const auto updatePrefix = Ovygram::Tr(u"Update · ", u"Обновить · ");
+		const auto update = updatePrefix + wiki;
+		const auto enableWiki = Ovygram::Tr(u"Enable %1", u"Включить %1").arg(wiki);
+		const auto disableWiki = Ovygram::Tr(u"Disable %1", u"Отключить %1").arg(wiki);
 		const auto button = ByName(_list, update);
 		Check(ByName(_list, first), "A plugin is missing from the list.");
-		Check(ByName(_list, u"Не проверен"_q) && ByName(_list, u"Проверен"_q),
+		Check(ByName(_list, Ovygram::Tr(u"Unverified", u"Не проверен"))
+			&& ByName(_list, Ovygram::Tr(u"Verified", u"Проверен")),
 			"A plugin trust badge is missing.");
-		Check(ByName(_list, u"Новая версия 1.0.2"_q) && button
-			&& !ByName(_list, u"Обновить · "_q + first), "Update was offered for the wrong plugins.");
+		Check(ByName(_list, Ovygram::Tr(u"New version 1.0.2", u"Новая версия 1.0.2")) && button
+			&& !ByName(_list, updatePrefix + first), "Update was offered for the wrong plugins.");
 		const auto row = button->parentWidget();
 		Check(row->childAt(button->mapToParent(button->rect().center())) == button,
 			"The update button is covered by the row controls.");
 		_listLaunchBlocked = true;
 		buildPluginList();
 		const auto start = dynamic_cast<Ui::SettingsButton*>(ByName(_list, enableWiki));
-		const auto stop = dynamic_cast<Ui::SettingsButton*>(ByName(_list, u"Отключить "_q + first));
+		const auto stop = dynamic_cast<Ui::SettingsButton*>(ByName(_list,
+			Ovygram::Tr(u"Disable %1", u"Отключить %1").arg(first)));
 		Check(start && start->isDisabled() && stop && !stop->isDisabled(),
 			"Runtime recovery must prevent starting plugins and allow stopping them.");
 		_listLaunchBlocked = false;
@@ -939,56 +1004,63 @@ void Preview::verify() {
 		Check(!ByName(_list, first) && ByName(_list, wiki), "Plugin ID search did not filter the list.");
 		QTest::keyClick(edit, Qt::Key_A, Qt::ControlModifier);
 		QTest::keyClicks(edit, "missing");
-		Check(ByName(_list, u"Плагины не найдены."_q), "Empty search result is missing.");
-		Click(_list, u"Очистить поиск"_q);
+		Check(ByName(_list, Ovygram::Tr(u"No plugins found.", u"Плагины не найдены.")), "Empty search result is missing.");
+		Click(_list, Ovygram::Tr(u"Clear search", u"Очистить поиск"));
 		Check(ByName(_list, first), "Clearing search did not restore the list.");
 		Click(_list, enableWiki);
 		Check(ByName(_list, disableWiki), "The plugin did not start.");
 		Click(_list, disableWiki);
 		Check(ByName(_list, enableWiki), "The plugin did not stop.");
 		Click(_list, update);
-		Check(!_details && ByName(_list, u"Остановлен · v1.0.2"_q) && !ByName(_list, update)
-			&& ByName(_list, enableWiki), "Update did not finish in the list or changed the toggle.");
-		Click(_list, u"Проверить обновления"_q);
-		Check(ByName(_list, u"Проверка завершена. Новых проверенных версий нет."_q),
+		Check(!_details && ByName(_list, Ovygram::Tr(u"Stopped · v1.0.2", u"Остановлен · v1.0.2"))
+			&& !ByName(_list, update) && ByName(_list, enableWiki),
+			"Update did not finish in the list or changed the toggle.");
+		Click(_list, Ovygram::Tr(u"Check for updates", u"Проверить обновления"));
+		Check(ByName(_list, Ovygram::Tr(
+			u"Check completed. No new verified versions.",
+			u"Проверка завершена. Новых проверенных версий нет.")),
 			"Update check feedback is missing from the list.");
 		Click(_list, first);
-		Check(_details && ByName(_details, u"Удалить плагин"_q), "Plugin details did not open.");
-		Click(_details, u"Назад"_q);
+		Check(_details && ByName(_details, Ovygram::Tr(u"Remove plugin", u"Удалить плагин")),
+			"Plugin details did not open.");
+		Click(_details, Ovygram::Tr(u"Back", u"Назад"));
 		Check(_list && ByName(_list, first), "Back did not return to the plugin list.");
 	} else if (_scenario == u"list-before"_q) {
-		Check(ByName(_list, u"Отправить"_q) && ByName(_list, u"Удалить"_q),
+		Check(ByName(_list, Ovygram::Tr(u"Share", u"Отправить"))
+			&& ByName(_list, Ovygram::Tr(u"Remove", u"Удалить")),
 			"The original card actions are missing.");
 	} else if (_scenario.startsWith(u"install-"_q)) {
 		const auto first = _scenario == u"install-new"_q || _scenario == u"install-long"_q;
-		Check(bool(ByName(this, u"Новая версия"_q)) == !first, "Unexpected version heading.");
-		Check(ByName(this, u"Закрыть"_q), "Installer has no close control.");
+		Check(bool(ByName(this, Ovygram::Tr(u"New version", u"Новая версия"))) == !first, "Unexpected version heading.");
+		Check(ByName(this, Ovygram::Tr(u"Close", u"Закрыть")), "Installer has no close control.");
 		Check(bool(Scrolls(this)) == (_scenario == u"install-long"_q), "Unexpected installer scrolling.");
 		if (!first) {
-			Check(ByName(this, u"Установить отдельно"_q), "Secondary install action is missing.");
-			Click(this, u"Обновить"_q);
+			Check(ByName(this, Ovygram::Tr(u"Install separately", u"Установить отдельно")), "Secondary install action is missing.");
+			Click(this, Ovygram::Tr(u"Update", u"Обновить"));
 			Check(_installChoice == u"8e88c753"_q, "Update chose the wrong instance.");
 		} else {
-			Click(this, u"Установить"_q);
+			Click(this, Ovygram::Tr(u"Install", u"Установить"));
 			Check(_installChoice == u"install"_q, "Fresh install chose the wrong action.");
 		}
 		if (_action.isEmpty()) {
-			Click(this, u"Подробности файла"_q);
+			const auto fileDetails = Ovygram::Tr(u"File details", u"Подробности файла");
+			Click(this, fileDetails);
 			Check(ByName(this, u"ID: proxy_tunnel_windows"_q), "File details didn't expand.");
-			Click(this, u"Подробности файла"_q);
+			Click(this, fileDetails);
 		}
 	} else {
 		const auto enabled = _scenario != u"stopped"_q;
 		Check(_details && (_details->scrollMaximum() > 0) == (_scenario == u"long"_q), "Unexpected settings scrolling.");
 		if (enabled) {
-			Click(this, u"Отключить плагин"_q);
-			Check(ByName(this, u"Остановлен"_q), "The stop status didn't change.");
-			Click(this, u"Включить плагин"_q);
-			Check(ByName(this, u"Запущен"_q), "The start status didn't change.");
-			Click(this, u"Открыть «Прокси-туннель»"_q);
-			Check(ByName(this, u"Тестовый раздел подписок"_q), "Settings destination did not open.");
+			Click(this, Ovygram::Tr(u"Disable plugin", u"Отключить плагин"));
+			Check(ByName(this, Ovygram::Tr(u"Stopped", u"Остановлен")), "The stop status didn't change.");
+			Click(this, Ovygram::Tr(u"Enable plugin", u"Включить плагин"));
+			Check(ByName(this, Ovygram::Tr(u"Running", u"Запущен")), "The start status didn't change.");
+			Click(this, Ovygram::Tr(u"Open \"Proxy Tunnel\"", u"Открыть «Прокси-туннель»"));
+			Check(ByName(this, Ovygram::Tr(u"Sample subscriptions section", u"Тестовый раздел подписок")),
+				"Settings destination did not open.");
 			const auto top = const_cast<Ui::LayerWidget*>(_layers.topShownLayer());
-			Click(top, u"Закрыть"_q);
+			Click(top, Ovygram::Tr(u"Close", u"Закрыть"));
 			_layers.finishAnimating();
 		}
 	}
@@ -1038,6 +1110,7 @@ int main(int argc, char **argv) {
 	parser.addOptions({
 		{ u"scenario"_q, u"list-before, list-after, details, stopped, long, install-new, install-update, install-multiple, install-long, proxies, removal, update-channel, update-channel-ready."_q,
 			u"name"_q, u"details"_q },
+		{ u"lang"_q, u"Ovygram UI language code (e.g. en, ru, de)."_q, u"code"_q, u"en"_q },
 		{ u"palette"_q, u"Apply a plain Telegram color palette."_q, u"file"_q },
 		{ u"scale"_q, u"Ovygram UI scale in percent."_q, u"percent"_q, u"100"_q },
 		{ u"width"_q, u"Preview desktop width."_q, u"pixels"_q, u"820"_q },
@@ -1055,6 +1128,7 @@ int main(int argc, char **argv) {
 	try {
 		const auto scenario = parser.value(u"scenario"_q);
 		const auto plugin = parser.value(u"plugin-file"_q);
+		Ovygram::I18n::SetLanguage(parser.value(u"lang"_q));
 		Check(QStringList{ u"list-before"_q, u"list-after"_q, u"details"_q, u"stopped"_q, u"long"_q, u"install-new"_q, u"install-update"_q,
 			u"install-multiple"_q, u"install-long"_q, u"proxies"_q, u"removal"_q, u"update-channel"_q, u"update-channel-ready"_q }.contains(scenario), "Unknown preview scenario.");
 		Check(!(parser.isSet(u"menu"_q) && parser.isSet(u"setting"_q)), "Choose --menu or --setting.");

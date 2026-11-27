@@ -114,11 +114,14 @@ def _libraries():
 
 
 def _error(step):
-    return SandboxError(f"Изоляция плагинов: {step}: {ctypes.FormatError(ctypes.get_last_error()).strip()}")
+    from ovygram_i18n import tr
+    detail = ctypes.FormatError(ctypes.get_last_error()).strip()
+    return SandboxError(tr(f"Plugin isolation: {step}: {detail}", f"Изоляция плагинов: {step}: {detail}"))
 
 
 def label_low(directory):
     """Lets a low-integrity process write into the directory and below."""
+    from ovygram_i18n import tr
     icacls = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32", "icacls.exe")
     try:
         result = subprocess.run(
@@ -127,13 +130,14 @@ def label_low(directory):
             [icacls, str(directory), "/setintegritylevel", "(OI)(CI)L", "/T", "/L", "/C", "/Q"],
             stdin=subprocess.DEVNULL, capture_output=True, creationflags=CREATE_NO_WINDOW)
     except OSError as error:
-        raise SandboxError(f"Изоляция плагинов: icacls: {error}") from error
+        raise SandboxError(tr(f"Plugin isolation: icacls: {error}", f"Изоляция плагинов: icacls: {error}")) from error
     if result.returncode != 0:
         detail = (result.stdout + result.stderr).decode("utf-8", "replace").strip()[:200]
-        raise SandboxError(f"Изоляция плагинов: icacls: {detail}")
+        raise SandboxError(tr(f"Plugin isolation: icacls: {detail}", f"Изоляция плагинов: icacls: {detail}"))
 
 
 def _lower_integrity(kernel32, advapi32, process):
+    from ovygram_i18n import tr
     token = wintypes.HANDLE()
     if not advapi32.OpenProcessToken(process, _TOKEN_QUERY | _TOKEN_ADJUST_DEFAULT, ctypes.byref(token)):
         raise _error("OpenProcessToken")
@@ -158,7 +162,10 @@ def _lower_integrity(kernel32, advapi32, process):
         current = ctypes.cast(buffer, ctypes.POINTER(_TokenMandatoryLabel)).contents.Label.Sid
         count = advapi32.GetSidSubAuthorityCount(current).contents.value
         if advapi32.GetSidSubAuthority(current, count - 1).contents.value > _LOW_RID:
-            raise SandboxError("Изоляция плагинов: уровень целостности процесса не понижен.")
+            raise SandboxError(tr(
+                "Plugin isolation: process integrity level was not lowered.",
+                "Изоляция плагинов: уровень целостности процесса не понижен.",
+            ))
     finally:
         if sid:
             kernel32.LocalFree(sid)
@@ -171,6 +178,7 @@ def confine(process):
     Returns the job handle; the process lives until release() closes it.
     On SandboxError the caller kills the process, which never ran.
     """
+    from ovygram_i18n import tr
     kernel32, advapi32, ntdll = _libraries()
     handle = wintypes.HANDLE(int(process._handle))
     _lower_integrity(kernel32, advapi32, handle)
@@ -190,7 +198,10 @@ def confine(process):
             raise _error("AssignProcessToJobObject")
         status = ntdll.NtResumeProcess(handle)
         if status != 0:
-            raise SandboxError(f"Изоляция плагинов: NtResumeProcess: 0x{status & 0xFFFFFFFF:08X}")
+            raise SandboxError(tr(
+                f"Plugin isolation: NtResumeProcess: 0x{status & 0xFFFFFFFF:08X}",
+                f"Изоляция плагинов: NtResumeProcess: 0x{status & 0xFFFFFFFF:08X}",
+            ))
     except BaseException:
         kernel32.CloseHandle(job)
         raise

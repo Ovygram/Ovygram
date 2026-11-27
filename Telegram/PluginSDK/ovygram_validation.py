@@ -31,11 +31,15 @@ def valid_requirement(value):
 
 def preflight_source(source):
     """Limit token count, nesting and unary chains before constructing an AST."""
+    from ovygram_i18n import tr
     count = depth = unary = 0
     for token in tokenize.tokenize(io.BytesIO(source).readline):
         count += 1
         if count > 50000:
-            raise ValueError("Слишком сложный исходный файл: больше 50 000 токенов.")
+            raise ValueError(tr(
+                "Source file is too complex: more than 50,000 tokens.",
+                "Слишком сложный исходный файл: больше 50 000 токенов.",
+            ))
         if token.type == tokenize.OP:
             if token.string in ("(", "[", "{"):
                 depth += 1
@@ -43,15 +47,19 @@ def preflight_source(source):
                 depth -= 1
             unary = unary + 1 if token.string in ("+", "-", "~") else 0
             if depth > 100 or unary > 128:
-                raise ValueError("Слишком глубокое или сложное выражение в исходном файле.")
+                raise ValueError(tr(
+                    "Expression in source file is too deep or complex.",
+                    "Слишком глубокое или сложное выражение в исходном файле.",
+                ))
         elif token.type not in (tokenize.NL, tokenize.COMMENT):
             unary = 0
 
 
 def unique_json_object(pairs):
+    from ovygram_i18n import tr
     result = {}
     for key, value in pairs:
         if key in result:
-            raise ValueError("Повторный ключ JSON: " + key)
+            raise ValueError(tr("Duplicate JSON key: ", "Повторный ключ JSON: ") + key)
         result[key] = value
     return result

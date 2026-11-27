@@ -49,7 +49,7 @@ class HelperTests(unittest.TestCase):
         process.poll.return_value = None
         self.helpers.children["owner"] = (process, None, Mock())
         settings = {"port": 3000, "user": "user", "password": "password", "routes": ["api"]}
-        with self.assertRaisesRegex(ValueError, "индикатора"):
+        with self.assertRaisesRegex(ValueError, "indicator label"):
             self.helpers.command("owner", "offer", {**settings, "label": "unsafe\nname"})
         self.helpers.command("owner", "offer", {**settings, "label": "Proxy Tunnel"})
         self.assertEqual(self.helpers.offers["owner"]["label"], "Proxy Tunnel")

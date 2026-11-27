@@ -28,6 +28,7 @@ import uuid
 from base_plugin import BasePlugin
 from desktop._runtime import Runtime
 from ovygram_deps import Dependencies
+from ovygram_i18n import set_language as _set_i18n_language, tr
 from ui.settings import Button, Header, Input, Link, Selector, Switch
 
 
@@ -38,7 +39,7 @@ class LoadError(RuntimeError):
 def account_key(account_id):
     result = str(account_id)
     if not result.isascii() or not result.isdecimal():
-        raise ValueError("Некорректный ID аккаунта.")
+        raise ValueError(tr("Invalid account ID.", "Некорректный ID аккаунта."))
     return result
 
 
@@ -69,7 +70,7 @@ class PluginContext:
 
     def check_active(self):
         if not self.active:
-            raise RuntimeError("Плагин уже выгружен.")
+            raise RuntimeError(tr("The plugin is already unloaded.", "Плагин уже выгружен."))
 
 
 class Executor:
@@ -86,6 +87,7 @@ class Executor:
         self.actions = {
             "load": self.load, "unload": self.unload, "settings": self.settings,
             "settings_action": self.settings_action, "update_settings": self.update_settings,
+            "set_language": self.set_language,
             "dependencies_path": self.dependencies_path,
             "complete": self.runtime.complete, "is_pending": self.runtime.is_pending,
             "bridge_ready": lambda: self.runtime.ready.set(),
@@ -102,7 +104,14 @@ class Executor:
 
     def check_thread(self):
         if threading.get_ident() != self.owner:
-            raise RuntimeError("Настройки плагина доступны только в главном потоке.")
+            raise RuntimeError(tr(
+                "Plugin settings are only accessible on the main thread.",
+                "Настройки плагина доступны только в главном потоке.",
+            ))
+
+    @staticmethod
+    def set_language(language, base_language=""):
+        _set_i18n_language(language, base_language)
 
     @property
     def restart_required(self):
@@ -154,7 +163,7 @@ class Executor:
              data_directory, settings, account_settings):
         """Runs the source the client has checked; raises LoadError."""
         if installation_id in self.loaded:
-            raise LoadError("Плагин уже загружен.")
+            raise LoadError(tr("Plugin is already loaded.", "Плагин уже загружен."))
         directory = Path(directory)
         context = PluginContext(self, installation_id, plugin_id, directory, Path(data_directory))
         self.runtime.contexts[installation_id] = context
@@ -174,7 +183,10 @@ class Executor:
                 and value.__module__ in (namespace, name)
             }
             if len(classes) != 1:
-                raise ValueError("В точке входа должен быть один класс BasePlugin.")
+                raise ValueError(tr(
+                    "The entry point must define exactly one BasePlugin subclass.",
+                    "В точке входа должен быть один класс BasePlugin.",
+                ))
             instance = classes.pop()()
             instance._desktop_context = context
             self.call(installation_id, instance.on_plugin_load)
@@ -188,7 +200,10 @@ class Executor:
             if isinstance(error, ModuleNotFoundError) and (error.name or "").split(".")[0] in {
                 "android", "java", "jnius", "chaquopy", "org",
             }:
-                message = "Этот импорт относится к Android. Адаптируйте плагин для Desktop SDK."
+                message = tr(
+                    "This import is for Android. Adapt the plugin for Desktop SDK.",
+                    "Этот импорт относится к Android. Адаптируйте плагин для Desktop SDK.",
+                )
             self.logger.exception("%s[%s]: %s", plugin_id, installation_id[:8], message)
             raise LoadError(message) from error
 
@@ -207,7 +222,10 @@ class Executor:
         except BaseException as error:
             self.restart_required = True
             self.report_error(installation_id, str(error) or type(error).__name__)
-            raise RuntimeError("Выгрузка завершилась ошибкой. Перезапустите клиент.") from error
+            raise RuntimeError(tr(
+                "Unloading failed. Restart the client.",
+                "Выгрузка завершилась ошибкой. Перезапустите клиент.",
+            )) from error
         finally:
             self.setting_actions = {key: value for key, value in self.setting_actions.items()
                                     if key[0] != installation_id}
@@ -224,26 +242,35 @@ class Executor:
         for item in self.call(installation_id, instance.create_settings):
             if isinstance(item, Header):
                 if not isinstance(item.text, str) or not item.text:
-                    raise ValueError("Подраздел настроек требует непустой заголовок.")
+                    raise ValueError(tr(
+                        "Settings header requires a non-empty title.",
+                        "Подраздел настроек требует непустой заголовок.",
+                    ))
                 result.append({"kind": "header", "text": item.text})
                 continue
             if (not isinstance(item, (Switch, Input, Selector, Button))
                 or not isinstance(item.key, str) or not 0 < len(item.key) <= 128
                 or not isinstance(item.text, str) or item.key in keys):
-                raise ValueError("Некорректное описание настройки.")
+                raise ValueError(tr("Invalid setting definition.", "Некорректное описание настройки."))
             keys.add(item.key)
             value = None if isinstance(item, Button) else context.get(item.key, item.default)
             field = {"key": item.key, "text": item.text}
             if isinstance(item, Button):
                 if not callable(item.on_click):
-                    raise ValueError("Кнопка настроек требует обработчик нажатия.")
+                    raise ValueError(tr(
+                        "Settings button requires a click callback.",
+                        "Кнопка настроек требует обработчик нажатия.",
+                    ))
                 previous = self.setting_actions.get((installation_id, item.key))
                 token = previous["token"] if previous and previous["context"] is context else uuid.uuid4().hex
                 actions[(installation_id, item.key)] = {"token": token, "context": context, "callback": item.on_click}
                 field.update(kind="button", action_id=token)
                 if isinstance(item, Link):
                     if not item.text.strip() or not isinstance(item.description, str):
-                        raise ValueError("Ссылка на настройки требует непустое название и текстовое описание.")
+                        raise ValueError(tr(
+                            "Settings link requires a non-empty title and string description.",
+                            "Ссылка на настройки требует непустое название и текстовое описание.",
+                        ))
                     field.update(kind="link", description=item.description)
             elif isinstance(item, Switch):
                 field.update(kind="switch", value=bool(value))
@@ -251,7 +278,10 @@ class Executor:
                 field.update(kind="input", value=str(value))
             else:
                 if not item.items or not all(isinstance(text, str) for text in item.items):
-                    raise ValueError("Selector требует непустой список строк.")
+                    raise ValueError(tr(
+                        "Selector requires a non-empty list of strings.",
+                        "Selector требует непустой список строк.",
+                    ))
                 index = value if type(value) is int and 0 <= value < len(item.items) else 0
                 field.update(kind="selector", value=index, items=list(item.items))
             result.append(field)
@@ -264,7 +294,10 @@ class Executor:
         action = next((entry for (identity, _), entry in self.setting_actions.items()
                        if identity == installation_id and entry["token"] == action_id), None)
         if action is None or not action["context"].active or installation_id not in self.loaded:
-            raise ValueError("Кнопка настроек устарела или плагин выключен.")
+            raise ValueError(tr(
+                "Settings button is outdated or the plugin is disabled.",
+                "Кнопка настроек устарела или плагин выключен.",
+            ))
         result = self.call(installation_id, action["callback"])
         if inspect.iscoroutine(result):
             self.runtime.schedule(action["context"], result)

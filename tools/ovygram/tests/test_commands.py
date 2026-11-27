@@ -126,7 +126,7 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(self.engine.complete(), ("/погода Москва 3", 16))
         view = self.view("/погода Москва 5")
         self.assertEqual((view["items"], view["error"]), ([], True))
-        self.assertIn("допустимо 1, 3, 7", view["footer"])
+        self.assertIn("allowed values: 1, 3, 7", view["footer"])
         view = self.view("/погода Москва 3 лишнее")
         self.assertTrue(view["error"])
         view = self.view("/say ")
@@ -168,9 +168,9 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(self.engine.submit("/weather Москва", "user"), {
             "installation_id": "a" * 32, "name": "погода", "values": ["Москва", 1]})
         self.assertEqual(self.engine.submit("/say yes  two  words ", "user")["values"], [True, "two  words"])
-        self.assertIn("Не хватает", self.engine.submit("/погода", "user")["error"])
-        self.assertIn("целое число", self.engine.submit("/погода Москва три", "user")["error"])
-        self.assertIn("Лишний", self.engine.submit("/погода Москва 3 4", "user")["error"])
+        self.assertIn("Missing argument", self.engine.submit("/погода", "user")["error"])
+        self.assertIn("integer", self.engine.submit("/погода Москва три", "user")["error"])
+        self.assertIn("Extra argument", self.engine.submit("/погода Москва 3 4", "user")["error"])
 
     def test_same_name_of_two_plugins_needs_the_plugin(self):
         self.engine.set("b" * 32, "other", [{"name": "say"}])
@@ -232,7 +232,7 @@ class CommandPluginTests(unittest.TestCase):
                          {"handled": False, "error": ""})
         result = self.dispatch("commands_submit", text="/погода", context=CHAT)
         self.assertTrue(result["handled"])
-        self.assertIn("Не хватает", result["error"])
+        self.assertIn("Missing argument", result["error"])
         self.assertIsNone(self.setting("ran"))
 
     def test_commands_leave_with_removal_and_unload(self):

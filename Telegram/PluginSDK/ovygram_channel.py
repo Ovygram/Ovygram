@@ -24,9 +24,13 @@ class Channel:
         self.lock = threading.Lock()
 
     def send(self, message):
+        from ovygram_i18n import tr
         data = json.dumps(message, ensure_ascii=False).encode("utf-8")
         if len(data) > MAX_MESSAGE:
-            raise ValueError("Слишком большое сообщение для процесса плагинов.")
+            raise ValueError(tr(
+                "Message for the plugin process is too large.",
+                "Слишком большое сообщение для процесса плагинов.",
+            ))
         try:
             with self.lock:
                 self.writer.write(_HEADER.pack(len(data)))
@@ -36,6 +40,7 @@ class Channel:
             raise ChannelClosed(str(error)) from error
 
     def read(self, size):
+        from ovygram_i18n import tr
         chunks = []
         while size:
             try:
@@ -43,19 +48,23 @@ class Channel:
             except (OSError, ValueError) as error:
                 raise ChannelClosed(str(error)) from error
             if not chunk:
-                raise ChannelClosed("Канал закрыт.")
+                raise ChannelClosed(tr("Channel closed.", "Канал закрыт."))
             chunks.append(chunk)
             size -= len(chunk)
         return b"".join(chunks)
 
     def receive(self):
+        from ovygram_i18n import tr
         size, = _HEADER.unpack(self.read(_HEADER.size))
         if size > MAX_MESSAGE:
-            raise ChannelClosed("Сообщение превышает допустимый размер.")
+            raise ChannelClosed(tr(
+                "Message exceeds the allowed size.",
+                "Сообщение превышает допустимый размер.",
+            ))
         try:
             message = json.loads(self.read(size))
         except ValueError as error:
-            raise ChannelClosed("Сообщение не является JSON.") from error
+            raise ChannelClosed(tr("Message is not valid JSON.", "Сообщение не является JSON.")) from error
         if not isinstance(message, dict):
-            raise ChannelClosed("Сообщение не является объектом.")
+            raise ChannelClosed(tr("Message is not a JSON object.", "Сообщение не является объектом."))
         return message

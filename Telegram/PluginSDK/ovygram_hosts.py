@@ -21,6 +21,7 @@ import time
 from hook_utils import HookCancelled
 from ovygram_channel import Channel, ChannelClosed
 from ovygram_deps import python_command
+from ovygram_i18n import tr
 from ovygram_sandbox import SandboxError, confine, python_read_only_mounts, release, wrap
 
 START_TIMEOUT = 30
@@ -29,7 +30,7 @@ TIMEOUTS = {"load": 120, "unload": 30, "settings": 30, "settings_action": 30, "s
 HOOK_TIMEOUT = 10
 MAX_ERROR = 4096
 MAX_LOG = 16384
-MASK_BITS = (1 << 17) - 1
+MASK_BITS = (1 << 18) - 1
 _WINDOWS_ENV_ALLOWLIST = (
     "SystemRoot", "SYSTEMDRIVE", "WINDIR", "COMSPEC",
     "NUMBER_OF_PROCESSORS", "OS", "PROCESSOR_ARCHITECTURE",
@@ -93,7 +94,12 @@ class ProcessHost:
             temporary.mkdir(exist_ok=True)
         environment = {**python_environment, "PYTHONUTF8": "1", "PYTHONNOUSERSITE": "1",
                        "PYTHONDONTWRITEBYTECODE": "1"}
-        options = {"bridge": manager.bridge, "dependencies": manager.dependencies.active()}
+        options = {
+            "bridge": manager.bridge,
+            "dependencies": manager.dependencies.active(),
+            "language": getattr(manager, "language", "en"),
+            "base_language": getattr(manager, "base_language", ""),
+        }
         read_only = [
             *python_read_only_mounts(python, bundled, manager.python_dir),
             manager.packages,
@@ -158,7 +164,7 @@ class ProcessHost:
             self.report = {"active": False, "network": False, "reason": str(error)}
             if isinstance(error, SandboxError):
                 raise
-            raise SandboxError(f"Изоляция плагинов: {error}") from error
+            raise SandboxError(tr(f"Plugin isolation: {error}", f"Изоляция плагинов: {error}")) from error
         for target in (self.read, self.read_errors):
             thread = threading.Thread(target=target, args=(session,), name="Ovygram plugin host",
                                       daemon=True)
@@ -171,7 +177,8 @@ class ProcessHost:
         if hello is None or hello.get("event") != "hello" or bool(hello.get("scoped")) != options["scope"]:
             self.stop(session)
             detail = " ".join(session.output[-4:])
-            reason = "Процесс плагинов не запустился." + (" " + detail if detail else "")
+            reason = tr("The plugin process failed to start.", "Процесс плагинов не запустился.") + (
+                " " + detail if detail else "")
             self.report = {"active": False, "network": False, "reason": reason}
             raise HostError(reason)
         self.report = report
@@ -229,7 +236,7 @@ class ProcessHost:
     @staticmethod
     def exit_reason(session):
         detail = " ".join(session.output[-4:])
-        return "Процесс плагинов завершился." + (" " + detail if detail else "")
+        return tr("The plugin process exited.", "Процесс плагинов завершился.") + (" " + detail if detail else "")
 
     # Threads of a session.
 
@@ -237,7 +244,7 @@ class ProcessHost:
         try:
             message = session.channel.receive()
             if message.get("event") != "hello":
-                raise ChannelClosed("Нет приветствия.")
+                raise ChannelClosed(tr("No handshake.", "Нет приветствия."))
             session.inbox.put(message)
             while True:
                 message = session.channel.receive()
@@ -315,7 +322,10 @@ class ProcessHost:
             try:
                 message = session.inbox.get(timeout=max(deadline - time.monotonic(), 0))
             except queue.Empty:
-                reason = f"Плагины не ответили за {timeout} с ({action}). Процесс плагинов остановлен."
+                reason = tr(
+                    f"Plugins did not respond within {timeout} s ({action}). The plugin process was stopped.",
+                    f"Плагины не ответили за {timeout} с ({action}). Процесс плагинов остановлен.",
+                )
                 self.fail(reason)
                 raise HostError(reason) from None
             if message is None:
@@ -326,13 +336,16 @@ class ProcessHost:
                 self.answer(session, message)
             elif message.get("reply") == identity:
                 if "error" in message:
-                    text = _text(message["error"], MAX_ERROR) or "Ошибка плагина."
+                    text = _text(message["error"], MAX_ERROR) or tr("Plugin error.", "Ошибка плагина.")
                     if message.get("cancelled"):
                         raise HookCancelled(text)
                     raise PluginError(text)
                 return message.get("result")
             else:
-                reason = "Некорректный ответ процесса плагинов."
+                reason = tr(
+                    "Invalid response from the plugin process.",
+                    "Некорректный ответ процесса плагинов.",
+                )
                 self.fail(reason)
                 raise HostError(reason)
 
@@ -341,7 +354,10 @@ class ProcessHost:
         reply = {"reply": message["call"]}
         try:
             if message.get("action") != "set_setting":
-                raise ValueError("Неизвестный запрос процесса плагинов.")
+                raise ValueError(tr(
+                    "Unknown request from the plugin process.",
+                    "Неизвестный запрос процесса плагинов.",
+                ))
             self.manager.host_set_setting(**message["params"])
         except Exception as error:
             reply["error"] = str(error) or type(error).__name__
@@ -390,7 +406,10 @@ class LocalHost:
 
     def status(self):
         return {"mode": "in_process", "running": True, "active": False, "network": True,
-                "reason": "Плагины исполняются в процессе клиента."}
+                "reason": tr(
+                    "Plugins are running inside the client process.",
+                    "Плагины исполняются в процессе клиента.",
+                )}
 
     def check(self):
         pass

@@ -8,6 +8,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "settings/sections/settings_main.h"
 
 #ifdef OVYGRAM_ENABLED
+#include "ovygram/i18n_rpl.h"
 #include "settings/sections/settings_plugins.h"
 #include "window/main_window.h"
 #endif
@@ -448,7 +449,7 @@ void BuildSectionButtons(SectionBuilder &builder) {
 #ifdef OVYGRAM_ENABLED
 	builder.addButton({
 		.id = u"main/plugins"_q,
-		.title = rpl::single(u"Плагины"_q),
+		.title = Ovygram::TrValue(u"Plugins"_q, u"Плагины"_q),
 		.icon = { &st::menuIconCustomize },
 		.onClick = [=] { showOther(PluginsId()); },
 		.keywords = { u"plugins"_q, u"плагины"_q },

@@ -34,6 +34,7 @@ from ovygram_deps import Dependencies, normalize_all
 from ovygram_distribution import Distribution
 from ovygram_helpers import Helpers, PROXY_ROUTES
 from ovygram_hosts import HostError, LocalHost, PluginError, ProcessHost
+from ovygram_i18n import get_base_language, get_language, set_language as _set_i18n_language, tr, ui_language
 from ovygram_registry import TRUSTED, protected_author
 from ovygram_package import (MAX_PACKAGE, MAX_SOURCE, SDK_VERSION, archive_path, read_source,
                              read_zip)
@@ -58,6 +59,9 @@ def plugin_metadata(source, filename):
 def stored(values):
     metadata = {key: values[key] for key in STORED_FIELDS}
     metadata["requirements"] = normalize_all(metadata["requirements"])
+    for key in ("name_i18n", "description_i18n"):
+        if values.get(key):
+            metadata[key] = dict(values[key])
     return metadata
 
 
@@ -74,7 +78,7 @@ LEGACY_METADATA = {
 
 def legacy_metadata(source, filename):
     if len(source) > MAX_SOURCE:
-        raise ValueError("Файл плагина больше 1 МиБ.")
+        raise ValueError(tr("Plugin file exceeds 1 MiB.", "Файл плагина больше 1 МиБ."))
     values = {}
     for node in ast.parse(source, filename=filename).body:
         if isinstance(node, ast.Assign):
@@ -87,17 +91,29 @@ def legacy_metadata(source, filename):
             if isinstance(target, ast.Name) and target.id in LEGACY_METADATA:
                 key = LEGACY_METADATA[target.id]
                 if key in values:
-                    raise ValueError(f"Метаданные {target.id} указаны дважды.")
+                    raise ValueError(tr(
+                        f"Metadata {target.id} is declared twice.",
+                        f"Метаданные {target.id} указаны дважды.",
+                    ))
                 values[key] = ast.literal_eval(node.value)
     for key in ("id", "name", "version", "author", "description"):
         if not isinstance(values.get(key), str) or not values[key].strip():
-            raise ValueError(f"Укажите строковое поле {key} в метаданных.")
+            raise ValueError(tr(
+                f"Specify a non-empty string field {key} in metadata.",
+                f"Укажите строковое поле {key} в метаданных.",
+            ))
     if not LEGACY_ID.fullmatch(values["id"]):
-        raise ValueError("Недопустимый ID плагина.")
+        raise ValueError(tr("Invalid plugin ID.", "Недопустимый ID плагина."))
     if values.get("platform") != "desktop":
-        raise ValueError('Укажите __platform__ = "desktop". Android-плагины требуют переноса.')
+        raise ValueError(tr(
+            'Specify __platform__ = "desktop". Android plugins require porting.',
+            'Укажите __platform__ = "desktop". Android-плагины требуют переноса.',
+        ))
     if type(values.get("sdk")) is not int or not 1 <= values["sdk"] <= SDK_VERSION:
-        raise ValueError(f"Поддерживаются версии Desktop SDK от 1 до {SDK_VERSION}.")
+        raise ValueError(tr(
+            f"Supported Desktop SDK versions: 1 to {SDK_VERSION}.",
+            f"Поддерживаются версии Desktop SDK от 1 до {SDK_VERSION}.",
+        ))
     if "requirements" in values:
         values["requirements"] = normalize_all(values["requirements"])
     return values
@@ -111,7 +127,7 @@ def read_package(payload, filename):
     if suffix in ARCHIVE:
         values, _ = read_zip(payload)
         return stored(values), "ovyzip"
-    raise ValueError("Выберите файл .ovyplugin или .ovyzip.")
+    raise ValueError(tr("Select a .ovyplugin or .ovyzip file.", "Выберите файл .ovyplugin или .ovyzip."))
 
 
 def unpack_package(payload, kind, target):
@@ -144,18 +160,18 @@ def checked_settings(fields):
     """The description of settings as the host returned it. The client draws
     it, so its shape is checked here and not trusted to the plugin side."""
     if not isinstance(fields, list) or len(fields) > MAX_SETTINGS:
-        raise ValueError("Некорректное описание настроек.")
+        raise ValueError(tr("Invalid settings description.", "Некорректное описание настроек."))
     for field in fields:
         expected = SETTING_KINDS.get(field.get("kind")) if isinstance(field, dict) else None
         if expected is None or field.keys() != {"kind", *expected} or any(
                 type(field[key]) is not kind for key, kind in expected.items()):
-            raise ValueError("Некорректное описание настройки.")
+            raise ValueError(tr("Invalid setting definition.", "Некорректное описание настройки."))
         if field["kind"] == "selector" and (
                 not field["items"] or not all(isinstance(text, str) for text in field["items"])
                 or not 0 <= field["value"] < len(field["items"])):
-            raise ValueError("Некорректное описание списка.")
+            raise ValueError(tr("Invalid selector definition.", "Некорректное описание списка."))
         if field["kind"] == "link" and not field["text"].strip():
-            raise ValueError("Ссылка на настройки требует непустое название.")
+            raise ValueError(tr("Settings link requires a non-empty title.", "Ссылка на настройки требует непустое название."))
     return fields
 
 
@@ -165,22 +181,25 @@ MAX_UI_NODES = 2048
 
 def _load_ui_image(raw_path, roots):
     if not isinstance(raw_path, str) or not raw_path or "\x00" in raw_path:
-        raise ValueError("Некорректный путь изображения.")
+        raise ValueError(tr("Invalid image path.", "Некорректный путь изображения."))
     if raw_path.startswith(("\\\\", "//", "\\?")):
-        raise ValueError("Сетевые пути изображений запрещены.")
+        raise ValueError(tr("Network image paths are forbidden.", "Сетевые пути изображений запрещены."))
     path = Path(raw_path).resolve(strict=True)
     if str(path).startswith(("\\\\", "//")) or not any(path.is_relative_to(root) for root in roots):
-        raise ValueError("Используйте изображения из пакета или каталога данных плагина.")
+        raise ValueError(tr(
+            "Use images from the plugin package or its data directory.",
+            "Используйте изображения из пакета или каталога данных плагина.",
+        ))
     flags = (os.O_RDONLY | getattr(os, "O_NONBLOCK", 0)
              | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0))
     descriptor = os.open(path, flags)
     try:
         if not stat.S_ISREG(os.fstat(descriptor).st_mode):
-            raise ValueError("Изображение должно быть обычным файлом плагина.")
+            raise ValueError(tr("Image must be a regular plugin file.", "Изображение должно быть обычным файлом плагина."))
         if sys.platform.startswith("linux"):
             actual = Path(os.readlink(f"/proc/self/fd/{descriptor}"))
             if not any(actual.is_relative_to(root) for root in roots):
-                raise ValueError("Изображение должно быть обычным файлом плагина.")
+                raise ValueError(tr("Image must be a regular plugin file.", "Изображение должно быть обычным файлом плагина."))
         with os.fdopen(descriptor, "rb") as source:
             descriptor = None
             payload = source.read(MAX_UI_IMAGE_BYTES + 1)
@@ -188,7 +207,10 @@ def _load_ui_image(raw_path, roots):
         if descriptor is not None:
             os.close(descriptor)
     if not payload or len(payload) > MAX_UI_IMAGE_BYTES:
-        raise ValueError("Изображение пустое или превышает допустимый размер (16 МиБ).")
+        raise ValueError(tr(
+            "Image is empty or exceeds the allowed size (16 MiB).",
+            "Изображение пустое или превышает допустимый размер (16 МиБ).",
+        ))
     return base64.b64encode(payload).decode("ascii")
 
 
@@ -202,12 +224,12 @@ def _embed_ui_images(tree, roots):
         node = stack.pop()
         visited += 1
         if visited > MAX_UI_NODES:
-            raise ValueError("Слишком большое дерево интерфейса.")
+            raise ValueError(tr("UI tree is too large.", "Слишком большое дерево интерфейса."))
         if not isinstance(node, dict):
             continue
         if node.get("type") == "image":
             if "path" not in node:
-                raise ValueError("Для ui.Image требуется путь к файлу плагина.")
+                raise ValueError(tr("ui.Image requires a path to a plugin file.", "Для ui.Image требуется путь к файлу плагина."))
             node["data"] = _load_ui_image(node["path"], roots)
             node.pop("path", None)
         children = node.get("children")
@@ -244,6 +266,8 @@ class Manager:
         self.distribution_state = {}
         self.pending_updates = {}
         self.proxy_routes = {}
+        self.language = get_language()
+        self.base_language = get_base_language()
         self._startup_pending = True
         self.logger = logging.Logger("ovygram")
         self.log_handler = RotatingFileHandler(
@@ -369,7 +393,10 @@ class Manager:
         elif method == "ui.update":
             props = command.get("props")
             if isinstance(props, dict) and ("path" in props or "data" in props):
-                self.host_error(installation_id, "Изменение источника изображения не поддерживается.")
+                self.host_error(installation_id, tr(
+                    "Changing an image source is not supported.",
+                    "Изменение источника изображения не поддерживается.",
+                ))
                 return
         if self.sender is not None:
             self.sender(command)
@@ -378,7 +405,7 @@ class Manager:
             import _ovygram_native
             _ovygram_native.submit(json.dumps(command, ensure_ascii=False))
         except (ImportError, RuntimeError) as error:
-            self.logger.warning("Команда плагина не доставлена: %s", error)
+            self.logger.warning("Plugin command was not delivered: %s", error)
 
 
     def host_error(self, installation_id, message):
@@ -388,13 +415,13 @@ class Manager:
     def plugin_error(self, installation_id, message):
         """An error text written by the plugin side: one bounded paragraph,
         which the manager shows as a message of the plugin."""
-        text = " ".join(message.split())[:MAX_PLUGIN_ERROR] or "Ошибка плагина."
+        text = " ".join(message.split())[:MAX_PLUGIN_ERROR] or tr("Plugin error.", "Ошибка плагина.")
         with self._state_lock:
             self.errors[installation_id] = self.reported[installation_id] = text
 
     def host_set_setting(self, installation_id, key, value, account_id=None):
         if not self.running(installation_id):
-            raise ValueError("Плагин не запущен.")
+            raise ValueError(tr("Plugin is not running.", "Плагин не запущен."))
         self.store_setting(installation_id, key, value, account_id)
 
     def host_commands(self, installation_id, commands):
@@ -481,7 +508,7 @@ class Manager:
         try:
             self.host.call("command", context=context, **command)
         except (HostError, HookCancelled) as error:
-            return {"handled": True, "error": str(error) or "Команда не выполнена."}
+            return {"handled": True, "error": str(error) or tr("Command failed.", "Команда не выполнена.")}
         return {"handled": True, "error": ""}
 
     def host_exited(self, reason):
@@ -517,7 +544,7 @@ class Manager:
             or not {"plugin_id", "current", "previous", "enabled", "settings"} <= record.keys()
             for installation_id, record in records.items()
         ):
-            raise ValueError("Повреждён файл состояния плагинов.")
+            raise ValueError(tr("Plugin state file is corrupted.", "Повреждён файл состояния плагинов."))
         self.distribution_state = state.get("distribution", {})
         self.pending_updates = state.get("pending_updates", {})
         routes = state.get("proxy_routes", {})
@@ -529,7 +556,7 @@ class Manager:
                 or not {"plugin_id", "current", "previous", "enabled", "settings"} <= previous.keys()
                 or previous["plugin_id"] != records[identity]["plugin_id"]
                 for identity, previous in self.pending_updates.items()):
-            raise ValueError("Повреждён журнал обновлений плагинов.")
+            raise ValueError(tr("Plugin update journal is corrupted.", "Повреждён журнал обновлений плагинов."))
         return records
 
     def recover_updates(self):
@@ -548,8 +575,8 @@ class Manager:
                     try:
                         self.discard(version)
                     except OSError as error:
-                        self.logger.warning("Не удалось удалить прерванное обновление: %s", error)
-            self.logger.warning("Восстановлена предыдущая версия после прерванного обновления: %s", identity)
+                        self.logger.warning("Failed to remove interrupted update: %s", error)
+            self.logger.warning("Restored previous version after interrupted update: %s", identity)
 
     def finish_update(self, identity):
         previous = self.pending_updates.pop(identity)
@@ -564,7 +591,7 @@ class Manager:
         becomes an installation, its data directory moves along."""
         if any(not isinstance(record, dict) or not LEGACY_ID.fullmatch(plugin_id)
                for plugin_id, record in records.items()):
-            raise ValueError("Повреждён файл состояния плагинов.")
+            raise ValueError(tr("Plugin state file is corrupted.", "Повреждён файл состояния плагинов."))
         installations = {}
         for plugin_id, record in records.items():
             installation_id = uuid.uuid4().hex
@@ -587,7 +614,10 @@ class Manager:
 
     def check_thread(self):
         if threading.get_ident() != self.owner:
-            raise RuntimeError("Настройки плагина доступны только в главном потоке.")
+            raise RuntimeError(tr(
+                "Plugin settings are only accessible on the main thread.",
+                "Настройки плагина доступны только в главном потоке.",
+            ))
 
     def save(self):
         text = json.dumps({"version": STATE_VERSION, "installations": self.records,
@@ -605,7 +635,7 @@ class Manager:
         """Only the native proxy picker may record a user's route selection."""
         if not isinstance(routes, dict) or any(route not in PROXY_ROUTES or
                 not isinstance(owner, str) or owner not in self.records for route, owner in routes.items()):
-            raise ValueError("Недопустимые назначения прокси.")
+            raise ValueError(tr("Invalid proxy assignments.", "Недопустимые назначения прокси."))
         if routes == self.proxy_routes:
             return True
         previous, self.proxy_routes = self.proxy_routes, dict(routes)
@@ -619,10 +649,13 @@ class Manager:
     def directory(self, version):
         token = version["directory"]
         if not VERSION_DIR.fullmatch(token):
-            raise ValueError("Недопустимый каталог версии плагина.")
+            raise ValueError(tr("Invalid plugin version directory.", "Недопустимый каталог версии плагина."))
         path = self.packages / token
         if path.resolve() != self.root / "packages" / token:
-            raise ValueError("Каталог версии выходит за пределы профиля плагинов.")
+            raise ValueError(tr(
+                "Version directory escapes the plugins profile.",
+                "Каталог версии выходит за пределы профиля плагинов.",
+            ))
         return path
 
     def discard(self, version):
@@ -638,7 +671,10 @@ class Manager:
         token = self.directory(version).name
         path = self.root / "share" / token
         if path.resolve() != path:
-            raise ValueError("Каталог отправки выходит за пределы профиля плагинов.")
+            raise ValueError(tr(
+                "Share directory escapes the plugins profile.",
+                "Каталог отправки выходит за пределы профиля плагинов.",
+            ))
         return path
 
     def original(self, version):
@@ -648,10 +684,13 @@ class Manager:
         allowed = {f"{record_id}.{version.get('package_type')}",
                    *(f"plugin-{record_id}{suffix}" for suffix in (".py", ".plugin", ".zip"))}
         if name is None or name not in allowed:
-            raise ValueError("Недопустимое имя файла плагина.")
+            raise ValueError(tr("Invalid plugin file name.", "Недопустимое имя файла плагина."))
         target = self.share_directory(version) / name
         if target.resolve() != target or not target.is_file():
-            raise ValueError("Исходный пакет плагина отсутствует. Обнови плагин из файла.")
+            raise ValueError(tr(
+                "Original plugin package is missing. Update the plugin from a file.",
+                "Исходный пакет плагина отсутствует. Обнови плагин из файла.",
+            ))
         return target
 
     def share_file(self, installation_id):
@@ -661,14 +700,17 @@ class Manager:
             package = self.directory(version)
             plugin_id = self.records[installation_id]["plugin_id"]
             if version["entry"] != "plugin.py" or (package / "plugin.json").exists():
-                raise ValueError("Обнови ZIP-плагин из исходного архива, чтобы отправить его.")
+                raise ValueError(tr(
+                    "Update the ZIP plugin from its original archive in order to share it.",
+                    "Обнови ZIP-плагин из исходного архива, чтобы отправить его.",
+                ))
             source = package / "plugin.py"
             if source.resolve() != source or source.stat().st_size > MAX_SOURCE:
-                raise ValueError("Недопустимый файл плагина.")
+                raise ValueError(tr("Invalid plugin file.", "Недопустимый файл плагина."))
             share.mkdir(parents=True, exist_ok=True)
             target = share / f"plugin-{plugin_id}.plugin"
             if target.resolve() != target:
-                raise ValueError("Недопустимый путь отправки плагина.")
+                raise ValueError(tr("Invalid plugin share path.", "Недопустимый путь отправки плагина."))
             shutil.copyfile(source, target)
             return str(target)
         return str(self.original(version))
@@ -680,7 +722,10 @@ class Manager:
             return  # Installed before hashes were kept.
         payload = self.original(version).read_bytes()
         if hashlib.sha256(payload).hexdigest() != version["sha256"]:
-            raise ValueError("Файл плагина изменён после установки. Установите его заново.")
+            raise ValueError(tr(
+                "Plugin file was modified after installation. Install it again.",
+                "Файл плагина изменён после установки. Установите его заново.",
+            ))
         directory = self.directory(version)
         if version["package_type"] == "ovyplugin":
             expected = {"plugin.py": payload}
@@ -690,11 +735,17 @@ class Manager:
         for name, data in expected.items():
             path = directory.joinpath(*PurePosixPath(name).parts)
             if path.resolve() != path or not path.is_file() or path.read_bytes() != data:
-                raise ValueError(f"Файл {name} плагина изменён после установки. Установите его заново.")
+                raise ValueError(tr(
+                    f"Plugin file {name} was modified after installation. Install it again.",
+                    f"Файл {name} плагина изменён после установки. Установите его заново.",
+                ))
         for path in directory.rglob("*"):
             if path.is_symlink() or (
                     path.is_file() and path.relative_to(directory).as_posix() not in expected):
-                raise ValueError("В каталоге плагина появился посторонний файл.")
+                raise ValueError(tr(
+                    "An unexpected file appeared in the plugin directory.",
+                    "В каталоге плагина появился посторонний файл.",
+                ))
         return expected.get(version["entry"])
 
     def report_error(self, installation_id, message):
@@ -711,20 +762,32 @@ class Manager:
         succeeded = False
         try:
             if version.get("blocked") or self.distribution.registry.cached(version)["status"] == "blocked":
-                raise ValueError("Опасный плагин / вирус: запуск запрещён.")
+                raise ValueError(tr(
+                    "Dangerous plugin / malware: launch blocked.",
+                    "Опасный плагин / вирус: запуск запрещён.",
+                ))
             requirements = version["metadata"].get("requirements", [])
             if not self.dependencies.satisfied(requirements):
                 if self.dependencies.waiting_for_restart(requirements):
-                    raise RuntimeError("Зависимости установлены. Перезапустите клиент.")
-                raise RuntimeError("Зависимости не установлены. Выключите и снова включите плагин.")
+                    raise RuntimeError(tr(
+                        "Dependencies installed. Restart the client.",
+                        "Зависимости установлены. Перезапустите клиент.",
+                    ))
+                raise RuntimeError(tr(
+                    "Dependencies are not installed. Disable and re-enable the plugin.",
+                    "Зависимости не установлены. Выключите и снова включите плагин.",
+                ))
             checked_source = self.check_integrity(version)
             directory = self.directory(version)
             entry = version["entry"]
             if len(archive_path(entry).parts) != 1:
-                raise ValueError("Недопустимая точка входа.")
+                raise ValueError(tr("Invalid entry point.", "Недопустимая точка входа."))
             path = directory / entry
             if path.resolve().parent != directory:
-                raise ValueError("Точка входа выходит за пределы каталога плагина.")
+                raise ValueError(tr(
+                    "Entry point escapes the plugin directory.",
+                    "Точка входа выходит за пределы каталога плагина.",
+                ))
             if checked_source is None:
                 with path.open("rb") as stream:
                     source = stream.read(MAX_SOURCE + 1)
@@ -732,7 +795,10 @@ class Manager:
                 source = checked_source
             reader = legacy_metadata if version.get("format") == "legacy" else plugin_metadata
             if reader(source, str(path)) != version["metadata"]:
-                raise ValueError("Метаданные изменились. Импортируйте новую версию из файла.")
+                raise ValueError(tr(
+                    "Metadata has changed. Import the new version from a file.",
+                    "Метаданные изменились. Импортируйте новую версию из файла.",
+                ))
             data = self.root / "data" / installation_id
             # The host runs exactly the bytes checked above, not the file.
             with self._state_lock:
@@ -808,12 +874,12 @@ class Manager:
         source = Path(path)
         suffix = source.suffix.lower()
         if suffix not in SINGLE + ARCHIVE:
-            raise ValueError("Выберите файл .ovyplugin или .ovyzip.")
+            raise ValueError(tr("Select a .ovyplugin or .ovyzip file.", "Выберите файл .ovyplugin или .ovyzip."))
         limit = MAX_PACKAGE if suffix in ARCHIVE else MAX_SOURCE
         with source.open("rb") as stream:
             payload = stream.read(limit + 1)
         if len(payload) > limit:
-            raise ValueError("Файл плагина превышает допустимый размер.")
+            raise ValueError(tr("Plugin file exceeds the allowed size.", "Файл плагина превышает допустимый размер."))
         return payload
 
     def installations_of(self, plugin_id):
@@ -846,17 +912,26 @@ class Manager:
         registry = self.distribution.registry
         trust = trust or {"status": "verification_unavailable"}
         if trust["status"] == "blocked":
-            raise ValueError("Опасный плагин / вирус: установка запрещена.")
+            raise ValueError(tr(
+                "Dangerous plugin / malware: installation blocked.",
+                "Опасный плагин / вирус: установка запрещена.",
+            ))
         plugin_id = metadata["id"]
         existing = self.installations_of(plugin_id)
         if trust["status"] in TRUSTED and any(
                 identity != installation_id and registry.cached(self.records[identity]["current"])["status"]
                 in TRUSTED for identity in existing):
-            raise ValueError("Два проверенных экземпляра с одинаковым ID запрещены. Обновите существующий.")
+            raise ValueError(tr(
+                "Two verified instances with the same ID are not allowed. Update the existing one.",
+                "Два проверенных экземпляра с одинаковым ID запрещены. Обновите существующий.",
+            ))
         previous = self.records.get(installation_id) if installation_id else None
         if previous and previous["current"].get("trust", {}).get("status") in TRUSTED \
                 and trust["status"] not in TRUSTED and not allow_loss:
-            raise ValueError("Требуется отдельное подтверждение потери проверки.")
+            raise ValueError(tr(
+                "Explicit confirmation is required to replace a verified plugin with an unverified one.",
+                "Требуется отдельное подтверждение потери проверки.",
+            ))
         token = uuid.uuid4().hex
         version = {"directory": token}
         directory = self.directory(version)
@@ -865,11 +940,17 @@ class Manager:
             if installation_id:
                 previous = self.records.get(installation_id)
                 if previous is None:
-                    raise ValueError("Установленный экземпляр не найден.")
+                    raise ValueError(tr("Installed instance not found.", "Установленный экземпляр не найден."))
                 if previous["plugin_id"] != plugin_id:
-                    raise ValueError("ID обновления отличается от ID установленного плагина.")
+                    raise ValueError(tr(
+                        "Update plugin ID does not match the installed plugin ID.",
+                        "ID обновления отличается от ID установленного плагина.",
+                    ))
             elif self.installations_of(plugin_id) and not separate:
-                raise ValueError("Плагин с таким ID уже установлен: обновите его или установите отдельно.")
+                raise ValueError(tr(
+                    "A plugin with this ID is already installed: update it or install separately.",
+                    "Плагин с таким ID уже установлен: обновите его или установите отдельно.",
+                ))
             else:
                 previous = None
                 installation_id = uuid.uuid4().hex
@@ -924,7 +1005,10 @@ class Manager:
                     or self.dependencies.waiting_for_restart(requirements)
                 )
                 if installation_id not in self._loaded and not pending_deps:
-                    raise RuntimeError("Обновление не запущено. Сохранена предыдущая версия.")
+                    raise RuntimeError(tr(
+                        "Update failed to start. The previous version was kept.",
+                        "Обновление не запущено. Сохранена предыдущая версия.",
+                    ))
             self.finish_update(installation_id)
         except BaseException:
             failed = self.records[installation_id]
@@ -932,7 +1016,7 @@ class Manager:
                 try:
                     self.unload(installation_id)
                 except Exception as unload_error:
-                    self.logger.warning("Не удалось выгрузить неудачное обновление %s: %s",
+                    self.logger.warning("Failed to unload failed update %s: %s",
                                         installation_id, unload_error)
             self.change_record(installation_id, old)
             if failed["current"]["directory"] != old["current"]["directory"]:
@@ -945,23 +1029,29 @@ class Manager:
         try:
             self.discard(old["previous"])
         except OSError as error:
-            self.logger.warning("Не удалось удалить старую резервную копию: %s", error)
+            self.logger.warning("Failed to remove old backup: %s", error)
 
     def enable(self, installation_id):
         if self.disabled or self.recovery or self.restart_required:
-            raise RuntimeError("Запуск плагинов сейчас отключён.")
+            raise RuntimeError(tr("Starting plugins is currently disabled.", "Запуск плагинов сейчас отключён."))
         if installation_id in self._loaded:
             return
         record = self.records[installation_id]
         if record["current"].get("blocked") or self.distribution.registry.cached(
                 record["current"])["status"] == "blocked":
-            raise ValueError("Опасный плагин / вирус: запуск запрещён.")
+            raise ValueError(tr(
+                "Dangerous plugin / malware: launch blocked.",
+                "Опасный плагин / вирус: запуск запрещён.",
+            ))
         requirements = record["current"]["metadata"].get("requirements", [])
         if not self.dependencies.satisfied(requirements):
             if self.dependencies.waiting_for_restart(requirements):
                 self.change_record(installation_id, {**record, "enabled": True})
                 with self._state_lock:
-                    self.errors[installation_id] = "Зависимости установлены. Перезапустите клиент."
+                    self.errors[installation_id] = tr(
+                        "Dependencies installed. Restart the client.",
+                        "Зависимости установлены. Перезапустите клиент.",
+                    )
                 return
             self.install_dependencies(installation_id)
             return
@@ -995,7 +1085,10 @@ class Manager:
                     self.load(installation_id)
             else:
                 with self._state_lock:
-                    self.errors[installation_id] = "Зависимости установлены. Перезапустите клиент."
+                    self.errors[installation_id] = tr(
+                        "Dependencies installed. Restart the client.",
+                        "Зависимости установлены. Перезапустите клиент.",
+                    )
 
         self.dependencies.install(installation_id, sorted(requirements), done)
         with self._state_lock:
@@ -1010,19 +1103,28 @@ class Manager:
     def rollback(self, installation_id):
         record = self.records[installation_id]
         if not record["previous"]:
-            raise ValueError("Предыдущая версия отсутствует.")
+            raise ValueError(tr("No previous version is available.", "Предыдущая версия отсутствует."))
         self.check_integrity(record["previous"])
         trust = self.distribution.registry.cached(record["previous"])
         if trust["status"] in ("blocked", "revoked") or record["previous"].get("blocked"):
-            raise ValueError("Предыдущая версия заблокирована или отозвана.")
+            raise ValueError(tr(
+                "The previous version is blocked or revoked.",
+                "Предыдущая версия заблокирована или отозвана.",
+            ))
         if trust["status"] in TRUSTED and any(
                 identity != installation_id and self.distribution.registry.cached(
                     self.records[identity]["current"])["status"] in TRUSTED
                 for identity in self.installations_of(record["plugin_id"])):
-            raise ValueError("Два проверенных экземпляра с одинаковым ID запрещены.")
+            raise ValueError(tr(
+                "Two verified instances with the same ID are not allowed.",
+                "Два проверенных экземпляра с одинаковым ID запрещены.",
+            ))
         if record["current"].get("blocked") or self.distribution.registry.cached(
                 record["current"])["status"] == "revoked":
-            raise ValueError("Для безопасного отката сначала проверьте обновления через сервер.")
+            raise ValueError(tr(
+                "Check for updates via the server first to roll back safely.",
+                "Для безопасного отката сначала проверьте обновления через сервер.",
+            ))
         self.disable(installation_id)
         record = self.records[installation_id]
         self.change_record(installation_id, {
@@ -1043,7 +1145,7 @@ class Manager:
         try:
             self.disable(installation_id)
         except Exception as error:
-            self.logger.warning("Ошибка выгрузки при удалении %s: %s", installation_id, error)
+            self.logger.warning("Unload error while removing %s: %s", installation_id, error)
         if installation_id in self.distribution.offers:
             self.distribution.offers.pop(installation_id, None)
             self.distribution_state["offers"] = copy.deepcopy(self.distribution.offers)
@@ -1061,7 +1163,10 @@ class Manager:
 
     def resume(self):
         if self.disabled or self.restart_required:
-            raise RuntimeError("Перезапустите клиент без режима отключения плагинов.")
+            raise RuntimeError(tr(
+                "Restart the client without --disable-plugins.",
+                "Перезапустите клиент без режима отключения плагинов.",
+            ))
         if not self.recovery:
             return
         self.recovery = False
@@ -1071,7 +1176,7 @@ class Manager:
     def account_key(account_id):
         result = str(account_id)
         if not result.isascii() or not result.isdecimal():
-            raise ValueError("Некорректный ID аккаунта.")
+            raise ValueError(tr("Invalid account ID.", "Некорректный ID аккаунта."))
         return result
 
     def set_setting(self, installation_id, key, value, account_id=None):
@@ -1088,9 +1193,9 @@ class Manager:
 
     def store_setting(self, installation_id, key, value, account_id=None):
         if not isinstance(key, str) or not key or len(key) > 128:
-            raise ValueError("Недопустимый ключ настройки.")
+            raise ValueError(tr("Invalid setting key.", "Недопустимый ключ настройки."))
         if len(json.dumps(value, ensure_ascii=False, allow_nan=False)) > 65536:
-            raise ValueError("Слишком большое значение настройки.")
+            raise ValueError(tr("Setting value is too large.", "Слишком большое значение настройки."))
         record = self.records[installation_id]
         if account_id is not None:
             account = self.account_key(account_id)
@@ -1106,30 +1211,46 @@ class Manager:
 
     def settings(self, installation_id):
         if installation_id not in self._loaded:
-            raise ValueError("Плагин не запущен.")
+            raise ValueError(tr("Plugin is not running.", "Плагин не запущен."))
         return checked_settings(self.host.call("settings", installation_id=installation_id))
 
     def settings_action(self, installation_id, action_id):
         if installation_id not in self._loaded:
-            raise ValueError("Кнопка настроек устарела или плагин выключен.")
+            raise ValueError(tr(
+                "Settings button is outdated or the plugin is disabled.",
+                "Кнопка настроек устарела или плагин выключен.",
+            ))
         self.host.call("settings_action", installation_id=installation_id, action_id=action_id)
 
     def save_settings(self, installation_id, values):
         fields = [field for field in self.settings(installation_id)
                   if field["kind"] in ("switch", "input", "selector")]
         if values.keys() != {field["key"] for field in fields}:
-            raise ValueError("Набор настроек изменился. Откройте диалог заново.")
+            raise ValueError(tr(
+                "The set of settings has changed. Reopen the dialog.",
+                "Набор настроек изменился. Откройте диалог заново.",
+            ))
         for field in fields:
             value = values[field["key"]]
             if type(value) is not type(field["value"]):
-                raise ValueError("Некорректный тип настройки.")
+                raise ValueError(tr("Invalid setting type.", "Некорректный тип настройки."))
             if isinstance(value, str) and len(value) > 65536:
-                raise ValueError("Слишком длинное значение настройки.")
+                raise ValueError(tr("Setting value is too long.", "Слишком длинное значение настройки."))
             if field["kind"] == "selector" and not 0 <= value < len(field["items"]):
-                raise ValueError("Некорректное значение списка.")
+                raise ValueError(tr("Invalid selector value.", "Некорректное значение списка."))
         record = self.records[installation_id]
         self.change_record(installation_id, {**record, "settings": {**record["settings"], **values}})
         self.push_settings(installation_id)
+
+    def set_language(self, language, base_language=""):
+        self.language, self.base_language = _set_i18n_language(language, base_language)
+        if self.host.running:
+            self.forward("set_language", None, language=self.language, base_language=self.base_language)
+        return {
+            "language": self.language,
+            "base_language": self.base_language,
+            "ui_language": ui_language(),
+        }
 
     def describe(self, installation_id):
         record = self.records[installation_id]
@@ -1137,7 +1258,8 @@ class Manager:
         trust = self.distribution.registry.cached(version)
         author_hidden = protected_author(version["metadata"]["author"], trust["status"])
         return {**version["metadata"], "installation_id": installation_id,
-                "trust": trust, "display_author": "Неизвестный автор" if author_hidden else version["metadata"]["author"],
+                "trust": trust,
+                "display_author": tr("Unknown author", "Неизвестный автор") if author_hidden else version["metadata"]["author"],
                 "author_hidden": author_hidden,
                 "previously_trusted": version.get("trust", {}).get("status") in TRUSTED,
                 "update": self.distribution.offer_for(installation_id),
@@ -1188,6 +1310,7 @@ class Manager:
             self.distribution.poll()
         allowed = {
             "poll": self.poll_distribution,
+            "set_language": self.set_language,
             "helper_command": self.helpers.command,
             "proxy_offers": lambda: list(self.helpers.offers.values()),
             "proxy_routes": lambda: self.proxy_routes,

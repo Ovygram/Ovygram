@@ -3,6 +3,7 @@
 #include "core/application.h"
 #include "core/file_utilities.h"
 #include "core/plugin_runtime.h"
+#include "ovygram/i18n_rpl.h"
 #include "ovygram/plugin_install.h"
 #include "ovygram/plugin_list_view.h"
 #include "ovygram/plugin_management_view.h"
@@ -36,12 +37,18 @@ namespace {
 // How often a page refreshes while plugin libraries are installed.
 constexpr auto kDependencyPoll = crl::time(1500);
 // .ovyplugin and .ovyzip are the plugin formats; the rest import locally.
-const auto kPluginFilter = u"Плагины (*.ovyplugin *.ovyzip *.py *.plugin *.zip)"_q;
+[[nodiscard]] QString PluginFileFilter() {
+	return Ovygram::Tr(
+		u"Plugins (*.ovyplugin *.ovyzip *.py *.plugin *.zip)"_q,
+		u"Плагины (*.ovyplugin *.ovyzip *.py *.plugin *.zip)"_q);
+}
 
 [[nodiscard]] QJsonValue Request(
 		QJsonObject request,
 		rpl::variable<QString> &notice) {
-	auto error = u"Не удалось запустить встроенный Python. Подробности в журнале клиента."_q;
+	auto error = Ovygram::Tr(
+		u"Failed to start built-in Python. See the client log for details."_q,
+		u"Не удалось запустить встроенный Python. Подробности в журнале клиента."_q);
 	if (const auto runtime = Core::App().pluginRuntime()) {
 		try {
 			const auto response = runtime->dispatch(
@@ -51,7 +58,9 @@ const auto kPluginFilter = u"Плагины (*.ovyplugin *.ovyzip *.py *.plugin 
 			if (object.contains(u"result"_q)) {
 				return object.value(u"result"_q);
 			}
-			error = object.value(u"error"_q).toString(u"Не удалось выполнить действие."_q);
+			error = object.value(u"error"_q).toString(Ovygram::Tr(
+				u"Failed to complete the action."_q,
+				u"Не удалось выполнить действие."_q));
 		} catch (const std::exception &exception) {
 			error = QString::fromUtf8(exception.what());
 		}
@@ -62,11 +71,17 @@ const auto kPluginFilter = u"Плагины (*.ovyplugin *.ovyzip *.py *.plugin 
 
 [[nodiscard]] QString RuntimeStatus(const QJsonObject &snapshot) {
 	if (snapshot.value(u"disabled"_q).toBool()) {
-		return u"Плагины отключены параметром --disable-plugins."_q;
+		return Ovygram::Tr(
+			u"Plugins are disabled by --disable-plugins."_q,
+			u"Плагины отключены параметром --disable-plugins."_q);
 	} else if (snapshot.value(u"recovery"_q).toBool()) {
-		return u"Предыдущий сеанс завершился аварийно. Плагины пока не запущены."_q;
+		return Ovygram::Tr(
+			u"The previous session crashed. Plugins have not been started yet."_q,
+			u"Предыдущий сеанс завершился аварийно. Плагины пока не запущены."_q);
 	} else if (snapshot.value(u"restart_required"_q).toBool()) {
-		return u"Для дальнейшего запуска плагинов перезапусти клиент."_q;
+		return Ovygram::Tr(
+			u"Restart the client to continue running plugins."_q,
+			u"Для дальнейшего запуска плагинов перезапусти клиент."_q);
 	}
 	return {};
 }
@@ -121,7 +136,9 @@ void AddNotice(
 
 [[nodiscard]] QString DependencyStatus(const QJsonObject &snapshot) {
 	return snapshot.value(u"dependencies"_q).toObject().value(u"restart"_q).toBool()
-		? u"Новые версии библиотек плагинов применятся после перезапуска клиента."_q
+		? Ovygram::Tr(
+			u"New versions of plugin libraries will take effect after restarting the client."_q,
+			u"Новые версии библиотек плагинов применятся после перезапуска клиента."_q)
 		: QString();
 }
 
@@ -135,9 +152,13 @@ void AddNotice(
 	} else if (isolation.value(u"running"_q).toBool() || reason.isEmpty()) {
 		return reason.isEmpty()
 			? QString()
-			: u"Плагины работают без изоляции от системы. %1"_q.arg(reason);
+			: Ovygram::Tr(
+				u"Plugins are running without system isolation. %1"_q,
+				u"Плагины работают без изоляции от системы. %1"_q).arg(reason);
 	}
-	return u"Плагины не запущены. %1"_q.arg(reason);
+	return Ovygram::Tr(
+		u"Plugins are not running. %1"_q,
+		u"Плагины не запущены. %1"_q).arg(reason);
 }
 
 void ConfirmRemove(
@@ -258,7 +279,7 @@ void PluginDetails::refresh() {
 		}
 	}
 	if (plugin.isEmpty()) {
-		_notice = u"Плагин удалён."_q;
+		_notice = Ovygram::Tr(u"Plugin removed."_q, u"Плагин удалён."_q);
 		return;
 	}
 
@@ -329,7 +350,9 @@ void PluginDetails::operate(const QString &action, bool keepData) {
 }
 
 void PluginDetails::installUpdate() {
-	FileDialog::GetOpenPath(this, u"Выбрать файл плагина"_q, kPluginFilter,
+	FileDialog::GetOpenPath(this,
+		Ovygram::Tr(u"Select plugin file"_q, u"Выбрать файл плагина"_q),
+		PluginFileFilter(),
 		crl::guard(this, [this](const FileDialog::OpenResult &files) {
 			if (!files.paths.isEmpty()) {
 				Ovygram::ShowPluginInstall(files.paths.front(), _installationId,
@@ -366,7 +389,7 @@ void PluginDetails::addSettings(const QJsonArray &fields) {
 								QByteArray::fromStdString(response)).object();
 							if (!object.contains(u"result"_q) && show && show->valid()) {
 								show->showToast(object.value(u"error"_q).toString(
-									u"Не удалось выполнить действие."_q));
+									Ovygram::Tr(u"Failed to complete the action."_q, u"Не удалось выполнить действие."_q)));
 							}
 						} catch (const std::exception &exception) {
 							if (show && show->valid()) {
@@ -388,7 +411,7 @@ void PluginDetails::addSettings(const QJsonArray &fields) {
 				{ u"installation_id"_q, _installationId },
 				{ u"values"_q, values },
 			}, _notice).isUndefined()) {
-				_notice = u"Настройки сохранены."_q;
+				_notice = Ovygram::Tr(u"Settings saved."_q, u"Настройки сохранены."_q);
 			}
 		});
 }
@@ -429,7 +452,9 @@ Plugins::Plugins(
 		const auto started = Request({ { u"action"_q, u"check_updates"_q } }, _notice);
 		if (started.isUndefined()) return;
 		_manualCheckPending = true;
-		_notice = started.toBool() ? u"Проверяю обновления плагинов…"_q : u"Проверка уже выполняется…"_q;
+		_notice = started.toBool()
+			? Ovygram::Tr(u"Checking for plugin updates…"_q, u"Проверяю обновления плагинов…"_q)
+			: Ovygram::Tr(u"Check is already in progress…"_q, u"Проверка уже выполняется…"_q);
 		refresh();
 	});
 	Ovygram::AddPluginListNotice(layout, _notice.value());
@@ -437,11 +462,14 @@ Plugins::Plugins(
 	Ui::ResizeFitChild(this, layout);
 
 	_search->changes() | rpl::on_next([this] { populate(); }, layout->lifetime());
+	Ovygram::I18n::LanguageChanges() | rpl::on_next([this](const QString &) {
+		refresh();
+	}, layout->lifetime());
 	refresh();
 }
 
 rpl::producer<QString> Plugins::title() {
-	return rpl::single(u"Плагины"_q);
+	return Ovygram::TrValue(u"Plugins"_q, u"Плагины"_q);
 }
 
 void Plugins::showFinished() {
@@ -466,13 +494,15 @@ void Plugins::refresh() {
 		const auto errors = result.value(u"errors"_q).toArray();
 		const auto updates = result.value(u"updates"_q).toInt();
 		_notice = updates
-			? u"Найдены новые или безопасные версии: %1."_q.arg(updates)
+			? Ovygram::Tr(u"New or safe versions found: %1."_q, u"Найдены новые или безопасные версии: %1."_q).arg(updates)
 			: result.value(u"checked"_q).toInt()
-			? u"Проверка завершена. Новых проверенных версий нет."_q
-			: u"Установленных плагинов для проверки нет."_q;
+			? Ovygram::Tr(u"Check complete. No new verified versions found."_q, u"Проверка завершена. Новых проверенных версий нет."_q)
+			: Ovygram::Tr(u"No installed plugins to check."_q, u"Установленных плагинов для проверки нет."_q);
 		if (!errors.isEmpty()) {
-			_notice = u"Проверка завершена с ошибками. "_q
-				+ (updates ? u"Доступно обновлений: %1. "_q.arg(updates) : QString())
+			_notice = Ovygram::Tr(u"Check finished with errors. "_q, u"Проверка завершена с ошибками. "_q)
+				+ (updates
+					? Ovygram::Tr(u"Updates available: %1. "_q, u"Доступно обновлений: %1. "_q).arg(updates)
+					: QString())
 				+ errors.first().toString();
 		}
 	}
@@ -509,7 +539,7 @@ void Plugins::populate() {
 	if (_snapshot.value(u"recovery"_q).toBool()
 		&& !_snapshot.value(u"disabled"_q).toBool()
 		&& !_snapshot.value(u"restart_required"_q).toBool()) {
-		AddAction(_content, u"Возобновить запуск плагинов"_q, [this] {
+		AddAction(_content, Ovygram::Tr(u"Resume plugins"_q, u"Возобновить запуск плагинов"_q), [this] {
 			_notice = QString();
 			(void)Request({ { u"action"_q, u"resume"_q } }, _notice);
 			crl::on_main(this, [this] { refresh(); });
@@ -523,14 +553,14 @@ void Plugins::populate() {
 		[this](QJsonObject plugin) {
 			showOther(PluginDetails::Id(
 				plugin.value(u"installation_id"_q).toString(),
-				plugin.value(u"name"_q).toString()));
+				Ovygram::I18n::PluginName(plugin)));
 		},
 		[this](QString id, bool enabled) { setPluginEnabled(id, enabled); },
 		[this](QString id) { applyUpdate(id); },
 		[this] {
 			const auto path = _snapshot.value(u"log_path"_q).toString();
 			if (path.isEmpty() || !QDesktopServices::openUrl(QUrl::fromLocalFile(path))) {
-				_notice = u"Не удалось открыть журнал плагинов."_q;
+				_notice = Ovygram::Tr(u"Failed to open the plugin log."_q, u"Не удалось открыть журнал плагинов."_q);
 			}
 		});
 }
@@ -554,7 +584,9 @@ void Plugins::applyUpdate(const QString &id) {
 }
 
 void Plugins::install() {
-	FileDialog::GetOpenPath(this, u"Выбрать файл плагина"_q, kPluginFilter,
+	FileDialog::GetOpenPath(this,
+		Ovygram::Tr(u"Select plugin file"_q, u"Выбрать файл плагина"_q),
+		PluginFileFilter(),
 		crl::guard(this, [this](const FileDialog::OpenResult &files) {
 			if (!files.paths.isEmpty()) {
 				Ovygram::ShowPluginInstall(files.paths.front(), QString(),

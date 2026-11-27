@@ -35,11 +35,12 @@ def stage_dependencies(manager, requirements, folder):
     manager.dependencies.save()
 
 
-def run(path, selected_menu, selected_setting, dependencies):
+def run(path, selected_menu, selected_setting, dependencies, language="en"):
     with TemporaryDirectory(prefix="ovygram-ui-preview-") as temporary:
         manager = Manager(Path(temporary) / "profile", defer_start=True,
                           host=lambda owner: ProcessHost(owner, allow_network=False))
         try:
+            manager.set_language(language)
             commands = queue.SimpleQueue()
             manager.sender = commands.put
             manager.set_client_ready(True)
@@ -71,13 +72,13 @@ def run(path, selected_menu, selected_setting, dependencies):
                             reply["result"] = SAMPLE_REPLIES[method]
                         else:
                             reply["error"] = {"name": "PREVIEW_OFFLINE",
-                                              "description": "В предпросмотре доступны только тестовые данные."}
+                                              "description": "Only sample data is available in preview."}
                         manager.forward("complete", None, request=reply)
 
             deliver()
             if selected_menu:
                 if selected_menu not in main_menu:
-                    raise ValueError(f"Пункт «{selected_menu}» не найден. Доступно: {', '.join(main_menu) or '—'}.")
+                    raise ValueError(f"Menu item '{selected_menu}' not found. Available: {', '.join(main_menu) or '—'}.")
                 manager.forward("ui_event", None, event={
                     "type": "menu_click", "installation_id": identity, "rule_id": main_menu[selected_menu],
                     "value": {"account_id": ACCOUNT["id"]},
@@ -86,7 +87,7 @@ def run(path, selected_menu, selected_setting, dependencies):
                 action = next((item["action_id"] for item in fields
                                if item.get("key") == selected_setting and item["kind"] in {"button", "link"}), None)
                 if action is None:
-                    raise ValueError(f"Кнопка или ссылка «{selected_setting}» не найдена.")
+                    raise ValueError(f"Button or link '{selected_setting}' not found.")
                 manager.settings_action(identity, action)
             else:
                 plugin = {**manager.describe(identity), "loaded": True}

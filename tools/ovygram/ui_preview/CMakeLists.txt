@@ -59,6 +59,7 @@ add_executable(ovygram-ui-preview
     ${src_loc}/ui/widgets/continuous_sliders.cpp
     ${src_loc}/ovygram/auto_update_verify.cpp
     ${src_loc}/ovygram/auto_update_view.cpp
+    ${src_loc}/ovygram/i18n.cpp
     ${src_loc}/ovygram/plugin_management_view.cpp
     ${src_loc}/ovygram/plugin_install_view.cpp
     ${src_loc}/ovygram/plugin_list_view.cpp

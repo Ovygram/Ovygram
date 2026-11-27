@@ -17,6 +17,7 @@ import zipfile
 from dataclasses import dataclass
 from pathlib import PurePosixPath
 
+from ovygram_i18n import normalize_language, tr
 from ovygram_validation import preflight_source, unique_json_object, valid_requirement, valid_text
 
 SDK_VERSION = 4
@@ -38,12 +39,15 @@ VERSION_PART = re.compile(r"([0-9]+)([A-Za-z]*)\Z")
 
 METADATA = {
     "__id__": "id", "__name__": "name", "__description__": "description",
+    "__name_i18n__": "name_i18n", "__description_i18n__": "description_i18n",
     "__author__": "author", "__version__": "version", "__release__": "release",
     "__platform__": "platform", "__desktop_sdk__": "sdk",
     "__requirements__": "requirements",
 }
 REQUIRED = ("id", "name", "description", "author", "version", "platform", "sdk")
 TEXT_LIMITS = {"name": 128, "description": 2000, "author": 128}
+LOCALIZED_LIMITS = {"name_i18n": ("__name_i18n__", 128, False),
+                    "description_i18n": ("__description_i18n__", 2000, True)}
 WINDOWS_NAMES = {"CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$",
                  *(f"COM{i}" for i in "123456789¹²³"), *(f"LPT{i}" for i in "123456789¹²³")}
 
@@ -60,12 +64,18 @@ class IncompatiblePlugin(InvalidPlugin):
 
 def normalize_id(value: object) -> str:
     if not isinstance(value, str):
-        raise InvalidPlugin("ID плагина должен быть строкой.")
+        raise InvalidPlugin(tr("Plugin ID must be a string.", "ID плагина должен быть строкой."))
     plugin_id = value.lower()
     if not PLUGIN_ID.fullmatch(plugin_id):
-        raise InvalidPlugin("ID плагина: латинские буквы, цифры и _, от 1 до 25 символов.")
+        raise InvalidPlugin(tr(
+            "Plugin ID: Latin letters, digits, and _, from 1 to 25 characters.",
+            "ID плагина: латинские буквы, цифры и _, от 1 до 25 символов.",
+        ))
     if plugin_id in RESERVED_IDS:
-        raise InvalidPlugin(f"ID «{plugin_id}» — системное имя Windows.")
+        raise InvalidPlugin(tr(
+            f"ID '{plugin_id}' is a reserved Windows device name.",
+            f"ID «{plugin_id}» — системное имя Windows.",
+        ))
     return plugin_id
 
 
@@ -83,8 +93,12 @@ class Version:
 
 def parse_version(value: object) -> Version:
     if not isinstance(value, str) or not value or len(value) > 15 or not VERSION.fullmatch(value):
-        raise InvalidPlugin("Версия: до 15 символов, числа через точку, буквенный суффикс "
-                            "только после точки (1, 1.2, 1.2b, 1.2.3inf).")
+        raise InvalidPlugin(tr(
+            "Version: up to 15 characters, dot-separated numbers, letter suffix "
+            "only after a dot (1, 1.2, 1.2b, 1.2.3inf).",
+            "Версия: до 15 символов, числа через точку, буквенный суффикс "
+            "только после точки (1, 1.2, 1.2b, 1.2.3inf).",
+        ))
     numbers, suffix = [], []
     for index, part in enumerate(value.split(".")):
         number, letters = VERSION_PART.fullmatch(part).groups()
@@ -108,12 +122,12 @@ def version_follows(new: Version, previous: Version) -> bool:
 
 def read_source(source: bytes, filename: str) -> dict:
     if len(source) > MAX_SOURCE:
-        raise InvalidPlugin("Файл плагина больше 1 МиБ.")
+        raise InvalidPlugin(tr("Plugin file exceeds 1 MiB.", "Файл плагина больше 1 МиБ."))
     try:
         preflight_source(source)
         tree = ast.parse(source, filename=filename)
     except (SyntaxError, ValueError, tokenize.TokenError, MemoryError, RecursionError) as error:
-        raise InvalidPlugin(f"Синтаксическая ошибка: {error}") from error
+        raise InvalidPlugin(tr(f"Syntax error: {error}", f"Синтаксическая ошибка: {error}")) from error
     values = {}
     simple = set()
     for node in tree.body:
@@ -125,18 +139,27 @@ def read_source(source: bytes, filename: str) -> dict:
             continue
         if isinstance(target, ast.Name) and target.id in METADATA:
             if target.id in values:
-                raise InvalidPlugin(f"Метатег {target.id} объявлен больше одного раза.")
+                raise InvalidPlugin(tr(
+                    f"Metadata tag {target.id} is declared more than once.",
+                    f"Метатег {target.id} объявлен больше одного раза.",
+                ))
             try:
                 values[target.id] = ast.literal_eval(node.value)
             except (ValueError, TypeError, MemoryError, RecursionError) as error:
-                raise InvalidPlugin(f"{target.id} должен быть литералом.") from error
+                raise InvalidPlugin(tr(
+                    f"{target.id} must be a literal.",
+                    f"{target.id} должен быть литералом.",
+                )) from error
             simple.add(id(target))
     # Any other write to a metadata name makes the file ambiguous:
     # a, __id__ = ..., __id__ += ..., an assignment in a function or a loop.
     for node in ast.walk(tree):
         if (isinstance(node, ast.Name) and node.id in METADATA
                 and isinstance(node.ctx, (ast.Store, ast.Del)) and id(node) not in simple):
-            raise InvalidPlugin(f"Метатег {node.id} должен задаваться один раз простым присваиванием.")
+            raise InvalidPlugin(tr(
+                f"Metadata tag {node.id} must be assigned once with a simple assignment.",
+                f"Метатег {node.id} должен задаваться один раз простым присваиванием.",
+            ))
     return check_metadata({METADATA[name]: value for name, value in values.items()})
 
 
@@ -144,26 +167,61 @@ def check_metadata(values: dict) -> dict:
     for key in REQUIRED:
         if key not in values:
             name = next(name for name, field in METADATA.items() if field == key)
-            raise InvalidPlugin(f"Нет обязательного метатега {name}.")
+            raise InvalidPlugin(tr(
+                f"Missing required metadata tag {name}.",
+                f"Нет обязательного метатега {name}.",
+            ))
     values["id"] = normalize_id(values["id"])
     for key, limit in TEXT_LIMITS.items():
         value = values[key]
         if not valid_text(value, multiline=key == "description") or not value.strip() or len(value) > limit:
-            raise InvalidPlugin(f"Поле {key}: непустая строка до {limit} символов.")
+            raise InvalidPlugin(tr(
+                f"Field {key}: non-empty string up to {limit} characters.",
+                f"Поле {key}: непустая строка до {limit} символов.",
+            ))
+    for key, (tag, limit, multiline) in LOCALIZED_LIMITS.items():
+        raw = values.get(key)
+        if raw is None:
+            values[key] = {}
+            continue
+        if not isinstance(raw, dict) or len(raw) > 32:
+            raise InvalidPlugin(tr(
+                f"{tag}: dict of up to 32 languages.",
+                f"{tag}: словарь до 32 языков.",
+            ))
+        cleaned = {}
+        for raw_lang, text in raw.items():
+            lang = normalize_language(raw_lang)
+            if not lang or not valid_text(text, multiline=multiline) or not text.strip() or len(text) > limit:
+                raise InvalidPlugin(tr(
+                    f"{tag}: valid language code and non-empty string up to {limit} characters.",
+                    f"{tag}: корректный код языка и непустая строка до {limit} символов.",
+                ))
+            cleaned[lang] = text
+        values[key] = cleaned
     values["version_info"] = parse_version(values["version"])
     values.setdefault("release", False)
     if type(values["release"]) is not bool:
-        raise InvalidPlugin("__release__ должен быть True или False.")
+        raise InvalidPlugin(tr("__release__ must be True or False.", "__release__ должен быть True или False."))
     if values["platform"] != "desktop":
-        raise InvalidPlugin('Нужен __platform__ = "desktop".')
+        raise InvalidPlugin(tr('__platform__ = "desktop" is required.', 'Нужен __platform__ = "desktop".'))
     if type(values["sdk"]) is not int or values["sdk"] < 1:
-        raise InvalidPlugin(f"__desktop_sdk__: целое число от 1 до {SDK_VERSION}.")
+        raise InvalidPlugin(tr(
+            f"__desktop_sdk__: integer from 1 to {SDK_VERSION}.",
+            f"__desktop_sdk__: целое число от 1 до {SDK_VERSION}.",
+        ))
     if values["sdk"] > SDK_VERSION:
-        raise IncompatiblePlugin(f"Плагину требуется Desktop SDK {values['sdk']}, доступен {SDK_VERSION}.")
+        raise IncompatiblePlugin(tr(
+            f"Plugin requires Desktop SDK {values['sdk']}, available {SDK_VERSION}.",
+            f"Плагину требуется Desktop SDK {values['sdk']}, доступен {SDK_VERSION}.",
+        ))
     requirements = values.get("requirements", [])
     if not isinstance(requirements, list) or len(requirements) > 32 \
             or not all(valid_requirement(item) for item in requirements):
-        raise InvalidPlugin("__requirements__: до 32 зависимостей по 200 символов, только имя пакета, extras и версия.")
+        raise InvalidPlugin(tr(
+            "__requirements__: up to 32 dependencies of 200 characters each, package name, extras and version only.",
+            "__requirements__: до 32 зависимостей по 200 символов, только имя пакета, extras и версия.",
+        ))
     values["requirements"] = requirements
     return values
 
@@ -178,7 +236,10 @@ def archive_path(name: str) -> PurePosixPath:
             not part or part in (".", "..") or part[-1] in " ."
             or re.search(r'[\\:<>"|?*\x00-\x1f]', part)
             or part.split(".")[0].rstrip(" ").upper() in WINDOWS_NAMES for part in parts):
-        raise InvalidPlugin(f"Недопустимый путь внутри архива: {name!r}.")
+        raise InvalidPlugin(tr(
+            f"Invalid path inside archive: {name!r}.",
+            f"Недопустимый путь внутри архива: {name!r}.",
+        ))
     return PurePosixPath(*parts)
 
 
@@ -188,7 +249,10 @@ def read_member(archive: zipfile.ZipFile, entry: zipfile.ZipInfo, limit: int) ->
     with archive.open(entry) as stream:
         data = stream.read(limit + 1)
     if len(data) > limit:
-        raise InvalidPlugin(f"{entry.filename} больше допустимого размера.")
+        raise InvalidPlugin(tr(
+            f"{entry.filename} exceeds the allowed size.",
+            f"{entry.filename} больше допустимого размера.",
+        ))
     return data
 
 
@@ -199,7 +263,10 @@ def read_zip(data: bytes) -> tuple[dict, list[str]]:
         raise
     except (zipfile.BadZipFile, EOFError, RuntimeError, NotImplementedError, zlib.error,
             UnicodeError, ValueError, RecursionError, MemoryError) as error:
-        raise InvalidPlugin("Повреждённый или неподдерживаемый архив.") from error
+        raise InvalidPlugin(tr(
+            "Corrupted or unsupported archive.",
+            "Повреждённый или неподдерживаемый архив.",
+        )) from error
 
 
 def _read_zip(data: bytes) -> tuple[dict, list[str]]:
@@ -207,13 +274,19 @@ def _read_zip(data: bytes) -> tuple[dict, list[str]]:
     try:
         archive = zipfile.ZipFile(io.BytesIO(data))
     except zipfile.BadZipFile as error:
-        raise InvalidPlugin("Повреждённый архив.") from error
+        raise InvalidPlugin(tr("Corrupted archive.", "Повреждённый архив.")) from error
     with archive:
         entries = archive.infolist()
         if len(entries) > MAX_ENTRIES:
-            raise InvalidPlugin(f"В архиве больше {MAX_ENTRIES} записей.")
+            raise InvalidPlugin(tr(
+                f"Archive contains more than {MAX_ENTRIES} entries.",
+                f"В архиве больше {MAX_ENTRIES} записей.",
+            ))
         if sum(entry.file_size for entry in entries) > MAX_UNPACKED:
-            raise InvalidPlugin("Распакованный архив больше 64 МиБ.")
+            raise InvalidPlugin(tr(
+                "Unpacked archive exceeds 64 MiB.",
+                "Распакованный архив больше 64 МиБ.",
+            ))
         files: dict[str, zipfile.ZipInfo] = {}
         folded = set()
         file_keys = set()
@@ -222,48 +295,84 @@ def _read_zip(data: bytes) -> tuple[dict, list[str]]:
             path = archive_path(entry.orig_filename)
             key = path.as_posix().casefold()
             if key in folded:
-                raise InvalidPlugin(f"Повторный путь в архиве: {entry.orig_filename!r}.")
+                raise InvalidPlugin(tr(
+                    f"Duplicate path in archive: {entry.orig_filename!r}.",
+                    f"Повторный путь в архиве: {entry.orig_filename!r}.",
+                ))
             folded.add(key)
             for parent in path.parents:
                 if parent == PurePosixPath("."):
                     continue
                 parent_key = parent.as_posix().casefold()
                 if parent_key in file_keys:
-                    raise InvalidPlugin(f"Конфликт файла и каталога в архиве: {entry.orig_filename!r}.")
+                    raise InvalidPlugin(tr(
+                        f"File and directory conflict in archive: {entry.orig_filename!r}.",
+                        f"Конфликт файла и каталога в архиве: {entry.orig_filename!r}.",
+                    ))
                 dir_keys.add(parent_key)
             # Only the file type bits: many tools store bare permissions.
             kind = stat.S_IFMT(entry.external_attr >> 16)
             if kind not in (0, stat.S_IFREG, stat.S_IFDIR):
-                raise InvalidPlugin(f"Ссылка или специальный файл в архиве: {entry.orig_filename!r}.")
+                raise InvalidPlugin(tr(
+                    f"Symlink or special file in archive: {entry.orig_filename!r}.",
+                    f"Ссылка или специальный файл в архиве: {entry.orig_filename!r}.",
+                ))
             if entry.flag_bits & 0x1:
-                raise InvalidPlugin("Зашифрованные записи не поддерживаются.")
+                raise InvalidPlugin(tr(
+                    "Encrypted archive entries are not supported.",
+                    "Зашифрованные записи не поддерживаются.",
+                ))
             if entry.file_size > 1024 * 1024 and entry.file_size > MAX_RATIO * max(entry.compress_size, 1):
-                raise InvalidPlugin(f"Слишком сильное сжатие: {entry.orig_filename!r}.")
+                raise InvalidPlugin(tr(
+                    f"Compression ratio too high: {entry.orig_filename!r}.",
+                    f"Слишком сильное сжатие: {entry.orig_filename!r}.",
+                ))
             if entry.is_dir():
                 if key in file_keys:
-                    raise InvalidPlugin(f"Конфликт файла и каталога в архиве: {entry.orig_filename!r}.")
+                    raise InvalidPlugin(tr(
+                        f"File and directory conflict in archive: {entry.orig_filename!r}.",
+                        f"Конфликт файла и каталога в архиве: {entry.orig_filename!r}.",
+                    ))
                 dir_keys.add(key)
             else:
                 if key in dir_keys:
-                    raise InvalidPlugin(f"Конфликт файла и каталога в архиве: {entry.orig_filename!r}.")
+                    raise InvalidPlugin(tr(
+                        f"File and directory conflict in archive: {entry.orig_filename!r}.",
+                        f"Конфликт файла и каталога в архиве: {entry.orig_filename!r}.",
+                    ))
                 file_keys.add(key)
                 files[path.as_posix()] = entry
         if MANIFEST not in files:
-            raise InvalidPlugin(f"В корне архива нужен {MANIFEST}.")
+            raise InvalidPlugin(tr(
+                f"{MANIFEST} is required at the archive root.",
+                f"В корне архива нужен {MANIFEST}.",
+            ))
         try:
             manifest = json.loads(read_member(archive, files[MANIFEST], 4096),
                                   object_pairs_hook=unique_json_object)
         except ValueError as error:
-            raise InvalidPlugin(f"{MANIFEST} — некорректный JSON.") from error
+            raise InvalidPlugin(tr(
+                f"{MANIFEST} is invalid JSON.",
+                f"{MANIFEST} — некорректный JSON.",
+            )) from error
         if not isinstance(manifest, dict) or set(manifest) != {"id", "entry"}:
-            raise InvalidPlugin(f"{MANIFEST} должен содержать ровно поля id и entry.")
+            raise InvalidPlugin(tr(
+                f"{MANIFEST} must contain exactly the fields id and entry.",
+                f"{MANIFEST} должен содержать ровно поля id и entry.",
+            ))
         entry = manifest["entry"]
         if not isinstance(entry, str) or "/" in entry or entry not in files \
                 or not entry.endswith((".py", ".ovyplugin")):
-            raise InvalidPlugin("Точка входа — файл .py или .ovyplugin в корне архива.")
+            raise InvalidPlugin(tr(
+                "Entry point must be a .py or .ovyplugin file at the archive root.",
+                "Точка входа — файл .py или .ovyplugin в корне архива.",
+            ))
         metadata = read_source(read_member(archive, files[entry], MAX_SOURCE), entry)
         if normalize_id(manifest["id"]) != metadata["id"]:
-            raise InvalidPlugin(f"ID в {MANIFEST} не совпадает с __id__ точки входа.")
+            raise InvalidPlugin(tr(
+                f"ID in {MANIFEST} does not match __id__ of the entry point.",
+                f"ID в {MANIFEST} не совпадает с __id__ точки входа.",
+            ))
         metadata["entry"] = entry
         return metadata, sorted(files)
 
@@ -272,7 +381,10 @@ def package_type(filename: str) -> str:
     for suffix, kind in PACKAGE_TYPES.items():
         if filename.endswith(suffix):
             return kind
-    raise InvalidPlugin("Ожидается файл .ovyplugin или .ovyzip.")
+    raise InvalidPlugin(tr(
+        "Expected a .ovyplugin or .ovyzip file.",
+        "Ожидается файл .ovyplugin или .ovyzip.",
+    ))
 
 
 def read_package(data: bytes, filename: str, strict_name: bool = True) -> dict:
@@ -281,13 +393,16 @@ def read_package(data: bytes, filename: str, strict_name: bool = True) -> dict:
     submissions (spec §4)."""
     kind = package_type(filename)
     if len(data) > MAX_PACKAGE:
-        raise InvalidPlugin("Файл больше 32 МиБ.")
+        raise InvalidPlugin(tr("File exceeds 32 MiB.", "Файл больше 32 МиБ."))
     if kind == "ovyzip":
         metadata, _ = read_zip(data)
     else:
         metadata = read_source(data, filename)
     expected = f"{metadata['id']}.{kind}"
     if strict_name and filename != expected:
-        raise InvalidPlugin(f"Файл должен называться {expected}.")
+        raise InvalidPlugin(tr(
+            f"File must be named {expected}.",
+            f"Файл должен называться {expected}.",
+        ))
     metadata["package_type"] = kind
     return metadata

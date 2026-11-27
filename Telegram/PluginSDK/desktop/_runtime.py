@@ -29,7 +29,7 @@ POINT_BITS = {name: 1 << index for index, name in enumerate((
     "before_send", "before_rpc", "after_rpc", "before_updates", "new_message",
     "edited_message", "deleted_message", "account_changed", "accounts_changed", "chat_changed",
     "reaction_changed", "messages_read", "topic_changed", "selection_changed",
-    "download_started", "download_finished", "theme_changed"))}
+    "download_started", "download_finished", "theme_changed", "language_changed"))}
 
 _UPDATE_EVENTS = {
     "updateMessageReactions": "reaction_changed",
@@ -488,6 +488,11 @@ class Runtime:
         if event["point"] in ("raw_update", "raw_updates", "raw_message"):
             self.update_event(event)
             return
+        if event["point"] == "language_changed":
+            details = event.get("details")
+            if isinstance(details, dict) and "language" in details:
+                from ovygram_i18n import set_language
+                set_language(details.get("language", ""), details.get("base_language", ""))
         message = event.get("message")
         chat = event.get("chat")
         value = Event(str(event["account_id"]),

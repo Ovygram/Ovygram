@@ -175,7 +175,7 @@ class DependencyManagerTests(unittest.TestCase):
         self.manager.enable(second)
         self.wait()
         self.assertNotIn(second, self.manager.loaded)
-        self.assertEqual(self.manager.errors[second], "Зависимости установлены. Перезапустите клиент.")
+        self.assertEqual(self.manager.errors[second], "Dependencies installed. Restart the client.")
         self.assertTrue(self.manager.snapshot()["dependencies"]["restart"])
         self.assertTrue(self.manager.records[second]["enabled"])
 

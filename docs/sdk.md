@@ -386,3 +386,58 @@ async for message in lists.shared_media(chat, kind="file"):
 восстанавливается.
 
 [Пример фильтра «Две ссылки»](../tools/ovygram/examples/search_links.ovyplugin)
+
+## Локализация плагинов (`desktop.i18n`)
+
+Плагины автоматически получают текущий язык интерфейса из настроек Telegram.
+Порядок выбора перевода:
+
+1. Точный код активного языка Telegram (например `ru`, `en`, `de`, `pt-br`).
+2. Базовый код языка (например `pt` для `pt-br`) и базовый языковой пакет, если выбран производный.
+3. Английский (`en`), если он задан в плагине.
+4. Явный `default` (если передан) либо первый доступный перевод в плагине.
+
+### Способы объявления переводов
+
+1. **Словарь `TRANSLATIONS` в классе плагина или вызов `self.tr({...})`:**
+
+```python
+from base_plugin import BasePlugin
+from desktop import i18n
+
+__name__ = "Greeting"
+__name_i18n__ = {"en": "Greeting", "ru": "Приветствие"}
+__description__ = "Localized example plugin."
+__description_i18n__ = {
+    "en": "Localized example plugin.",
+    "ru": "Пример плагина с поддержкой языков.",
+}
+
+class GreetingPlugin(BasePlugin):
+    TRANSLATIONS = {
+        "en": {"hello": "Hello, {user}!"},
+        "ru": {"hello": "Привет, {user}!"},
+    }
+
+    def on_plugin_load(self):
+        self.log(self.tr("hello", user="Ovygram"))
+        self.log(i18n.pick({"en": "Settings", "ru": "Настройки"}))
+        self.subscribe("language_changed", self.on_lang)
+
+    def on_lang(self, event):
+        # event.details: {"language": "...", "base_language": "...", "ui_language": "en"|"ru"}
+        self.log(f"Language switched to {self.get_language()}")
+```
+
+2. **Файлы `locales/<lang>.json` в `.ovyzip`:**
+
+Помести файлы вида `locales/en.json`, `locales/ru.json` (плоский JSON-объект `{"key": "text"}`)
+внутри архива `.ovyzip`. Методы `self.tr("key")`, `i18n.tr("key")` и `i18n.load_locales()`
+подхватывают их автоматически.
+
+3. **Локализация названия и описания в списке и установщике:**
+
+Опциональные метатеги `__name_i18n__` и `__description_i18n__` (словари `{код_языка: строка}`
+до 32 языков) используются в списке плагинов, карточке плагина и окне установки. Обязательные
+`__name__` и `__description__` остаются резервным значением.
+

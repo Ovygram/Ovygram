@@ -75,6 +75,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #ifdef OVYGRAM_ENABLED
 #include "ovygram/auto_update.h"
 #include "ovygram/auto_update_view.h"
+#include "ovygram/i18n_rpl.h"
 #include "ovygram/protected_ui.h"
 #endif // OVYGRAM_ENABLED
 
@@ -1161,9 +1162,12 @@ rpl::producer<QString> OvygramUpdateButtonLabel() {
 
 rpl::producer<QString> OvygramChannelLabel() {
 	auto &updater = Ovygram::AutoUpdate::Instance();
-	return rpl::single(updater.channel())
-		| rpl::then(updater.channelChanged())
-		| rpl::map(&Ovygram::UpdateChannelTitle);
+	return rpl::combine(
+		rpl::single(updater.channel()) | rpl::then(updater.channelChanged()),
+		Ovygram::I18n::LanguageValue()
+	) | rpl::map([](Ovygram::UpdateChannel channel, const QString &) {
+		return Ovygram::UpdateChannelTitle(channel);
+	});
 }
 #endif // OVYGRAM_ENABLED
 
@@ -1239,13 +1243,13 @@ void BuildUpdateSection(SectionBuilder &builder, bool atTop) {
 #ifdef OVYGRAM_ENABLED
 		builder.addButton({
 			.id = u"advanced/update_channel"_q,
-			.title = rpl::single(u"Канал обновлений"_q),
+			.title = Ovygram::TrValue(u"Update channel"_q, u"Канал обновлений"_q),
 			.st = &st::settingsButtonNoIcon,
 			.label = OvygramChannelLabel(),
 			.onClick = [=] {
 				ShowOvygramUpdateChannelBox(controller);
 			},
-			.keywords = { u"channel"_q, u"stable"_q, u"beta"_q, u"canary"_q, u"update"_q, u"version"_q },
+			.keywords = { u"channel"_q, u"stable"_q, u"beta"_q, u"canary"_q, u"update"_q, u"version"_q, u"канал"_q, u"обновлений"_q },
 		});
 #else // OVYGRAM_ENABLED
 		install = (cAlphaVersion()
@@ -1538,7 +1542,7 @@ void SetupUpdate(not_null<Ui::VerticalLayout*> container) {
 	const auto install = (Button*)nullptr;
 	const auto channelButton = Settings::AddButtonWithLabel(
 		inner,
-		rpl::single(u"Канал обновлений"_q),
+		Ovygram::TrValue(u"Update channel"_q, u"Канал обновлений"_q),
 		OvygramChannelLabel(),
 		st::settingsButtonNoIcon);
 	channelButton->addClickHandler([] {

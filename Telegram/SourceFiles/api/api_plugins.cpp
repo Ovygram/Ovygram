@@ -11,6 +11,7 @@
 #include "core/application.h"
 #include "core/core_settings.h"
 #include "boxes/abstract_box.h"
+#include "ovygram/i18n_rpl.h"
 #include "ovygram/protected_ui.h"
 #include "ovygram/plugin_proxy_view.h"
 #include "ui/layers/generic_box.h"
@@ -239,6 +240,36 @@ PluginClient::PluginClient(not_null<Core::PluginRuntime*> runtime)
 			LOG(("Ovygram UI event: %1").arg(QString::fromUtf8(error.what())));
 		}
 	});
+	const auto pushLanguage = [=](bool emit) {
+		try {
+			dispatch({
+				{ u"action"_q, u"set_language"_q },
+				{ u"language"_q, Ovygram::I18n::Language() },
+				{ u"base_language"_q, Ovygram::I18n::BaseLanguage() },
+			});
+		} catch (const std::exception &error) {
+			LOG(("Ovygram language sync: %1").arg(QString::fromUtf8(error.what())));
+		}
+		updateProxyIndicator();
+		if (!emit || !observes(PluginEventBit::Language)) {
+			return;
+		}
+		const auto active = Core::App().domain().started()
+			? Core::App().domain().active().maybeSession() : nullptr;
+		postLocalEvent(PluginEventBit::Language, {
+			{ u"point"_q, u"language_changed"_q },
+			{ u"account_id"_q, active ? AccountId(*active) : QString() },
+			{ u"details"_q, QJsonObject{
+				{ u"language"_q, Ovygram::I18n::Language() },
+				{ u"base_language"_q, Ovygram::I18n::BaseLanguage() },
+				{ u"ui_language"_q, Ovygram::I18n::UiLanguage() },
+			} },
+		});
+	};
+	pushLanguage(false);
+	Ovygram::I18n::LanguageChanges() | rpl::on_next([=](const QString &) {
+		pushLanguage(true);
+	}, _lifetime);
 	_runtime->setClient([=](const std::string &request) {
 		const auto data = QByteArray::fromStdString(request);
 		crl::on_main(this, [=] { receive(data); });
@@ -306,7 +337,9 @@ void PluginClient::synchronize() {
 		}
 	}
 	for (const auto &id : lost) {
-		fail(id, u"ACCOUNT_CLOSED"_q, u"Аккаунт закрыт во время запроса."_q);
+		fail(id, u"ACCOUNT_CLOSED"_q, Ovygram::Tr(
+			u"The account was closed during the request."_q,
+			u"Аккаунт закрыт во время запроса."_q));
 		cancel(id);
 	}
 	auto changedAccounts = std::set<QString>();
@@ -424,7 +457,7 @@ void PluginClient::setProxyRoute(const QString &route, const QJsonObject &offer)
 		proxy->password = password;
 		token = offer.value(u"token"_q).toString();
 		const auto rawLabel = offer.value(u"label"_q).toString();
-		label = rawLabel.isEmpty() ? u"Прокси плагина"_q : rawLabel;
+		label = rawLabel.isEmpty() ? Ovygram::Tr(u"Plugin proxy"_q, u"Прокси плагина"_q) : rawLabel;
 	}
 	if (route == u"default"_q) {
 		Core::App().setPluginProxy(proxy);
@@ -460,7 +493,9 @@ void PluginClient::updateProxyIndicator() {
 	const auto same = std::all_of(_activeProxyLabels.begin(), _activeProxyLabels.end(), [&](const auto &entry) {
 		return entry.second == label;
 	});
-	PluginProxyIndicator = same ? (label + u" · активен"_q) : u"Прокси плагинов активны"_q;
+	PluginProxyIndicator = same
+		? (label + Ovygram::Tr(u" · active"_q, u" · активен"_q))
+		: Ovygram::Tr(u"Plugin proxies active"_q, u"Прокси плагинов активны"_q);
 }
 
 QJsonArray PluginClient::proxyOffers() {
@@ -710,7 +745,9 @@ void PluginClient::receive(const QByteArray &request) {
 		const auto accountId = command.value(u"account_id"_q).toString();
 		const auto owner = session(accountId);
 		if (!owner || owner->account().loggingOut()) {
-			fail(id, u"ACCOUNT_CLOSED"_q, u"Аккаунт недоступен."_q);
+			fail(id, u"ACCOUNT_CLOSED"_q, Ovygram::Tr(
+				u"The account is unavailable."_q,
+				u"Аккаунт недоступен."_q));
 			return;
 		}
 		if (method == u"media.pick"_q) {
@@ -953,7 +990,9 @@ void PluginClient::rpc(const QJsonObject &command, not_null<Main::Session*> owne
 	const auto timeout = std::clamp(command.value(u"timeout"_q).toInt(60), 1, 300);
 	QTimer::singleShot(timeout * 1000, this, [=] {
 		if (_pending.contains(id)) {
-			fail(id, u"TIMEOUT"_q, u"Время ожидания ответа истекло."_q);
+			fail(id, u"TIMEOUT"_q, Ovygram::Tr(
+				u"The request timed out."_q,
+				u"Время ожидания ответа истекло."_q));
 			cancel(id);
 		}
 	});
@@ -1106,7 +1145,9 @@ bool PluginClient::beforeRpc(
 		auto changed = response;
 		auto error = std::optional<MTP::Error>();
 		if (!afterRpc(accountId, requestId, requestData, stack, changed, error) && !error) {
-			error = MTP::Error::Local(u"PLUGIN_HOOK"_q, u"Ошибка обработки ответа плагином."_q);
+			error = MTP::Error::Local(u"PLUGIN_HOOK"_q, Ovygram::Tr(
+				u"Plugin failed to handle the response."_q,
+				u"Ошибка обработки ответа плагином."_q));
 		}
 		if (error) {
 			if (original->fail) {
@@ -1133,7 +1174,9 @@ bool PluginClient::beforeRpc(
 		auto changed = response;
 		auto changedError = std::optional<MTP::Error>(error);
 		if (!afterRpc(accountId, requestId, requestData, stack, changed, changedError) && !changedError) {
-			changedError = MTP::Error::Local(u"PLUGIN_HOOK"_q, u"Ошибка обработки ответа плагином."_q);
+			changedError = MTP::Error::Local(u"PLUGIN_HOOK"_q, Ovygram::Tr(
+				u"Plugin failed to handle the response."_q,
+				u"Ошибка обработки ответа плагином."_q));
 		}
 		if (changedError) {
 			return original->fail ? original->fail(*changedError, changed) : false;

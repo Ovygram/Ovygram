@@ -1,6 +1,7 @@
 #include "ovygram/plugin_proxy_view.h"
 
 #include "base/unique_qptr.h"
+#include "ovygram/i18n.h"
 #include "ovygram/plugin_trust_badge.h"
 #include "ui/effects/ripple_animation.h"
 #include "ui/layers/generic_box.h"
@@ -137,8 +138,8 @@ public:
 		rpl::single(u"↶"_q),
 		st::settingsPluginProxyReset)) {
 		_reset->setTextTransform(Ui::RoundButtonTextTransform::NoTransform);
-		_reset->setAccessibleName(u"Сбросить маршрут: "_q + name);
-		_reset->setToolTip(u"Восстановить настройки"_q);
+		_reset->setAccessibleName(Tr(u"Reset route: "_q, u"Сбросить маршрут: "_q) + name);
+		_reset->setToolTip(Tr(u"Restore defaults"_q, u"Восстановить настройки"_q));
 		const auto updateResetStyle = [this] {
 			auto border = st::windowFg->c;
 			border.setAlphaF(st::settingsPluginInstallOutlineAlpha / 100.);
@@ -225,12 +226,13 @@ void SetupPluginProxyBox(
 		Fn<ProxyViewState()> query,
 		Fn<void(const QString&, const QJsonObject&)> apply) {
 	box->setWidth(width);
-	box->setTitle(rpl::single(u"Прокси плагинов"_q));
+	box->setTitle(rpl::single(Tr(u"Plugin proxies"_q, u"Прокси плагинов"_q)));
 	box->addTopButton(st::settingsPluginClose, [=] { box->closeBox(); })
-		->setAccessibleName(u"Закрыть"_q);
+		->setAccessibleName(Tr(u"Close"_q, u"Закрыть"_q));
 	const auto padding = st::boxRowPadding;
 	const auto subtitle = box->addRow(object_ptr<Ui::FlatLabel>(box,
-		u"Назначение прокси по типам трафика"_q, st::settingsPluginBody),
+		Tr(u"Assign proxies by traffic type"_q, u"Назначение прокси по типам трафика"_q),
+		st::settingsPluginBody),
 		QMargins(padding.left(), 0, padding.right(), style::ConvertScale(14)));
 	const auto updateSubtitleColor = [=] {
 		subtitle->setTextColorOverride(st::settingsPluginLabelMuted->c);
@@ -277,8 +279,10 @@ void SetupPluginProxyBox(
 			const auto active = state->data.active.find(route);
 			const auto isActive = (active != end(state->data.active));
 			const auto text = isActive
-				? (active->second + u" (подключён)"_q)
-				: (state->data.saved.contains(route) ? u"Ожидает запуска"_q : u"По умолчанию"_q);
+				? (active->second + Tr(u" (connected)"_q, u" (подключён)"_q))
+				: (state->data.saved.contains(route)
+					? Tr(u"Waiting to start"_q, u"Ожидает запуска"_q)
+					: Tr(u"Default"_q, u"По умолчанию"_q));
 			control.select->setValue(text, isActive);
 			control.reset->setDisabled(!state->data.saved.contains(route) && !isActive);
 		}
@@ -303,10 +307,10 @@ void SetupPluginProxyBox(
 		const style::icon *icon;
 	};
 	const auto routes = std::array{
-		Route{ u"default"_q, u"Прокси по умолчанию"_q, &st::menuIconNetwork },
-		Route{ u"api"_q, u"Запросы Telegram"_q, &st::menuIconSend },
-		Route{ u"files"_q, u"Загрузка и отправка файлов"_q, &st::menuIconDownload },
-		Route{ u"pages"_q, u"Встроенные веб-страницы"_q, &st::menuIconLink },
+		Route{ u"default"_q, Tr(u"Default proxy"_q, u"Прокси по умолчанию"_q), &st::menuIconNetwork },
+		Route{ u"api"_q, Tr(u"Telegram requests"_q, u"Запросы Telegram"_q), &st::menuIconSend },
+		Route{ u"files"_q, Tr(u"File downloads and uploads"_q, u"Загрузка и отправка файлов"_q), &st::menuIconDownload },
+		Route{ u"pages"_q, Tr(u"Built-in web pages"_q, u"Встроенные веб-страницы"_q), &st::menuIconLink },
 		Route{ u"mini_apps"_q, u"Mini Apps"_q, &st::menuIconBot },
 	};
 	for (const auto &[route, name, icon] : routes) {
@@ -319,7 +323,7 @@ void SetupPluginProxyBox(
 			try {
 				const auto offers = load();
 				state->menu = base::make_unique_q<Ui::PopupMenu>(select, st::settingsPluginPopup);
-				state->menu->addAction(u"По умолчанию"_q, [=] { save(route, {}); });
+				state->menu->addAction(Tr(u"Default"_q, u"По умолчанию"_q), [=] { save(route, {}); });
 				for (const auto &entry : offers) {
 					const auto offer = entry.toObject();
 					if (!offer.value(u"routes"_q).toArray().contains(route)) {
@@ -338,7 +342,9 @@ void SetupPluginProxyBox(
 									return;
 								}
 							}
-							setError(u"Прокси остановлен. Запустите его и выберите снова."_q);
+							setError(Tr(
+								u"The proxy has stopped. Start it and select it again."_q,
+								u"Прокси остановлен. Запустите его и выберите снова."_q));
 						} catch (const std::exception &error) {
 							setError(QString::fromUtf8(error.what()));
 						}
@@ -356,8 +362,8 @@ void SetupPluginProxyBox(
 	} catch (const std::exception &error) {
 		setError(QString::fromUtf8(error.what()));
 	}
-	box->addLeftButton(rpl::single(u"Сбросить все"_q), [=] { save({}, {}); }, st::settingsPluginDialogDanger);
-	box->addButton(rpl::single(u"Готово"_q), [=] { box->closeBox(); }, st::settingsPluginPrimary);
+	box->addLeftButton(rpl::single(Tr(u"Reset all"_q, u"Сбросить все"_q)), [=] { save({}, {}); }, st::settingsPluginDialogDanger);
+	box->addButton(rpl::single(Tr(u"Done"_q, u"Готово"_q)), [=] { box->closeBox(); }, st::settingsPluginPrimary);
 }
 
 } // namespace Ovygram

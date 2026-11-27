@@ -25,7 +25,7 @@ November 2026; the higher it is, the more likely a merge conflict.
 | `Telegram/SourceFiles/api/api_updates.cpp` | 7 | not measured | Update hooks and message events |
 | `Telegram/SourceFiles/apiwrap.cpp` | 3 | not measured | Sent message events, sends cancelled by plugins (`sendMessage()` and `sendMessageFail()`) |
 | `Telegram/SourceFiles/mtproto/mtp_instance.cpp` | 2 | not measured | RPC hooks; a request rejected by a plugin keeps its handlers in `_parserMap` |
-| `Telegram/SourceFiles/core/application.{h,cpp}` | 2 and 3 | 59 (`.cpp`) | Plugin runtime lifetime |
+| `Telegram/SourceFiles/core/application.{h,cpp}` | 2 and 4 | 59 (`.cpp`) | Plugin runtime lifetime, language sync (`Ovygram::I18n::SetLanguage`) |
 | `Telegram/SourceFiles/core/launcher.{h,cpp}` | 2 and 2 | not measured | `--disable-plugins` |
 | `Telegram/SourceFiles/settings/sections/settings_main.cpp` | 2 | 41 | Settings → Plugins entry |
 | `Telegram/SourceFiles/settings/sections/settings_advanced.cpp` | 3-channel selector button (`advanced/update_channel`), `Ovygram::BuildUpdateChannelBox` + `ProtectSurface`, Ovygram label on ready button | not measured | Settings → Advanced → Update channel picker |
