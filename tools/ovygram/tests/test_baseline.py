@@ -1,4 +1,7 @@
+from contextlib import redirect_stdout
+import hashlib
 import importlib.util
+import io
 from pathlib import Path
 import subprocess
 import sys
@@ -183,6 +186,54 @@ class BaselineTests(unittest.TestCase):
         (runtime / 'ovygram_host.dll').write_bytes(b'release host')
         archive = baseline.package(self.root, self.root / 'artifacts', True, 'Release')
         self.assertEqual(archive.name, f'ovygram-0.2.3-{baseline.CLIENT_VERSION}-win64-release.zip')
+
+    def test_installer_packages_same_files_without_portable_marker(self):
+        header = self.root / 'Telegram/SourceFiles/core/version.h'
+        header.parent.mkdir(parents=True)
+        app_guid = '0A72B7B2-FD87-52D9-B752-84503C1AF13E'
+        header.write_text(f'constexpr auto AppId = "{{{app_guid}}}";\n', encoding='utf-8')
+        archive = self.root / 'ovygram-0.1.1-7.4.6-win64-release.zip'
+        payload = {
+            'Ovygram.exe': b'exe',
+            'OvygramUpdater.exe': b'updater',
+            'modules/x64/TelegramWidgetHelper.exe': b'module',
+            'python/ovygram_host.dll': b'python',
+        }
+        with zipfile.ZipFile(archive, 'w') as output:
+            output.writestr('TelegramForcePortable', '')
+            for name, data in payload.items():
+                output.writestr(name, data)
+
+        def compile_installer(command, *, check):
+            self.assertTrue(check)
+            self.assertIn(f'/DAppGuid={app_guid}', command)
+            self.assertIn('/DAppVersion=0.1.1-7.4.6', command)
+            staging = Path(next(value.removeprefix('/DPayloadDir=')
+                                for value in command if value.startswith('/DPayloadDir=')))
+            self.assertEqual({entry.relative_to(staging).as_posix(): entry.read_bytes()
+                              for entry in staging.rglob('*') if entry.is_file()}, payload)
+            self.root.joinpath('ovygram-0.1.1-7.4.6-win64-setup.exe').write_bytes(b'MZ-test')
+
+        with patch.object(baseline.subprocess, 'run', side_effect=compile_installer):
+            installer = baseline.package_installer(self.root, archive, 'ISCC.exe')
+        digest = hashlib.sha256(installer.read_bytes()).hexdigest()
+        self.assertEqual(installer.with_suffix('.exe.sha256').read_text().strip(),
+                         f'{digest}  {installer.name}')
+
+    def test_release_api_values_are_redacted_from_failed_build_reports(self):
+        credentials = ('123456789', 'abcdef0123456789abcdef0123456789')
+        log = self.root / 'reports' / 'configure.log'
+        captured = io.StringIO()
+        with redirect_stdout(captured), self.assertRaisesRegex(RuntimeError, 'Command failed'):
+            baseline.run_monitored(
+                [sys.executable, '-c', 'import sys; print(*sys.argv[1:]); sys.exit(1)', *credentials],
+                self.root, log, time.time() + 15, minimum_free=0, poll_seconds=0.01,
+                sensitive=credentials,
+            )
+        for output in (captured.getvalue(), log.read_text(), log.with_suffix('.json').read_text()):
+            for secret in credentials:
+                self.assertNotIn(secret, output)
+            self.assertIn('<redacted>', output)
 
     def test_cache_identity_changes_with_compiler_and_recipe(self):
         recipe = self.root / 'Telegram/build/prepare/prepare.py'

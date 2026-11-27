@@ -5,16 +5,14 @@ the sources with these assets:
 
 | Asset | Made by |
 | --- | --- |
-| `ovygram-<version>-win64-release.zip` and `.sha256` | GitHub Actions, `ovygram-windows.yml` in `plugins` mode |
+| Windows x64 ZIP, Setup EXE and their `.sha256` files | GitHub Actions, `ovygram-windows.yml` in `plugins` mode |
 | `ovygram-<version>-linux-x86_64.tar.xz` and `.sha256` | `tools/ovygram/package_linux.py` on Arch Linux |
 
 The versions are `OVYGRAM_VERSION` and `CLIENT_VERSION` in
 `tools/ovygram/baseline.py`; the About box shows the same version.
 
-Auto-update from the official Telegram channel is off in every build
-(`DESKTOP_APP_DISABLE_AUTOUPDATE`), so an official update never replaces
-the fork. Users update by installing the new version over the old one; the
-data directory stays.
+Ovygram uses its own signed manifest and Windows updater. The Windows Setup
+EXE provides installation for the current user.
 
 ## Linux
 
@@ -40,11 +38,18 @@ next to the official Telegram Desktop.
 
 ## Windows
 
-Run `ovygram-windows.yml` with `mode: plugins` on the commit being released
-and download the `ovygram-<run_id>` artifact. It contains
-`ovygram-0.1.0-7.4.6-win64-release.zip` and its `.sha256`; the workflow
-does not rename the ZIP to `Ovygram-win64-portable.zip`. Check the portable
-client on Windows 11 without Python installed.
+Run `ovygram-windows.yml` with `mode: plugins` on the commit being released.
+The repository's GitHub Actions secrets `TDESKTOP_API_ID` and
+`TDESKTOP_API_HASH` configure the Telegram API for the release build.
+
+The `ovygram-<run_id>-with-setup` artifact includes a portable ZIP, a per-user
+Inno Setup installer and a SHA-256 file for each. The installer stages the same
+binaries, modules and Python bundle as the ZIP. It installs to
+`%APPDATA%\Ovygram` by default and preserves user data during uninstall.
+
+Open `/updates` in the admin bot, select the run and channel, and confirm
+publication. The bot verifies the checksums and publishes both files on the
+same GitHub Release. The signed auto-update manifest points to the ZIP.
 
 ## Publishing
 
@@ -59,7 +64,9 @@ client on Windows 11 without Python installed.
        dist/ovygram-0.1.0-7.4.6-linux-x86_64.tar.xz \
        dist/ovygram-0.1.0-7.4.6-linux-x86_64.tar.xz.sha256 \
        artifacts/ovygram-0.1.0-7.4.6-win64-release.zip \
-       artifacts/ovygram-0.1.0-7.4.6-win64-release.zip.sha256
+       artifacts/ovygram-0.1.0-7.4.6-win64-release.zip.sha256 \
+       artifacts/ovygram-0.1.0-7.4.6-win64-setup.exe \
+       artifacts/ovygram-0.1.0-7.4.6-win64-setup.exe.sha256
    ```
 
 3. AUR: in `packaging/arch/ovygram-bin`, put the archive's SHA-256 into

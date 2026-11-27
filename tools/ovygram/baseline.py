@@ -7,7 +7,9 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
+import uuid
 import zipfile
 
 
@@ -70,10 +72,25 @@ def stop_process(process):
     process.wait(timeout=20)
 
 
+def release_api_credentials():
+    api_id = os.environ.get('TDESKTOP_API_ID', '').strip()
+    api_hash = os.environ.get('TDESKTOP_API_HASH', '').strip()
+    if not re.fullmatch(r'[1-9][0-9]*', api_id) or not re.fullmatch(r'[0-9a-fA-F]{32}', api_hash):
+        raise RuntimeError('Release builds require valid TDESKTOP_API_ID and TDESKTOP_API_HASH secrets.')
+    return api_id, api_hash
+
+
+def redact_bytes(value, sensitive):
+    for secret in sensitive:
+        value = value.replace(secret.encode(), b'<redacted>')
+    return value
+
+
 def run_monitored(command, cwd, log, deadline, minimum_free=2 * GIB,
-                  poll_seconds=2):
+                  poll_seconds=2, sensitive=()):
     started = time.time()
-    result = {'command': command, 'started': started, 'status': 'running'}
+    report_command = [redact_bytes(arg.encode(), sensitive).decode() for arg in command]
+    result = {'command': report_command, 'started': started, 'status': 'running'}
     free = shutil.disk_usage(cwd).free
     result['minimum_free_bytes'] = free
     if free < minimum_free:
@@ -82,8 +99,10 @@ def run_monitored(command, cwd, log, deadline, minimum_free=2 * GIB,
         raise RuntimeError('Build time allowance exhausted before starting.')
     process = None
     log.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        with log.open('wb') as stream:
+    # Raw compiler output may contain CMake definitions. Keep it outside
+    # the upload directory even if the process is interrupted.
+    with (tempfile.TemporaryFile() if sensitive else log.open('w+b')) as stream:
+        try:
             process = subprocess.Popen(command, cwd=cwd, stdout=stream,
                                        stderr=subprocess.STDOUT)
             heartbeat = 0
@@ -102,21 +121,33 @@ def run_monitored(command, cwd, log, deadline, minimum_free=2 * GIB,
             result['returncode'] = process.returncode
             if process.returncode:
                 raise RuntimeError(f'Command failed with code {process.returncode}; see {log.name}.')
-        result['status'] = 'success'
-    except BaseException as error:
-        result['status'] = 'failed'
-        result['error'] = str(error)
-        if log.exists():
-            with log.open('rb') as stream:
-                stream.seek(max(0, log.stat().st_size - 8000))
-                print(stream.read().decode('utf-8', errors='replace'), flush=True)
-        raise
-    finally:
-        if process is not None:
-            stop_process(process)
-        result['seconds'] = round(time.time() - started, 2)
-        write_json(log.with_suffix('.json'), result)
+            result['status'] = 'success'
+        except BaseException as error:
+            result['status'] = 'failed'
+            result['error'] = redact_bytes(str(error).encode(), sensitive).decode()
+            raise
+        finally:
+            if process is not None:
+                stop_process(process)
+            if sensitive:
+                stream.seek(0)
+                with log.open('wb') as clean:
+                    for line in stream:
+                        clean.write(redact_bytes(line, sensitive))
+            if result['status'] == 'failed' and log.exists():
+                with log.open('rb') as clean:
+                    clean.seek(max(0, log.stat().st_size - 8000))
+                    print(clean.read().decode('utf-8', errors='replace'), flush=True)
+            result['seconds'] = round(time.time() - started, 2)
+            write_json(log.with_suffix('.json'), result)
     return result
+
+
+def write_sha256(path):
+    with path.open('rb') as stream:
+        digest = hashlib.file_digest(stream, 'sha256').hexdigest()
+    path.with_suffix(path.suffix + '.sha256').write_text(
+        f'{digest}  {path.name}\n', encoding='utf-8')
 
 
 def package(source, target, plugins=False, configuration='Debug'):
@@ -159,16 +190,32 @@ def package(source, target, plugins=False, configuration='Debug'):
             if (binary_dir / 'd3dcompiler_47.dll').is_file():
                 output.write(binary_dir / 'd3dcompiler_47.dll', 'd3dcompiler_47.dll')
             output.writestr('README.txt',
-                            f'Ovygram {configuration} build. Test API credentials.\n')
+                            f'Ovygram {configuration} build.\n')
         else:
             output.writestr('BASELINE.txt',
                             'Unmodified upstream source. Test API credentials. '
                             'No Python plugins yet. Not a production release.\n')
-    with archive.open('rb') as stream:
-        digest = hashlib.file_digest(stream, 'sha256').hexdigest()
-    archive.with_suffix('.zip.sha256').write_text(
-        f'{digest}  {archive.name}\n', encoding='utf-8')
+    write_sha256(archive)
     return archive
+
+
+def package_installer(source, archive, iscc):
+    installer = archive.with_name(archive.stem.removesuffix('-release') + '-setup.exe')
+    app_guid = str(uuid.UUID(read_version_constant('AppId', source))).upper()
+    version = archive.stem.removeprefix('ovygram-').removesuffix('-win64-release')
+    with tempfile.TemporaryDirectory(prefix='ovygram-setup-') as staging:
+        with zipfile.ZipFile(archive) as package:
+            files = [name for name in package.namelist() if name != 'TelegramForcePortable']
+            package.extractall(staging, files)
+        subprocess.run([
+            str(iscc), '/Qp', f'/DAppGuid={app_guid}', f'/DAppVersion={version}',
+            f'/DPayloadDir={staging}', f'/O{installer.parent}', f'/F{installer.stem}',
+            str(source / 'Telegram/build/ovygram_setup.iss'),
+        ], check=True)
+    if not installer.is_file() or not installer.stat().st_size:
+        raise RuntimeError('Inno Setup did not write the Windows installer.')
+    write_sha256(installer)
+    return installer
 
 
 def cache_identity(source, toolchain):
@@ -242,6 +289,8 @@ def main():
             'configuration': 'Release' if args.mode == 'plugins' else 'Debug',
             'plugins_implemented': args.mode == 'plugins',
         })
+        if args.mode == 'plugins':
+            release_api_credentials()
         return
     state = json.loads(state_path.read_text(encoding='utf-8'))
     if args.action in ('cache-key', 'cache-pack', 'cache-restore'):
@@ -341,7 +390,10 @@ def main():
     configuration = state['configuration']
     state['stage'] = args.action
     write_json(state_path, state)
+    sensitive = ()
     try:
+        if state['mode'] == 'plugins' and args.action in ('configure', 'verify-integration', 'build'):
+            sensitive = release_api_credentials()
         if args.action == 'verify':
             expected = os.environ['GITHUB_SHA'] if plugin_mode else UPSTREAM
             state['source_commit'] = expected
@@ -350,13 +402,18 @@ def main():
             if free < 20 * GIB:
                 raise RuntimeError(f'Need 20 GiB initial reserve; available {free / GIB:.2f} GiB.')
         elif args.action == 'package':
-            state['archive'] = str(package(source, root / 'artifacts', plugin_mode, configuration))
+            archive = package(source, root / 'artifacts', plugin_mode, configuration)
+            state['archive'] = str(archive)
+            if state['mode'] == 'plugins':
+                iscc = os.environ.get('OVYGRAM_ISCC')
+                if not iscc:
+                    raise RuntimeError('OVYGRAM_ISCC must point to the Inno Setup compiler.')
+                state['installer'] = str(package_installer(source, archive, iscc))
             state['status'] = 'compiled'
         else:
             commands = {
                 'configure': [sys.executable, str(source / 'Telegram/configure.py'),
                               '-G', 'Ninja Multi-Config',
-                              '-D', 'TDESKTOP_API_TEST=ON',
                               '-D', f'CMAKE_CONFIGURATION_TYPES={configuration}',
                               '-D', 'CMAKE_MSVC_DEBUG_INFORMATION_FORMAT=',
                               '-D', 'DESKTOP_APP_DISABLE_AUTOUPDATE=ON',
@@ -410,6 +467,16 @@ def main():
                     str(source / 'Telegram/build/prepare/prepare.py')]
             if args.action == 'build' and plugin_mode:
                 commands['build'].extend(['--', '-k', '0'])
+            if args.action == 'configure':
+                if sensitive:
+                    api_id, api_hash = sensitive
+                    commands['configure'].extend([
+                        '-D', 'TDESKTOP_API_TEST=OFF',
+                        '-D', f'TDESKTOP_API_ID={api_id}',
+                        '-D', f'TDESKTOP_API_HASH={api_hash}',
+                    ])
+                else:
+                    commands['configure'].extend(['-D', 'TDESKTOP_API_TEST=ON'])
             if args.action == 'configure' and plugin_mode:
                 commands['configure'].extend(['-D', f'OVYGRAM_PYTHON_ROOT={root / "plugin-python"}'])
                 commit = state.get('source_commit') or os.environ.get('GITHUB_SHA', '')
@@ -421,10 +488,10 @@ def main():
                     '-D', 'CMAKE_CXX_FLAGS_RELEASE:STRING=/O1 /Ob1 /DNDEBUG',
                 ])
             run_monitored(commands[args.action], source / 'Telegram',
-                          reports / f'{args.action}.log', state['deadline'])
+                          reports / f'{args.action}.log', state['deadline'], sensitive=sensitive)
     except Exception as error:
         state['status'] = 'blocked'
-        state['error'] = str(error)
+        state['error'] = redact_bytes(str(error).encode(), sensitive).decode()
         if args.action == 'prepare-foundation':
             config_log = source.parent / 'Libraries/win64/ffmpeg/ffbuild/config.log'
             if config_log.is_file():

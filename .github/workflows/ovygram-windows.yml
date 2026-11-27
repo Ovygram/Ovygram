@@ -45,6 +45,9 @@ jobs:
           persist-credentials: false
 
       - name: Establish report directory
+        env:
+          TDESKTOP_API_ID: ${{ secrets.TDESKTOP_API_ID }}
+          TDESKTOP_API_HASH: ${{ secrets.TDESKTOP_API_HASH }}
         run: |
           New-Item -ItemType Directory -Path "$env:GITHUB_WORKSPACE/reports" -Force | Out-Null
           python control/tools/ovygram/baseline.py init --root "$env:GITHUB_WORKSPACE" --mode '${{ inputs.mode }}'
@@ -215,15 +218,40 @@ jobs:
 
       - name: Configure Windows build
         if: (inputs.mode == 'build' || inputs.mode == 'plugins')
+        env:
+          TDESKTOP_API_ID: ${{ secrets.TDESKTOP_API_ID }}
+          TDESKTOP_API_HASH: ${{ secrets.TDESKTOP_API_HASH }}
         run: python control/tools/ovygram/baseline.py configure --root "$env:GITHUB_WORKSPACE"
 
       - name: Compile plugin integration units first
         if: inputs.mode == 'plugins'
+        env:
+          TDESKTOP_API_ID: ${{ secrets.TDESKTOP_API_ID }}
+          TDESKTOP_API_HASH: ${{ secrets.TDESKTOP_API_HASH }}
         run: python control/tools/ovygram/baseline.py verify-integration --root "$env:GITHUB_WORKSPACE"
 
       - name: Build baseline Telegram
         if: (inputs.mode == 'build' || inputs.mode == 'plugins')
+        env:
+          TDESKTOP_API_ID: ${{ secrets.TDESKTOP_API_ID }}
+          TDESKTOP_API_HASH: ${{ secrets.TDESKTOP_API_HASH }}
         run: python control/tools/ovygram/baseline.py build --root "$env:GITHUB_WORKSPACE"
+
+      - name: Locate Inno Setup compiler
+        if: inputs.mode == 'plugins'
+        run: |
+          $candidates = @(
+            "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+            "$env:ProgramFiles\Inno Setup 6\ISCC.exe"
+          )
+          $iscc = $candidates | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+          if (-not $iscc) {
+            choco install innosetup --version=6.5.4 --yes --no-progress
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            $iscc = $candidates | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+          }
+          if (-not $iscc) { throw 'Inno Setup compiler was not found.' }
+          "OVYGRAM_ISCC=$iscc" >> $env:GITHUB_ENV
 
       - name: Package Windows build
         if: (inputs.mode == 'build' || inputs.mode == 'plugins')
@@ -248,7 +276,7 @@ jobs:
         if: success() && (inputs.mode == 'build' || inputs.mode == 'plugins')
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: ${{ inputs.mode == 'plugins' && 'ovygram' || 'upstream-baseline' }}-${{ github.run_id }}
+          name: ${{ inputs.mode == 'plugins' && 'ovygram' || 'upstream-baseline' }}-${{ github.run_id }}${{ inputs.mode == 'plugins' && '-with-setup' || '' }}
           path: artifacts/
           retention-days: 1
           compression-level: 0
