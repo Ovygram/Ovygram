@@ -150,7 +150,7 @@ if (WIN32)
     target_compile_features(OvygramUpdater PRIVATE cxx_std_20)
     target_compile_definitions(OvygramUpdater PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX)
     set_target_properties(OvygramUpdater PROPERTIES
-        RUNTIME_OUTPUT_DIRECTORY ${output_folder}
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"
         MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>"
     )
     target_link_libraries(OvygramUpdater PRIVATE

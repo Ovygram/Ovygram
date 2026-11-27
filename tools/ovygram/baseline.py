@@ -372,7 +372,7 @@ def main():
                             'core/file_utilities', 'core/update_checker', 'passport/passport_panel_edit_scans',
                             'platform/win/launcher_win',
                             'ovygram/auto_update', 'ovygram/auto_update_verify', 'ovygram/auto_update_view',
-                            'ovygram/chat_decorations', 'ovygram/chat_list_filter',
+                            'ovygram/chat_decorations', 'ovygram/chat_list_filter', 'ovygram/i18n',
                             'ovygram/message_decorations', 'ovygram/plugin_elements',
                             'ovygram/plugin_paint', 'ovygram/plugin_ui', 'ovygram/plugin_ui_tree',
                             'ovygram/plugin_widgets', 'ovygram/plugin_actions',
