@@ -1074,6 +1074,7 @@ int main(int argc, char **argv) {
 		const auto scale = parser.value(u"scale"_q).toInt();
 		Check(scale >= style::kScaleMin && scale <= style::MaxScaleForRatio(ratio), "UI scale is unsupported.");
 		style::SetScale(scale);
+		style::internal::StartFonts();
 		style::StartManager(scale);
 		ApplyPalette(parser.value(u"palette"_q));
 		Ui::Emoji::Init();
