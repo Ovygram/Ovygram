@@ -20,6 +20,10 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "base/concurrent_timer.h"
 #include "base/options.h"
 
+#ifdef OVYGRAM_ENABLED
+#include "ovygram/telemetry.h"
+#endif // OVYGRAM_ENABLED
+
 #include <QtCore/QLoggingCategory>
 #include <QtCore/QStandardPaths>
 #include <QtCore/QLibraryInfo>
@@ -686,7 +690,11 @@ int Launcher::executeApplication() {
 	Sandbox sandbox(arguments.count(), arguments.values());
 	Ui::MainQueueProcessor processor;
 	base::ConcurrentTimerEnvironment environment;
-	return sandbox.start();
+	const auto result = sandbox.start();
+#ifdef OVYGRAM_ENABLED
+	Ovygram::Telemetry::Finish();
+#endif // OVYGRAM_ENABLED
+	return result;
 }
 
 } // namespace Core

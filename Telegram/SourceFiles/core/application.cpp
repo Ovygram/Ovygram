@@ -11,6 +11,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "api/api_plugins.h"
 #include "core/plugin_runtime.h"
 #include "ovygram/i18n.h"
+#include "ovygram/telemetry.h"
 #endif
 
 #include "data/data_abstract_structure.h"
@@ -769,6 +770,21 @@ bool Application::hideMediaView() {
 
 bool Application::eventFilter(QObject *object, QEvent *e) {
 	switch (e->type()) {
+#ifdef OVYGRAM_ENABLED
+	case QEvent::Show:
+	case QEvent::WindowStateChange: {
+		if (const auto window = dynamic_cast<::MainWindow*>(object)) {
+			if (e->type() == QEvent::Show
+				|| (static_cast<QWindowStateChangeEvent*>(e)->oldState() & Qt::WindowMinimized)) {
+				InvokeQueued(window, [=] {
+					if (window->isVisible() && !window->isMinimized()) {
+						Ovygram::Telemetry::WindowOpened();
+					}
+				});
+			}
+		}
+	} break;
+#endif // OVYGRAM_ENABLED
 	case QEvent::KeyPress: {
 		updateNonIdle();
 		_inAppKeyPressed.fire({});

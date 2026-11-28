@@ -79,6 +79,12 @@ target_sources(Telegram PRIVATE
     SourceFiles/ovygram/plugin_widgets.h
     SourceFiles/ovygram/protected_ui.cpp
     SourceFiles/ovygram/protected_ui.h
+    SourceFiles/ovygram/telemetry.cpp
+    SourceFiles/ovygram/telemetry.h
+    SourceFiles/ovygram/telemetry_crash_marker.cpp
+    SourceFiles/ovygram/telemetry_crash_marker.h
+    SourceFiles/ovygram/telemetry_view.cpp
+    SourceFiles/ovygram/telemetry_view.h
     SourceFiles/ovygram/plugin_ui.h
     SourceFiles/settings/sections/settings_plugins.cpp
     SourceFiles/settings/sections/settings_plugins.h

@@ -66,6 +66,7 @@ add_executable(ovygram-ui-preview
     ${src_loc}/ovygram/plugin_ui_tree.cpp
     ${src_loc}/ovygram/plugin_paint.cpp
     ${src_loc}/ovygram/plugin_proxy_view.cpp
+    ${src_loc}/ovygram/telemetry_view.cpp
 )
 target_compile_features(ovygram-ui-preview PRIVATE cxx_std_20)
 target_compile_definitions(ovygram-ui-preview PRIVATE OVYGRAM_PREVIEW_PYTHON="${CMAKE_CURRENT_SOURCE_DIR}/plugin.py")

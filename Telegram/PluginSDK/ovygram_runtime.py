@@ -377,6 +377,8 @@ class Manager:
         if not self.running(installation_id):
             return
         method = command.get("method")
+        if method in ("telemetry.host_started", "telemetry.host_failed"):
+            return
         if method == "ui.show":
             with self._state_lock:
                 record = self.records.get(installation_id)
@@ -511,6 +513,14 @@ class Manager:
             return {"handled": True, "error": str(error) or tr("Command failed.", "Команда не выполнена.")}
         return {"handled": True, "error": ""}
 
+    def host_started(self):
+        if self.sender is None:
+            self.notify({"id": uuid.uuid4().hex, "method": "telemetry.host_started"})
+
+    def host_failed(self):
+        if self.sender is None:
+            self.notify({"id": uuid.uuid4().hex, "method": "telemetry.host_failed"})
+
     def host_exited(self, reason):
         """The host process died or was stopped; on the main thread."""
         self._cancel_marker_timer()
@@ -532,6 +542,7 @@ class Manager:
         self.hook_mask = 0
         if not self.closing:
             self.logger.error("%s", reason)
+            self.host_failed()
 
     def read_state(self):
         state = json.loads(self.state.read_text(encoding="utf-8")) if self.state.exists() else {

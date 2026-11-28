@@ -165,6 +165,7 @@ class ProcessHost:
             if isinstance(error, SandboxError):
                 raise
             raise SandboxError(tr(f"Plugin isolation: {error}", f"Изоляция плагинов: {error}")) from error
+        self.manager.host_started()
         for target in (self.read, self.read_errors):
             thread = threading.Thread(target=target, args=(session,), name="Ovygram plugin host",
                                       daemon=True)
@@ -176,6 +177,7 @@ class ProcessHost:
             hello = None
         if hello is None or hello.get("event") != "hello" or bool(hello.get("scoped")) != options["scope"]:
             self.stop(session)
+            self.manager.host_failed()
             detail = " ".join(session.output[-4:])
             reason = tr("The plugin process failed to start.", "Процесс плагинов не запустился.") + (
                 " " + detail if detail else "")

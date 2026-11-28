@@ -9,6 +9,7 @@
 #include "ovygram/plugin_management_view.h"
 #include "ovygram/plugin_ui_tree.h"
 #include "ovygram/plugin_proxy_view.h"
+#include "ovygram/telemetry_view.h"
 #include "plugin_list.h"
 #include "ui/effects/animations.h"
 #include "ui/emoji_config.h"
@@ -51,6 +52,7 @@
 namespace {
 
 rpl::event_stream<> UpdateRequests;
+const auto SampleInstallationId = u"1247457d-0214-4fd2-b8fd-8fac5b72e41a"_q;
 
 class PreviewApplication final : public QApplication {
 public:
@@ -388,6 +390,9 @@ public:
 		} else if (_scenario == u"update-channel"_q || _scenario == u"update-channel-ready"_q) {
 			showUpdateChannel(_scenario == u"update-channel-ready"_q);
 			finishSoon();
+		} else if (_scenario == u"diagnostics"_q) {
+			showDiagnostics();
+			finishSoon();
 		} else if (_scenario.startsWith(u"install-"_q)) {
 			showInstaller(InstallInfo(_scenario));
 			finishSoon();
@@ -588,6 +593,21 @@ private:
 		}), Ui::LayerOption::KeepOther, anim::type::instant);
 	}
 
+	void showDiagnostics() {
+		auto layer = object_ptr<SettingsLayer>(&_layers,
+			Ovygram::Tr(u"Diagnostics", u"Диагностика"), st::settingsPluginsLayerWidth, false);
+		Ovygram::Telemetry::AddDiagnosticsRows(layer->content(), SampleInstallationId, _telemetryEnabled,
+			[this](bool enabled) { _telemetryEnabled = enabled; }, [this] {
+				_layers.showBox(Box([](not_null<Ui::GenericBox*> box) {
+					Ovygram::Telemetry::BuildSupportBox(box, Ovygram::Tr(
+						u"Installation ID: %1\nOvygram: 0.1.1 (build 4)\nPlatform: linux-x64\nUpdate channel: stable"_q,
+						u"ID установки: %1\nOvygram: 0.1.1 (сборка 4)\nПлатформа: linux-x64\nКанал обновлений: stable"_q
+					).arg(SampleInstallationId));
+				}), Ui::LayerOption::KeepOther, anim::type::instant);
+			});
+		_layers.showSpecialLayer(std::move(layer), anim::type::instant);
+	}
+
 	void startPlugin(const QString &plugin, const QString &menu, const QString &setting,
 		const QString &python, const QString &dependencies);
 	void handlePlugin(const QJsonObject &command);
@@ -620,6 +640,7 @@ private:
 	QString _installChoice;
 	QString _removalChoice;
 	std::optional<Ovygram::UpdateChannel> _updateChannelChoice;
+	bool _telemetryEnabled = true;
 	QProcess _process;
 	std::map<QString, std::unique_ptr<Surface>> _surfaces;
 	QPointer<QWidget> _captureWindow;
@@ -930,7 +951,21 @@ void Preview::finishSoon() {
 }
 
 void Preview::verify() {
-	if (_scenario == u"proxies"_q) {
+	if (_scenario == u"diagnostics"_q) {
+		const auto toggle = Ovygram::Tr(u"Send usage statistics and diagnostics", u"Отправлять статистику и диагностику");
+		Click(this, toggle);
+		Check(!_telemetryEnabled, "Diagnostics toggle did not disable telemetry.");
+		Click(this, toggle);
+		Check(_telemetryEnabled, "Diagnostics toggle did not re-enable telemetry.");
+		Click(this, Ovygram::Tr(u"Copy installation ID", u"Скопировать ID установки"));
+		Check(QGuiApplication::clipboard()->text() == SampleInstallationId, "Installation ID was not copied.");
+		Click(this, Ovygram::Tr(u"Copy details for support", u"Скопировать сведения для поддержки"));
+		const auto top = const_cast<Ui::LayerWidget*>(_layers.topShownLayer());
+		Click(top, Ovygram::Tr(u"Copy", u"Скопировать"));
+		_layers.finishAnimating();
+		Check(QGuiApplication::clipboard()->text().contains(SampleInstallationId)
+			&& QGuiApplication::clipboard()->text().contains(u"linux-x64"_q), "Support details were not copied.");
+	} else if (_scenario == u"proxies"_q) {
 		const auto resetApi = Ovygram::Tr(u"Reset route: Telegram requests", u"Сбросить маршрут: Запросы Telegram");
 		const auto reset = dynamic_cast<Ui::RoundButton*>(ByName(this, resetApi));
 		Check(reset && !reset->isDisabled(), "The assigned route cannot be reset.");
@@ -1108,7 +1143,7 @@ int main(int argc, char **argv) {
 	parser.setApplicationDescription(u"Open Ovygram UI with a temporary profile and sample data."_q);
 	parser.addHelpOption();
 	parser.addOptions({
-		{ u"scenario"_q, u"list-before, list-after, details, stopped, long, install-new, install-update, install-multiple, install-long, proxies, removal, update-channel, update-channel-ready."_q,
+		{ u"scenario"_q, u"list-before, list-after, details, stopped, long, install-new, install-update, install-multiple, install-long, proxies, removal, update-channel, update-channel-ready, diagnostics."_q,
 			u"name"_q, u"details"_q },
 		{ u"lang"_q, u"Ovygram UI language code (e.g. en, ru, de)."_q, u"code"_q, u"en"_q },
 		{ u"palette"_q, u"Apply a plain Telegram color palette."_q, u"file"_q },
@@ -1130,7 +1165,8 @@ int main(int argc, char **argv) {
 		const auto plugin = parser.value(u"plugin-file"_q);
 		Ovygram::I18n::SetLanguage(parser.value(u"lang"_q));
 		Check(QStringList{ u"list-before"_q, u"list-after"_q, u"details"_q, u"stopped"_q, u"long"_q, u"install-new"_q, u"install-update"_q,
-			u"install-multiple"_q, u"install-long"_q, u"proxies"_q, u"removal"_q, u"update-channel"_q, u"update-channel-ready"_q }.contains(scenario), "Unknown preview scenario.");
+			u"install-multiple"_q, u"install-long"_q, u"proxies"_q, u"removal"_q, u"update-channel"_q, u"update-channel-ready"_q,
+			u"diagnostics"_q }.contains(scenario), "Unknown preview scenario.");
 		Check(!(parser.isSet(u"menu"_q) && parser.isSet(u"setting"_q)), "Choose --menu or --setting.");
 		Check(!plugin.isEmpty() || !(parser.isSet(u"menu"_q) || parser.isSet(u"setting"_q)),
 			"Use --plugin with --menu or --setting.");

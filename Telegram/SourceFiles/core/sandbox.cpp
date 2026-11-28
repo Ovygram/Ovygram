@@ -35,6 +35,10 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/effects/animations.h"
 #include "ui/style/style_core_palette.h"
 
+#ifdef OVYGRAM_ENABLED
+#include "ovygram/telemetry.h"
+#endif // OVYGRAM_ENABLED
+
 #ifdef Q_OS_MACOS
 #include "platform/mac/global_menu_mac.h"
 #endif // Q_OS_MACOS
@@ -493,6 +497,12 @@ void Sandbox::singleInstanceChecked() {
 		return;
 	}
 	const auto result = CrashReports::Start();
+#ifdef OVYGRAM_ENABLED
+	const auto previousCrash = std::get_if<QByteArray>(&result);
+	if (previousCrash || std::get<CrashReports::Status>(result) != CrashReports::CantOpen) {
+		Ovygram::Telemetry::Start(previousCrash && !previousCrash->isEmpty());
+	}
+#endif // OVYGRAM_ENABLED
 	v::match(result, [&](CrashReports::Status status) {
 		if (status == CrashReports::CantOpen) {
 			new NotStartedWindow();

@@ -1,4 +1,6 @@
 #include "api/api_plugins.h"
+
+#include "ovygram/telemetry.h"
 #include "webview/webview_embed.h"
 #include "ovygram/plugin_install.h"
 #include "ovygram/plugin_updates.h"
@@ -602,6 +604,13 @@ void PluginClient::receive(const QByteArray &request) {
 			throw std::runtime_error("Invalid client command.");
 		}
 		const auto method = command.value(u"method"_q).toString();
+		if (method == u"telemetry.host_started"_q) {
+			Ovygram::Telemetry::PluginHostStarted();
+			return;
+		} else if (method == u"telemetry.host_failed"_q) {
+			Ovygram::Telemetry::PluginHostFailed();
+			return;
+		}
 		if (Ovygram::InstallationUiActive() && method != u"ui.close_plugin"_q
 			&& method != u"ui.action.remove"_q
 			&& (method.startsWith(u"ui."_q) || method.startsWith(u"native."_q)

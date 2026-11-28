@@ -77,6 +77,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ovygram/auto_update_view.h"
 #include "ovygram/i18n_rpl.h"
 #include "ovygram/protected_ui.h"
+#include "ovygram/telemetry.h"
+#include "ovygram/telemetry_view.h"
 #endif // OVYGRAM_ENABLED
 
 #ifdef Q_OS_MACOS
@@ -1375,6 +1377,33 @@ void BuildExportSection(SectionBuilder &builder) {
 	});
 }
 
+#ifdef OVYGRAM_ENABLED
+void BuildDiagnosticsSection(SectionBuilder &builder) {
+	builder.addDivider();
+	builder.addSkip();
+	builder.addSubsectionTitle({
+		.id = u"advanced/diagnostics"_q,
+		.title = Ovygram::TrValue(u"Diagnostics"_q, u"Диагностика"_q),
+		.keywords = { u"diagnostics"_q, u"telemetry"_q, u"installation id"_q,
+			u"диагностика"_q, u"телеметрия"_q, u"id установки"_q },
+	});
+	if (const auto container = builder.container()) {
+		const auto controller = builder.controller();
+		Ovygram::Telemetry::AddDiagnosticsRows(
+			container,
+			Ovygram::Telemetry::InstallationId(),
+			Ovygram::Telemetry::Enabled(),
+			Ovygram::Telemetry::SetEnabled,
+			[=] {
+				controller->show(Box([](not_null<Ui::GenericBox*> box) {
+					Ovygram::ProtectSurface(box);
+					Ovygram::Telemetry::BuildSupportBox(box, Ovygram::Telemetry::SupportDetails());
+				}));
+			});
+	}
+}
+#endif // OVYGRAM_ENABLED
+
 void BuildScreenReaderSection(SectionBuilder &builder) {
 	const auto detected = base::ScreenReaderState::Instance()->active();
 	const auto disabled = Ui::ScreenReaderModeDisabled();
@@ -1451,6 +1480,9 @@ const auto kMeta = BuildHelper({
 	if (autoUpdate) {
 		BuildUpdateSection(builder, false);
 	}
+#ifdef OVYGRAM_ENABLED
+	BuildDiagnosticsSection(builder);
+#endif // OVYGRAM_ENABLED
 	BuildExportSection(builder);
 });
 
